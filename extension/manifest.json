@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Pendo Validate Install Lite",
+  "name": "Pendo Validate Install Ext",
   "version": "1.2.0",
-  "description": "Runs pendo.validateInstall(), captures console, checks identity/CSP, and confirms whether an API key is present.",
+  "description": "Validates Pendo Install (Snippet or Launcher), captures console, checks identity/CSP, and confirms whether an API key is present.",
   "permissions": [
     "scripting",
     "activeTab",
