@@ -246,13 +246,14 @@ document.addEventListener('DOMContentLoaded', async () => {
       // Advice and checks
       checks && checks.forEach(c => {
         const li = document.createElement('li');
-        li.textContent = `✔ ${c}`;
-        li.style.color = '#136b13';
+        li.className = 'advice-item advice-item--check';
+        li.innerHTML = `<span class="advice-item__icon" aria-hidden="true">✔</span><span>${c}</span>`;
         adviceEl.appendChild(li);
       });
       advice.forEach(a => {
         const li = document.createElement('li');
-        li.textContent = a;
+        li.className = 'advice-item advice-item--note';
+        li.innerHTML = `<span class="advice-item__icon" aria-hidden="true">•</span><span>${a}</span>`;
         adviceEl.appendChild(li);
       });
 
@@ -261,9 +262,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       } else {
         captured.forEach(({ level, text }) => {
           const div = document.createElement('div');
-          div.className = 'log-line';
           const badgeClass = level === 'error' ? 'err' : level === 'warn' ? 'warn' : 'ok';
-          div.innerHTML = `<span class="badge ${badgeClass}" style="margin-right:6px">${level}</span><span>${text}</span>`;
+          div.className = `log-line ${badgeClass}`;
+          div.innerHTML = `<span class="badge ${badgeClass}">${level}</span><span class="log-text">${text}</span>`;
           logsEl.appendChild(div);
         });
       }
