@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "Pendo Validate Install Lite",
+  "version": "1.0.0",
+  "description": "Runs pendo.validateInstall(), captures console, checks identity/CSP, and confirms whether an API key is present.",
+  "permissions": [
+    "scripting",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "action": {
+    "default_title": "Validate Pendo",
+    "default_popup": "popup.html"
+  },
+  "icons": {
+    "128": "icons/icon128.png"
+  }
+}

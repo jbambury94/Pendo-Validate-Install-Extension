@@ -1,0 +1,78 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Pendo Validate Lite</title>
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 12px; width: 420px; }
+      button { cursor: pointer; padding: 8px 10px; border: 1px solid #ccc; border-radius: 8px; background: #f7f7f7; }
+      .row { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+      .badge { font-size: 12px; padding: 2px 6px; border-radius: 999px; background: #eee; }
+      .ok { background: #e7f7e7; }
+      .warn { background: #fff7e0; }
+      .err { background: #fde7e7; }
+      pre, code { white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .panel { border: 1px solid #ddd; border-radius: 10px; padding: 10px; margin: 10px 0; background: #fff; }
+      .log-line { padding: 4px 0; border-bottom: 1px dashed #eee; }
+      .muted { color: #666; font-size: 12px; }
+      .small { font-size: 12px; }
+      .flex { display: flex; justify-content: space-between; align-items: center; }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .kv { display: grid; grid-template-columns: 140px 1fr; gap: 6px; font-size: 12px; }
+      .kv div { padding: 2px 0; }
+    </style>
+  </head>
+  <body>
+    <div class="row">
+      <button id="run">Run pendo.validateInstall()</button>
+      <span id="status" class="badge">Idle</span>
+    </div>
+
+    <div id="summary" class="panel small">
+      <div><strong>Page status</strong></div>
+      <div class="kv">
+        <div>pendo present:</div><div class="mono" id="kv_pendo">—</div>
+        <div>validateInstall present:</div><div class="mono" id="kv_validate">—</div>
+        <div>agent version:</div><div class="mono" id="kv_version">—</div>
+        <div>API key found:</div><div class="mono" id="kv_keyfound">—</div>
+        <div>detected API key:</div><div class="mono" id="kv_detected">—</div>
+        <div>visitorId:</div><div class="mono" id="kv_visitor">—</div>
+        <div>accountId:</div><div class="mono" id="kv_account">—</div>
+        <div>resource hits:</div><div class="mono" id="kv_hits">—</div>
+        <div>lines captured:</div><div class="mono" id="kv_lines">—</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="flex">
+        <strong>Advice</strong>
+        <button id="copyAdvice" class="small">Copy</button>
+      </div>
+      <ul id="advice"></ul>
+    </div>
+
+    <div class="panel">
+      <div class="flex">
+        <strong>Export</strong>
+      </div>
+      <div class="row">
+        <button id="exportMd">Download Markdown Report</button>
+        <button id="exportJson">Download JSON</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="flex">
+        <strong>Captured Output</strong>
+        <button id="copyLogs" class="small">Copy</button>
+      </div>
+      <div id="logs"></div>
+    </div>
+
+    <p class="muted small">
+      Tip: run this on the target page where the Pendo agent should be present. If extensions or network filters are blocking requests, try Incognito with other extensions disabled.
+    </p>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
