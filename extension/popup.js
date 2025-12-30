@@ -237,32 +237,40 @@ async function runInPage() {
   }
 
   async function findLauncherTab() {
-      async function searchWithPatterns(patterns = []) {
-        try {
-          const wins = await chrome.windows.getAll({ populate: true });
-          for (const w of wins) {
-            for (const t of (w.tabs || [])) {
-              const title = (t.title || '').toLowerCase();
-              const url = (t.url || '').toLowerCase();
-              if (patterns.some(re => re.test(title) || re.test(url))) {
-                return t;
-              }
-            }
-          }
-        } catch (e) {
-          console.error('Failed to search for launcher window', e);
-        }
-        return null;
-      }
-
-      const standard = await searchWithPatterns([/pendo launcher/, /pendo-launcher/]);
-      if (standard) return { tab: standard, variant: 'launcher' };
-
-      const beta = await searchWithPatterns([/pendo launcher \(beta\)/, /pendo-launcher-beta/, /launcher beta/]);
-      if (beta) return { tab: beta, variant: 'launcher-beta' };
-
+    const hasTabsPermission = !chrome.permissions || !chrome.permissions.contains
+      ? true
+      : await chrome.permissions.contains({ permissions: ['tabs'] });
+    if (!hasTabsPermission) {
+      console.warn('Tabs permission unavailable; skipping launcher search.');
       return null;
     }
+
+    async function searchWithPatterns(patterns = []) {
+      try {
+        const wins = await chrome.windows.getAll({ populate: true });
+        for (const w of wins) {
+          for (const t of (w.tabs || [])) {
+            const title = (t.title || '').toLowerCase();
+            const url = (t.url || '').toLowerCase();
+            if (patterns.some(re => re.test(title) || re.test(url))) {
+              return t;
+            }
+          }
+        }
+      } catch (e) {
+        console.error('Failed to search for launcher window', e);
+      }
+      return null;
+    }
+
+    const standard = await searchWithPatterns([/pendo launcher/, /pendo-launcher/]);
+    if (standard) return { tab: standard, variant: 'launcher' };
+
+    const beta = await searchWithPatterns([/pendo launcher \(beta\)/, /pendo-launcher-beta/, /launcher beta/]);
+    if (beta) return { tab: beta, variant: 'launcher-beta' };
+
+    return null;
+  }
 
     const launcherLookup = await findLauncherTab();
     const launcherTab = launcherLookup && launcherLookup.tab;
