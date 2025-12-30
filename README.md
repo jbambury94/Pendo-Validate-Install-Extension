@@ -1,4 +1,4 @@
-# Pendo Validate Install Lite (Chrome Extension)
+# Pendo Validate Install Extension
 
 A tiny Chrome extension that runs `pendo.validateInstall()` on the current tab and surfaces the results in a popup.
 
@@ -17,16 +17,6 @@ A tiny Chrome extension that runs `pendo.validateInstall()` on the current tab a
 4. Select the `extension/` folder from this repo
 5. Visit a site where Pendo is installed, click the extension, and run the validation
 
-## Package a zip for distribution
-
-From the repo root:
-
-```bash
-cd extension
-zip -r ../pendo-validate-install-lite.zip .
-```
-
-(Chrome Web Store packaging has its own requirements, but this gives you a simple distributable zip.)
 
 ## Notes
 
@@ -34,7 +24,7 @@ zip -r ../pendo-validate-install-lite.zip .
 - Permissions: `activeTab`, `scripting`, `storage`
 - Host permissions: `<all_urls>`
 
-## ChatGPT-powered advice (optional)
+## ChatGPT-powered advice (optional) WIP
 
 The popup can request remediation advice from the ChatGPT API when validation uncovers warnings or errors. To enable it:
 
