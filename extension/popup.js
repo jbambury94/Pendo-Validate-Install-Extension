@@ -5,6 +5,14 @@ function setStatus(el, cls, text) {
 }
 function toIso(dt=new Date()) { return dt.toISOString(); }
 
+function normalizeAdviceList(advice = []) {
+  return advice.map(a => {
+    if (typeof a === 'string') return { text: a, source: 'builtin' };
+    if (a && typeof a === 'object') return { text: a.text || '', source: a.source || 'builtin' };
+    return { text: String(a), source: 'builtin' };
+  }).filter(a => a.text);
+}
+
 function buildMarkdownReport(context) {
   const { pageUrl, timestamp, status, captured, advice, checks, cspMeta, apiKeyFound } = context;
   const lines = [];
@@ -42,9 +50,13 @@ function buildMarkdownReport(context) {
     checks.forEach(c => lines.push(`- ${c}`));
     lines.push("");
   }
-  if (advice && advice.length) {
+  const adviceList = normalizeAdviceList(advice);
+  if (adviceList && adviceList.length) {
     lines.push(`## Advice`);
-    advice.forEach(a => lines.push(`- ${a}`));
+    adviceList.forEach(a => {
+      const prefix = a.source === 'ai' ? '[AI] ' : '';
+      lines.push(`- ${prefix}${a.text}`);
+    });
     lines.push("");
   }
   lines.push(`## Captured Output`);
@@ -157,18 +169,18 @@ async function runInPage() {
     const checks = [];
 
     if (!status.pendoPresent) {
-      advice.push("Pendo agent not detected. Ensure the snippet is installed and loads on this URL. Verify CSP and network allow Pendo domains.");
+      advice.push({ text: "Pendo agent not detected. Ensure the snippet is installed and loads on this URL. Verify CSP and network allow Pendo domains.", source: 'builtin' });
     } else if (!status.validatePresent) {
-      advice.push("Pendo found, but validateInstall() is unavailable. The agent may be customised or outdated. Update to a supported agent.");
+      advice.push({ text: "Pendo found, but validateInstall() is unavailable. The agent may be customised or outdated. Update to a supported agent.", source: 'builtin' });
     }
 
     if (apiKeyFound) checks.push("API key found in output or agent data.");
-    else advice.push("No API key detected. Verify the correct agent is loading and that the snippet references your subscription key.");
+    else advice.push({ text: "No API key detected. Verify the correct agent is loading and that the snippet references your subscription key.", source: 'builtin' });
 
     if (status.pendoPresent) {
-      if (!status.visitorId) advice.push("Visitor identity is not set. Call pendo.initialize with a visitorId after authentication.");
+      if (!status.visitorId) advice.push({ text: "Visitor identity is not set. Call pendo.initialize with a visitorId after authentication.", source: 'builtin' });
       else checks.push("visitorId present.");
-      if (status.accountId == null) advice.push("accountId not found. If you use accounts, provide accountId in pendo.initialize.");
+      if (status.accountId == null) advice.push({ text: "accountId not found. If you use accounts, provide accountId in pendo.initialize.", source: 'builtin' });
       else checks.push("accountId present.");
     }
 
@@ -177,25 +189,25 @@ async function runInPage() {
       const lc = cspMeta.toLowerCase();
       needsDomains.forEach(d => {
         if (!lc.includes(d)) {
-          advice.push(`CSP meta tag may be missing '${d}'. Ensure script-src and connect-src allow required Pendo domains.`);
+          advice.push({ text: `CSP meta tag may be missing '${d}'. Ensure script-src and connect-src allow required Pendo domains.`, source: 'builtin' });
         }
       });
     } else if (/content security policy|refused to connect|blocked by csp/i.test(all)) {
-      advice.push("CSP is blocking Pendo. Add required Pendo domains to script-src and connect-src.");
+      advice.push({ text: "CSP is blocking Pendo. Add required Pendo domains to script-src and connect-src.", source: 'builtin' });
     }
 
     if (status.resourceHits.length === 0 && status.pendoPresent) {
-      advice.push("No Pendo network resources observed. If using a deferred or self-hosted setup, ensure agent requests are not blocked.");
+      advice.push({ text: "No Pendo network resources observed. If using a deferred or self-hosted setup, ensure agent requests are not blocked.", source: 'builtin' });
     }
 
     if (status.validatePresent && !hasError && !hasWarn && captured.length > 0) {
       checks.push("validateInstall() produced no warnings or errors.");
     }
 
-    if (advice.length === 0 && checks.length > 0) advice.push("Installation looks healthy based on current checks.");
-    else if (advice.length === 0) advice.push("Review the output below and compare with a known-good page. Check initialise timing and data mapping.");
+    if (advice.length === 0 && checks.length > 0) advice.push({ text: "Installation looks healthy based on current checks.", source: 'builtin' });
+    else if (advice.length === 0) advice.push({ text: "Review the output below and compare with a known-good page. Check initialise timing and data mapping.", source: 'builtin' });
 
-    return { status, captured, advice, checks, cspMeta, apiKeyFound };
+    return { status, captured, advice, checks, cspMeta, apiKeyFound, hasError, hasWarn };
   }
 
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -207,10 +219,99 @@ async function runInPage() {
   return result;
 }
 
-document.addEventListener('DOMContentLoaded', async () => {
-  const statusEl = document.getElementById('status');
-  const logsEl = document.getElementById('logs');
-  const adviceEl = document.getElementById('advice');
+  async function getAiConfig() {
+    return new Promise(resolve => {
+      try {
+        if (!chrome.storage || !chrome.storage.local) return resolve({});
+        chrome.storage.local.get({ aiEndpoint: '', aiApiKey: '', aiModel: 'gpt-4o-mini' }, resolve);
+      } catch (e) {
+        console.error(e);
+        resolve({});
+      }
+    });
+  }
+
+  function buildAiPrompt(context) {
+    const lines = [];
+    lines.push('You are a Pendo installation assistant. Suggest concise, actionable remediation steps.');
+    lines.push('Base your guidance solely on official Pendo sources (pendo.io domains such as support.pendo.io, help.pendo.io, academy.pendo.io). If unsure, say so.');
+    lines.push(`Page URL: ${context.pageUrl}`);
+    lines.push(`Agent version: ${context.status.version || 'unknown'}`);
+    lines.push(`validateInstall available: ${context.status.validatePresent}`);
+    lines.push(`Pendo present: ${context.status.pendoPresent}`);
+    lines.push(`API key detected: ${context.status.detectedApiKey || 'unknown'}`);
+    lines.push(`API key found flag: ${context.apiKeyFound}`);
+    lines.push(`VisitorId: ${context.status.visitorId || 'not set'}`);
+    lines.push(`AccountId: ${context.status.accountId == null ? 'not set' : context.status.accountId}`);
+    lines.push(`CSP meta: ${context.cspMeta || 'none'}`);
+    lines.push('Captured logs (level:message):');
+    const trimmed = (context.captured || []).slice(0, 30);
+    trimmed.forEach(l => lines.push(`[${l.level}] ${l.text}`));
+    if ((context.captured || []).length > trimmed.length) lines.push('...truncated...');
+    lines.push('Respond with a short bullet list of concrete fixes.');
+    return lines.join('\n');
+  }
+
+  async function requestAiAdvice(context) {
+    const cfg = await getAiConfig();
+    if (!cfg.aiEndpoint || !cfg.aiApiKey) return [];
+
+    const body = {
+      model: cfg.aiModel || 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: 'You are a concise Pendo install troubleshooting assistant. Only rely on official Pendo documentation and avoid speculative advice.' },
+        { role: 'user', content: buildAiPrompt(context) }
+      ],
+      temperature: 0.1
+    };
+
+    const controller = new AbortController();
+    const timeoutMs = cfg.timeoutMs || 8000;
+    const timer = setTimeout(() => controller.abort('timeout'), timeoutMs);
+    try {
+      const res = await fetch(cfg.aiEndpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${cfg.aiApiKey}`
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal
+      });
+      clearTimeout(timer);
+      if (!res.ok) throw new Error(`AI request failed with status ${res.status}`);
+      const data = await res.json();
+      const content = data?.choices?.[0]?.message?.content || '';
+      if (!content) return [];
+      return content.split(/\n+/).map(t => t.replace(/^[-*]\s*/, '').trim()).filter(Boolean).map(text => ({ text, source: 'ai' }));
+    } catch (e) {
+      clearTimeout(timer);
+      console.error('AI request failed', e);
+      return [{ text: 'AI suggestion unavailable: request failed or timed out. Check API key/endpoint configuration.', source: 'ai' }];
+    }
+  }
+
+  document.addEventListener('DOMContentLoaded', async () => {
+    const statusEl = document.getElementById('status');
+    const logsEl = document.getElementById('logs');
+    const adviceEl = document.getElementById('advice');
+
+    function renderAdvice(checks, adviceList) {
+      adviceEl.innerHTML = '';
+      (checks || []).forEach(c => {
+        const li = document.createElement('li');
+        li.className = 'advice-item advice-item--check';
+        li.innerHTML = `<span class="advice-item__icon" aria-hidden="true">✔</span><span>${c}</span>`;
+        adviceEl.appendChild(li);
+      });
+      normalizeAdviceList(adviceList).forEach(a => {
+        const li = document.createElement('li');
+        li.className = 'advice-item advice-item--note';
+        const label = a.source === 'ai' ? '<strong>AI suggestion:</strong> ' : '';
+        li.innerHTML = `<span class="advice-item__icon" aria-hidden="true">•</span><span>${label}${a.text}</span>`;
+        adviceEl.appendChild(li);
+      });
+    }
 
   function setKV(id, value) {
     document.getElementById(id).textContent = value == null || value === "" ? "—" : String(value);
@@ -225,7 +326,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     try {
       const res = await runInPage();
-      const { status, captured, advice, checks, cspMeta, apiKeyFound } = res;
+      const { status, captured, advice, checks, cspMeta, apiKeyFound, hasError, hasWarn } = res;
 
       if (!status.pendoPresent) setStatus(statusEl, 'err', 'Pendo not found');
       else if (!status.validatePresent) setStatus(statusEl, 'warn', 'No validateInstall()');
@@ -243,19 +344,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       setKV('kv_hits', status.resourceHits.length);
       setKV('kv_lines', captured.length);
 
-      // Advice and checks
-      checks && checks.forEach(c => {
-        const li = document.createElement('li');
-        li.className = 'advice-item advice-item--check';
-        li.innerHTML = `<span class="advice-item__icon" aria-hidden="true">✔</span><span>${c}</span>`;
-        adviceEl.appendChild(li);
-      });
-      advice.forEach(a => {
-        const li = document.createElement('li');
-        li.className = 'advice-item advice-item--note';
-        li.innerHTML = `<span class="advice-item__icon" aria-hidden="true">•</span><span>${a}</span>`;
-        adviceEl.appendChild(li);
-      });
+      let adviceList = normalizeAdviceList(advice);
+      renderAdvice(checks, adviceList);
 
       if (captured.length === 0) {
         logsEl.innerHTML = `<div class="muted">No output captured. If you’re on a SPA, try a page where Pendo loads, or reload and run again.</div>`;
@@ -274,8 +364,18 @@ document.addEventListener('DOMContentLoaded', async () => {
       lastContext = {
         pageUrl: tab && tab.url ? tab.url : 'unknown',
         timestamp: toIso(new Date()),
-        status, captured, advice, checks, cspMeta: cspMeta || '', apiKeyFound
+        status, captured, advice: adviceList, checks, cspMeta: cspMeta || '', apiKeyFound
       };
+
+      const failureDetected = !status.validatePresent || hasError || hasWarn;
+      if (failureDetected) {
+        const aiAdvice = await requestAiAdvice(lastContext);
+        if (aiAdvice && aiAdvice.length) {
+          adviceList = adviceList.concat(aiAdvice);
+          lastContext.advice = adviceList;
+          renderAdvice(checks, adviceList);
+        }
+      }
     } catch (e) {
       setStatus(statusEl, 'err', 'Failed');
       console.error(e);
