@@ -237,29 +237,41 @@ async function runInPage() {
   }
 
   async function findLauncherTab() {
-    try {
-      const wins = await chrome.windows.getAll({ populate: true });
-      for (const w of wins) {
-        for (const t of (w.tabs || [])) {
-          const title = (t.title || '').toLowerCase();
-          const url = (t.url || '').toLowerCase();
-          if (/pendo launcher/.test(title) || /pendo-launcher/.test(url) || /pendo-launcher/.test(title)) {
-            return t;
+      async function searchWithPatterns(patterns = []) {
+        try {
+          const wins = await chrome.windows.getAll({ populate: true });
+          for (const w of wins) {
+            for (const t of (w.tabs || [])) {
+              const title = (t.title || '').toLowerCase();
+              const url = (t.url || '').toLowerCase();
+              if (patterns.some(re => re.test(title) || re.test(url))) {
+                return t;
+              }
+            }
           }
+        } catch (e) {
+          console.error('Failed to search for launcher window', e);
         }
+        return null;
       }
-    } catch (e) {
-      console.error('Failed to search for launcher window', e);
-    }
-    return null;
-  }
 
-  const launcherTab = await findLauncherTab();
-  if (!launcherTab) {
-    const base = pageResult || { status: { pendoPresent: false, validatePresent: false, version: null, detectedApiKey: null, visitorId: null, accountId: null, resourceHits: [] }, captured: [], advice: [], checks: [], cspMeta: '', apiKeyFound: false, hasError: true, hasWarn: false };
-    base.captured = (base.captured || []).concat([{ level: 'info', text: 'Pendo Launcher window not found. Cannot run fallback validation.' }]);
-    return { ...base, origin: 'page', pageUrl: tab && tab.url ? tab.url : 'unknown', launcherAttempted: true, launcherFound: false };
-  }
+      const standard = await searchWithPatterns([/pendo launcher/, /pendo-launcher/]);
+      if (standard) return { tab: standard, variant: 'launcher' };
+
+      const beta = await searchWithPatterns([/pendo launcher \(beta\)/, /pendo-launcher-beta/, /launcher beta/]);
+      if (beta) return { tab: beta, variant: 'launcher-beta' };
+
+      return null;
+    }
+
+    const launcherLookup = await findLauncherTab();
+    const launcherTab = launcherLookup && launcherLookup.tab;
+    const launcherVariant = launcherLookup && launcherLookup.variant ? launcherLookup.variant : 'launcher';
+    if (!launcherTab) {
+      const base = pageResult || { status: { pendoPresent: false, validatePresent: false, version: null, detectedApiKey: null, visitorId: null, accountId: null, resourceHits: [] }, captured: [], advice: [], checks: [], cspMeta: '', apiKeyFound: false, hasError: true, hasWarn: false };
+      base.captured = (base.captured || []).concat([{ level: 'info', text: 'Pendo Launcher window not found. Also checked the Pendo Launcher (Beta) extension.' }]);
+      return { ...base, origin: 'page', pageUrl: tab && tab.url ? tab.url : 'unknown', launcherAttempted: true, launcherFound: false };
+    }
 
   try {
     if (launcherTab.windowId) await chrome.windows.update(launcherTab.windowId, { focused: true });
@@ -271,13 +283,13 @@ async function runInPage() {
   const [{ result: launcherResult }] = await chrome.scripting.executeScript({
     target: { tabId: launcherTab.id },
     world: "MAIN",
-    func: captureAndInspect,
-    args: ['launcher']
-  });
+      func: captureAndInspect,
+      args: [launcherVariant === 'launcher-beta' ? 'launcher' : launcherVariant]
+    });
 
   const fallback = launcherResult || pageResult || { status: { pendoPresent: false, validatePresent: false, version: null, detectedApiKey: null, visitorId: null, accountId: null, resourceHits: [] }, captured: [], advice: [], checks: [], cspMeta: '', apiKeyFound: false, hasError: true, hasWarn: false };
-  return { ...fallback, origin: launcherResult ? 'launcher' : 'page', pageUrl: launcherTab && launcherTab.url ? launcherTab.url : (tab && tab.url ? tab.url : 'unknown'), launcherAttempted: true, launcherFound: !!launcherResult };
-}
+    return { ...fallback, origin: launcherResult ? launcherVariant : 'page', pageUrl: launcherTab && launcherTab.url ? launcherTab.url : (tab && tab.url ? tab.url : 'unknown'), launcherAttempted: true, launcherFound: !!launcherResult };
+  }
 
   async function getAiConfig() {
     return new Promise(resolve => {
@@ -388,7 +400,7 @@ async function runInPage() {
       const res = await runInPage();
       const { status, captured, advice, checks, cspMeta, apiKeyFound, hasError, hasWarn, origin, pageUrl } = res;
 
-      const originNote = origin === 'launcher' ? ' (via Pendo Launcher)' : '';
+      const originNote = origin === 'launcher' ? ' (via Pendo Launcher)' : origin === 'launcher-beta' ? ' (via Pendo Launcher Beta)' : '';
 
       if (!status.pendoPresent) setStatus(statusEl, 'err', 'Pendo not found' + originNote);
       else if (!status.validatePresent) setStatus(statusEl, 'warn', 'No validateInstall()' + originNote);
