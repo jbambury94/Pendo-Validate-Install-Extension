@@ -31,5 +31,17 @@ zip -r ../pendo-validate-install-lite.zip .
 ## Notes
 
 - Manifest version: 3
-- Permissions: `activeTab`, `scripting`
+- Permissions: `activeTab`, `scripting`, `storage`
 - Host permissions: `<all_urls>`
+
+## ChatGPT-powered advice (optional)
+
+The popup can request remediation advice from the ChatGPT API when validation uncovers warnings or errors. To enable it:
+
+- Store your API configuration in extension storage (e.g. via DevTools > Extensions > Inspect views > Application > Storage > Local):
+  - `aiEndpoint` – Chat Completions endpoint (e.g. `https://api.openai.com/v1/chat/completions`)
+  - `aiApiKey` – bearer token for the endpoint
+  - `aiModel` – optional model name (defaults to `gpt-4o-mini`)
+- Ensure the `storage` permission is present (already in `manifest.json`).
+
+When enabled, the extension sends a concise context payload (page URL, agent version, visitor/account IDs, API key presence, CSP meta tag text, and captured validation logs) to the ChatGPT endpoint. Use this feature only on pages where you are comfortable sharing this metadata. Logs may contain user IDs or other application details; protect secrets and disable the feature if that is a concern. The prompt instructs ChatGPT to ground suggestions in official Pendo sources (pendo.io, support.pendo.io, help.pendo.io, academy.pendo.io) and to avoid speculative advice.
