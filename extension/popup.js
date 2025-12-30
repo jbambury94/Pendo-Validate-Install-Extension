@@ -75,7 +75,7 @@ function downloadBlob(filename, mime, text) {
 }
 
 async function runInPage() {
-  function captureAndInspect() {
+  function captureAndInspect(variant = 'page') {
     const captured = [];
     const original = { log: console.log, warn: console.warn, error: console.error, info: console.info };
     function push(level, args) {
@@ -96,9 +96,12 @@ async function runInPage() {
     console.error = (...a) => { push('error', a); original.error(...a); };
     console.info = (...a) => { push('info', a); original.info(...a); };
 
+    const agent = variant === 'launcher' ? ((window && (window.Pendo || window.pendo)) || null) : ((window && window.pendo) || null);
+    const validateFn = variant === 'launcher' ? (agent && agent.validateInstallation) : (agent && agent.validateInstall);
+
     const status = {
-      pendoPresent: !!(window && window.pendo),
-      validatePresent: !!(window && window.pendo && typeof window.pendo.validateInstall === 'function'),
+      pendoPresent: !!agent,
+      validatePresent: typeof validateFn === 'function',
       version: null,
       detectedApiKey: null,
       visitorId: null,
@@ -116,15 +119,15 @@ async function runInPage() {
 
     try {
       if (status.pendoPresent) {
-        status.version = (window.pendo.getVersion && window.pendo.getVersion()) || window.pendo.VERSION || null;
-        const opt = (window.pendo._ && (window.pendo._.options || window.pendo._.apiKey)) || null;
+        status.version = (agent.getVersion && agent.getVersion()) || agent.VERSION || null;
+        const opt = (agent._ && (agent._.options || agent._.apiKey)) || null;
         if (opt && typeof opt === 'object' && opt.apiKey) status.detectedApiKey = opt.apiKey;
-        if (typeof window.pendo.apiKey === 'string') status.detectedApiKey = window.pendo.apiKey;
-        const state = window.pendo && window.pendo._ && window.pendo._.state;
+        if (typeof agent.apiKey === 'string') status.detectedApiKey = agent.apiKey;
+        const state = agent && agent._ && agent._.state;
         if (state && state.visitorId) status.visitorId = state.visitorId;
         if (state && state.accountId) status.accountId = state.accountId;
-        if (!status.visitorId && window.pendo.getVisitorId) { try { status.visitorId = window.pendo.getVisitorId(); } catch {} }
-        if (!status.accountId && window.pendo.getAccountId) { try { status.accountId = window.pendo.getAccountId(); } catch {} }
+        if (!status.visitorId && agent.getVisitorId) { try { status.visitorId = agent.getVisitorId(); } catch {} }
+        if (!status.accountId && agent.getAccountId) { try { status.accountId = agent.getAccountId(); } catch {} }
       }
     } catch {}
 
@@ -149,7 +152,15 @@ async function runInPage() {
     } catch {}
 
     try {
-      if (status.validatePresent) window.pendo.validateInstall();
+      if (status.validatePresent) {
+        try {
+          validateFn.call(agent);
+        } catch (e) {
+          captured.push({ level: 'error', text: e && e.message ? e.message : String(e) });
+        }
+      } else if (variant === 'launcher') {
+        captured.push({ level: 'warn', text: 'Pendo Launcher found but validateInstallation() is unavailable.' });
+      }
     } catch (e) {
       captured.push({ level: 'error', text: e && e.message ? e.message : String(e) });
     } finally {
@@ -207,16 +218,65 @@ async function runInPage() {
     if (advice.length === 0 && checks.length > 0) advice.push({ text: "Installation looks healthy based on current checks.", source: 'builtin' });
     else if (advice.length === 0) advice.push({ text: "Review the output below and compare with a known-good page. Check initialise timing and data mapping.", source: 'builtin' });
 
+    if (variant === 'launcher') {
+      captured.unshift({ level: 'info', text: 'Validated via Pendo Launcher window.' });
+    }
+
     return { status, captured, advice, checks, cspMeta, apiKeyFound, hasError, hasWarn };
   }
 
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  const [{ result }] = await chrome.scripting.executeScript({
+  const [{ result: pageResult }] = await chrome.scripting.executeScript({
     target: { tabId: tab.id },
     world: "MAIN",
     func: captureAndInspect
   });
-  return result;
+
+  if (pageResult && pageResult.status && pageResult.status.pendoPresent) {
+    return { ...pageResult, origin: 'page', pageUrl: tab && tab.url ? tab.url : 'unknown', launcherAttempted: false };
+  }
+
+  async function findLauncherTab() {
+    try {
+      const wins = await chrome.windows.getAll({ populate: true });
+      for (const w of wins) {
+        for (const t of (w.tabs || [])) {
+          const title = (t.title || '').toLowerCase();
+          const url = (t.url || '').toLowerCase();
+          if (/pendo launcher/.test(title) || /pendo-launcher/.test(url) || /pendo-launcher/.test(title)) {
+            return t;
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Failed to search for launcher window', e);
+    }
+    return null;
+  }
+
+  const launcherTab = await findLauncherTab();
+  if (!launcherTab) {
+    const base = pageResult || { status: { pendoPresent: false, validatePresent: false, version: null, detectedApiKey: null, visitorId: null, accountId: null, resourceHits: [] }, captured: [], advice: [], checks: [], cspMeta: '', apiKeyFound: false, hasError: true, hasWarn: false };
+    base.captured = (base.captured || []).concat([{ level: 'info', text: 'Pendo Launcher window not found. Cannot run fallback validation.' }]);
+    return { ...base, origin: 'page', pageUrl: tab && tab.url ? tab.url : 'unknown', launcherAttempted: true, launcherFound: false };
+  }
+
+  try {
+    if (launcherTab.windowId) await chrome.windows.update(launcherTab.windowId, { focused: true });
+    await chrome.tabs.update(launcherTab.id, { active: true });
+  } catch (e) {
+    console.warn('Could not focus launcher tab', e);
+  }
+
+  const [{ result: launcherResult }] = await chrome.scripting.executeScript({
+    target: { tabId: launcherTab.id },
+    world: "MAIN",
+    func: captureAndInspect,
+    args: ['launcher']
+  });
+
+  const fallback = launcherResult || pageResult || { status: { pendoPresent: false, validatePresent: false, version: null, detectedApiKey: null, visitorId: null, accountId: null, resourceHits: [] }, captured: [], advice: [], checks: [], cspMeta: '', apiKeyFound: false, hasError: true, hasWarn: false };
+  return { ...fallback, origin: launcherResult ? 'launcher' : 'page', pageUrl: launcherTab && launcherTab.url ? launcherTab.url : (tab && tab.url ? tab.url : 'unknown'), launcherAttempted: true, launcherFound: !!launcherResult };
 }
 
   async function getAiConfig() {
@@ -326,13 +386,15 @@ async function runInPage() {
 
     try {
       const res = await runInPage();
-      const { status, captured, advice, checks, cspMeta, apiKeyFound, hasError, hasWarn } = res;
+      const { status, captured, advice, checks, cspMeta, apiKeyFound, hasError, hasWarn, origin, pageUrl } = res;
 
-      if (!status.pendoPresent) setStatus(statusEl, 'err', 'Pendo not found');
-      else if (!status.validatePresent) setStatus(statusEl, 'warn', 'No validateInstall()');
-      else if (captured.some(l => l.level === 'error')) setStatus(statusEl, 'err', 'Errors found');
-      else if (captured.some(l => l.level === 'warn')) setStatus(statusEl, 'warn', 'Warnings found');
-      else setStatus(statusEl, 'ok', 'Looks healthy');
+      const originNote = origin === 'launcher' ? ' (via Pendo Launcher)' : '';
+
+      if (!status.pendoPresent) setStatus(statusEl, 'err', 'Pendo not found' + originNote);
+      else if (!status.validatePresent) setStatus(statusEl, 'warn', 'No validateInstall()' + originNote);
+      else if (captured.some(l => l.level === 'error')) setStatus(statusEl, 'err', 'Errors found' + originNote);
+      else if (captured.some(l => l.level === 'warn')) setStatus(statusEl, 'warn', 'Warnings found' + originNote);
+      else setStatus(statusEl, 'ok', 'Looks healthy' + originNote);
 
       setKV('kv_pendo', status.pendoPresent);
       setKV('kv_validate', status.validatePresent);
@@ -360,11 +422,10 @@ async function runInPage() {
       }
 
       // Build report context
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       lastContext = {
-        pageUrl: tab && tab.url ? tab.url : 'unknown',
+        pageUrl: pageUrl || 'unknown',
         timestamp: toIso(new Date()),
-        status, captured, advice: adviceList, checks, cspMeta: cspMeta || '', apiKeyFound
+        status, captured, advice: adviceList, checks, cspMeta: cspMeta || '', apiKeyFound, origin: origin || 'page'
       };
 
       const failureDetected = !status.validatePresent || hasError || hasWarn;
