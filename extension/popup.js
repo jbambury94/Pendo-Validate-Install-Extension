@@ -1,10 +1,17 @@
+/**
+ * Pendo Validate — popup script.
+ * Runs validation in the active tab (or Pendo Launcher fallback), shows advice, and supports export/copy.
+ */
 
+// ========== UI helpers ==========
 function setStatus(el, cls, text) {
   el.className = `badge ${cls}`;
   el.textContent = text;
 }
 function toIso(dt=new Date()) { return dt.toISOString(); }
 
+// ========== Advice normalization ==========
+/** Normalize advice items to { text, source } and filter empty. */
 function normalizeAdviceList(advice = []) {
   return advice.map(a => {
     if (typeof a === 'string') return { text: a, source: 'builtin' };
@@ -13,6 +20,8 @@ function normalizeAdviceList(advice = []) {
   }).filter(a => a.text);
 }
 
+// ========== Report building and download ==========
+/** Build a Markdown report from validation context (URL, status, captured logs, advice, CSP, etc.). */
 function buildMarkdownReport(context) {
   const { pageUrl, timestamp, status, captured, advice, checks, cspMeta, apiKeyFound } = context;
   const lines = [];
@@ -65,7 +74,9 @@ function buildMarkdownReport(context) {
   lines.push("");
   return lines.join("\n");
 }
+/** Serialize full context as pretty-printed JSON. */
 function buildJsonReport(context) { return JSON.stringify(context, null, 2); }
+/** Trigger browser download of a blob (report file). */
 function downloadBlob(filename, mime, text) {
   const blob = new Blob([text], {type: mime});
   const url = URL.createObjectURL(blob);
@@ -74,9 +85,16 @@ function downloadBlob(filename, mime, text) {
   setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
 }
 
+// ========== Page validation: inject and run in tab ==========
+/**
+ * Run validation: execute captureAndInspect in the active tab (MAIN world).
+ * If Pendo isn't found there, try to find a Pendo Launcher tab and run there; merge result back.
+ */
 async function runInPage() {
+  /** Runs in the page context (or Launcher). Captures console, inspects Pendo/validateInstall, builds status/advice/checks. */
   function captureAndInspect(variant = 'page') {
     const captured = [];
+    // Intercept console so we can capture validateInstall() output
     const original = { log: console.log, warn: console.warn, error: console.error, info: console.info };
     function push(level, args) {
       try {
@@ -96,6 +114,7 @@ async function runInPage() {
     console.error = (...a) => { push('error', a); original.error(...a); };
     console.info = (...a) => { push('info', a); original.info(...a); };
 
+    // Resolve Pendo agent and validate function (page uses pendo.validateInstall; Launcher may use validateInstallation)
     const agent = variant === 'launcher' ? ((window && (window.Pendo || window.pendo)) || null) : ((window && window.pendo) || null);
     const validateFn = variant === 'launcher' ? (agent && agent.validateInstallation) : (agent && agent.validateInstall);
 
@@ -109,6 +128,7 @@ async function runInPage() {
       resourceHits: []
     };
 
+    /** Try to extract API key from Pendo agent/static URL. */
     function extractKeyFromUrl(url) {
       try {
         const m = url.match(/agent\/(?:static|production|beta)\/([a-f0-9\-]{8,})/i);
@@ -117,6 +137,7 @@ async function runInPage() {
       return null;
     }
 
+    // Populate version, API key, visitorId, accountId from agent if present
     try {
       if (status.pendoPresent) {
         status.version = (agent.getVersion && agent.getVersion()) || agent.VERSION || null;
@@ -131,6 +152,7 @@ async function runInPage() {
       }
     } catch {}
 
+    // Collect Pendo-related resource requests from Performance API
     try {
       const res = performance.getEntriesByType('resource') || [];
       res.forEach(r => {
@@ -145,12 +167,14 @@ async function runInPage() {
       });
     } catch {}
 
+    // Read CSP from meta tags for advice
     let cspMeta = "";
     try {
       const metas = document.querySelectorAll('meta[http-equiv="Content-Security-Policy"]');
       cspMeta = Array.from(metas).map(m => m.getAttribute('content') || '').join(' | ');
     } catch {}
 
+    // Run validateInstall() (or Launcher equivalent) and capture output; restore console when done
     try {
       if (status.validatePresent) {
         try {
@@ -176,6 +200,7 @@ async function runInPage() {
     const hasError = captured.some(m => m.level === 'error' || /error|failed|not found|blocked/i.test(m.text));
     const hasWarn = captured.some(m => m.level === 'warn' || /warn|missing|no visitor|not initiali[sz]ed/i.test(m.text));
 
+    // Build built-in advice and checks from status and captured output
     const advice = [];
     const checks = [];
 
@@ -225,6 +250,7 @@ async function runInPage() {
     return { status, captured, advice, checks, cspMeta, apiKeyFound, hasError, hasWarn };
   }
 
+  // 1) Run captureAndInspect in the current tab (MAIN world)
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const [{ result: pageResult }] = await chrome.scripting.executeScript({
     target: { tabId: tab.id },
@@ -236,6 +262,7 @@ async function runInPage() {
     return { ...pageResult, origin: 'page', pageUrl: tab && tab.url ? tab.url : 'unknown', launcherAttempted: false };
   }
 
+  // 2) Pendo not on current page: try to find a Pendo Launcher (or Beta) tab and run there
   async function findLauncherTab() {
     const hasTabsPermission = !chrome.permissions || !chrome.permissions.contains
       ? true
@@ -265,14 +292,13 @@ async function runInPage() {
 
     const standard = await searchWithPatterns([/pendo launcher/, /pendo-launcher/]);
     if (standard) return { tab: standard, variant: 'launcher' };
-
     const beta = await searchWithPatterns([/pendo launcher \(beta\)/, /pendo-launcher-beta/, /launcher beta/]);
     if (beta) return { tab: beta, variant: 'launcher-beta' };
 
     return null;
   }
 
-    const launcherLookup = await findLauncherTab();
+  const launcherLookup = await findLauncherTab();
     const launcherTab = launcherLookup && launcherLookup.tab;
     const launcherVariant = launcherLookup && launcherLookup.variant ? launcherLookup.variant : 'launcher';
     if (!launcherTab) {
@@ -296,10 +322,12 @@ async function runInPage() {
     });
 
   const fallback = launcherResult || pageResult || { status: { pendoPresent: false, validatePresent: false, version: null, detectedApiKey: null, visitorId: null, accountId: null, resourceHits: [] }, captured: [], advice: [], checks: [], cspMeta: '', apiKeyFound: false, hasError: true, hasWarn: false };
-    return { ...fallback, origin: launcherResult ? launcherVariant : 'page', pageUrl: launcherTab && launcherTab.url ? launcherTab.url : (tab && tab.url ? tab.url : 'unknown'), launcherAttempted: true, launcherFound: !!launcherResult };
-  }
+  return { ...fallback, origin: launcherResult ? launcherVariant : 'page', pageUrl: launcherTab && launcherTab.url ? launcherTab.url : (tab && tab.url ? tab.url : 'unknown'), launcherAttempted: true, launcherFound: !!launcherResult };
+}
 
-  async function getAiConfig() {
+// ========== AI advice (optional) ==========
+/** Read AI endpoint, API key, and model from extension storage. */
+async function getAiConfig() {
     return new Promise(resolve => {
       try {
         if (!chrome.storage || !chrome.storage.local) return resolve({});
@@ -311,6 +339,7 @@ async function runInPage() {
     });
   }
 
+  /** Build prompt for AI from validation context (URL, status, logs, CSP). */
   function buildAiPrompt(context) {
     const lines = [];
     lines.push('You are a Pendo installation assistant. Suggest concise, actionable remediation steps.');
@@ -332,6 +361,7 @@ async function runInPage() {
     return lines.join('\n');
   }
 
+  /** Call configured AI API for remediation suggestions; returns array of { text, source: 'ai' }. */
   async function requestAiAdvice(context) {
     const cfg = await getAiConfig();
     if (!cfg.aiEndpoint || !cfg.aiApiKey) return [];
@@ -371,11 +401,13 @@ async function runInPage() {
     }
   }
 
+// ========== Popup UI: bind elements and event handlers ==========
   document.addEventListener('DOMContentLoaded', async () => {
     const statusEl = document.getElementById('status');
     const logsEl = document.getElementById('logs');
     const adviceEl = document.getElementById('advice');
 
+    /** Render checks (passed) and advice items into the advice list. */
     function renderAdvice(checks, adviceList) {
       adviceEl.innerHTML = '';
       (checks || []).forEach(c => {
@@ -393,12 +425,14 @@ async function runInPage() {
       });
     }
 
-  function setKV(id, value) {
+    /** Set text of a key-value cell by id; use "—" for null/empty. */
+    function setKV(id, value) {
     document.getElementById(id).textContent = value == null || value === "" ? "—" : String(value);
   }
 
   let lastContext = null;
 
+  /** Run validation on current tab (or Launcher), update status/summary/advice/logs, optionally fetch AI advice. */
   document.getElementById('run').addEventListener('click', async () => {
     setStatus(statusEl, '', 'Running…');
     adviceEl.innerHTML = '';
@@ -463,7 +497,7 @@ async function runInPage() {
     }
   });
 
-  // Export buttons
+  /** Export last run as Markdown report file. */
   document.getElementById('exportMd').addEventListener('click', async () => {
     if (!lastContext) return;
     try {
@@ -473,6 +507,7 @@ async function runInPage() {
       downloadBlob(fname, 'text/markdown', md);
     } catch (e) { console.error(e); }
   });
+  /** Export last run as raw JSON file. */
   document.getElementById('exportJson').addEventListener('click', async () => {
     if (!lastContext) return;
     try {
@@ -483,11 +518,12 @@ async function runInPage() {
     } catch (e) { console.error(e); }
   });
 
-  // Copy buttons
+  /** Copy advice list text to clipboard. */
   document.getElementById('copyAdvice').onclick = () => {
     const items = Array.from(adviceEl.querySelectorAll('li')).map(li => `• ${li.textContent}`).join('\\n');
     navigator.clipboard.writeText(items || 'No advice.');
   };
+  /** Copy captured log lines to clipboard. */
   document.getElementById('copyLogs').onclick = () => {
     const all = Array.from(document.querySelectorAll('#logs .log-line')).map(div => div.textContent.trim()).join('\\n');
     navigator.clipboard.writeText(all || 'No logs captured.');
