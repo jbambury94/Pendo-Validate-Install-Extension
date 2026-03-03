@@ -132,6 +132,27 @@ function downloadBlob(filename, mime, text) {
   setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
 }
 
+// ========== Pendo debugger / VDS (run in page via executeScript) ==========
+function enableDebuggingInPage() {
+  const pendo = (typeof window !== 'undefined' && (window.pendo || window.Pendo)) || null;
+  if (!pendo || typeof pendo.enableDebugging !== 'function') return { ok: false, message: 'Pendo not found or enableDebugging not available on this page.' };
+  try {
+    pendo.enableDebugging();
+    return { ok: true };
+  } catch (e) { return { ok: false, message: (e && e.message) || String(e) }; }
+}
+function startVisitorDebugSessionInPage() {
+  const pendo = (typeof window !== 'undefined' && (window.pendo || window.Pendo)) || null;
+  if (!pendo) return { ok: false, message: 'Pendo not found on this page.' };
+  if (typeof pendo.startVisitorDebugSession === 'function') {
+    try {
+      pendo.startVisitorDebugSession();
+      return { ok: true };
+    } catch (e) { return { ok: false, message: (e && e.message) || String(e) }; }
+  }
+  return { ok: false, message: 'startVisitorDebugSession not available on this agent.' };
+}
+
 // ========== Page validation: inject and run in tab ==========
 /**
  * Run validation: execute captureAndInspect in the active tab (MAIN world).
@@ -543,6 +564,36 @@ async function getAiConfig() {
       setStatus(statusEl, 'err', 'Failed');
       console.error(e);
     }
+  });
+
+  /** Run a function in the active tab (MAIN world) and return its result. */
+  async function runInActiveTab(fn) {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab || !tab.id) return { ok: false, message: 'No active tab' };
+    try {
+      const [{ result }] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: 'MAIN', func: fn });
+      return result || { ok: false, message: 'No result' };
+    } catch (e) {
+      return { ok: false, message: e && e.message ? e.message : String(e) };
+    }
+  }
+
+  /** Enable Pendo Debugger: calls pendo.enableDebugging() in the page. See https://web-sdk.pendo.io/public/debugging/ */
+  document.getElementById('launchDebugger').addEventListener('click', async () => {
+    const statusEl = document.getElementById('status');
+    setStatus(statusEl, '', '…');
+    const res = await runInActiveTab(enableDebuggingInPage);
+    if (res.ok) setStatus(statusEl, 'ok', 'Debugger enabled');
+    else setStatus(statusEl, 'err', res.message || 'Failed');
+  });
+
+  /** Start Visitor Debug Session (VDS): calls pendo.startVisitorDebugSession() if available. */
+  document.getElementById('launchVds').addEventListener('click', async () => {
+    const statusEl = document.getElementById('status');
+    setStatus(statusEl, '', '…');
+    const res = await runInActiveTab(startVisitorDebugSessionInPage);
+    if (res.ok) setStatus(statusEl, 'ok', 'VDS started');
+    else setStatus(statusEl, 'err', res.message || 'Failed');
   });
 
   /** Export last run as Markdown report file. */
