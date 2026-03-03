@@ -10,64 +10,111 @@ function setStatus(el, cls, text) {
 }
 function toIso(dt=new Date()) { return dt.toISOString(); }
 
+// ========== Pendo support base URLs (for report links) ==========
+const PENDO_SUPPORT = {
+  installGuide: 'https://support.pendo.io/hc/en-us/articles/360046272771',
+  installComponents: 'https://support.pendo.io/hc/en-us/articles/21362607464987-Components-of-the-install-script',
+  agentSettings: 'https://support.pendo.io/hc/en-us/articles/360031832152-Pendo-agent-settings',
+  identifyVisitors: 'https://support.pendo.io/hc/en-us/articles/22764466082715-Identify-visitors-and-metadata-through-browser-scripting',
+  csp: 'https://support.pendo.io/hc/en-us/articles/360032209131-Content-Security-Policy-CSP',
+  spa: 'https://support.pendo.io/hc/en-us/articles/360031862272-Install-Pendo-on-a-single-page-web-application',
+  helpCenter: 'https://support.pendo.io/hc/en-us',
+  technicalSupport: 'https://support.pendo.io/hc/en-us/articles/360034163971-Get-help-with-Pendo-from-Technical-Support'
+};
+
 // ========== Advice normalization ==========
-/** Normalize advice items to { text, source } and filter empty. */
+/** Normalize advice items to { text, source, supportUrl } and filter empty. Resolves supportKey to supportUrl. */
 function normalizeAdviceList(advice = []) {
   return advice.map(a => {
-    if (typeof a === 'string') return { text: a, source: 'builtin' };
-    if (a && typeof a === 'object') return { text: a.text || '', source: a.source || 'builtin' };
-    return { text: String(a), source: 'builtin' };
+    let text, source, supportUrl;
+    if (typeof a === 'string') { text = a; source = 'builtin'; supportUrl = PENDO_SUPPORT.helpCenter; }
+    else if (a && typeof a === 'object') {
+      text = a.text || '';
+      source = a.source || 'builtin';
+      supportUrl = a.supportUrl || (a.supportKey && PENDO_SUPPORT[a.supportKey]) || (source === 'ai' ? PENDO_SUPPORT.technicalSupport : PENDO_SUPPORT.helpCenter);
+    } else { text = String(a); source = 'builtin'; supportUrl = PENDO_SUPPORT.helpCenter; }
+    return { text, source, supportUrl };
   }).filter(a => a.text);
 }
 
 // ========== Report building and download ==========
-/** Build a Markdown report from validation context (URL, status, captured logs, advice, CSP, etc.). */
+/** Build a single human-readable Markdown report: overview, metadata, errors (with support links), advice (with support links), captured output. */
 function buildMarkdownReport(context) {
-  const { pageUrl, timestamp, status, captured, advice, checks, cspMeta, apiKeyFound } = context;
+  const { pageUrl, timestamp, status, captured, advice, checks, cspMeta, apiKeyFound, origin } = context;
+  const adviceList = normalizeAdviceList(advice || []);
+  const errors = (captured || []).filter(l => l.level === 'error');
+  const hasError = errors.length > 0 || (context.hasError === true);
+  const hasWarn = (captured || []).some(l => l.level === 'warn') || (context.hasWarn === true);
+  let statusLine = 'Looks healthy';
+  if (!status.pendoPresent) statusLine = 'Pendo not found';
+  else if (!status.validatePresent) statusLine = 'No validateInstall()';
+  else if (hasError) statusLine = 'Errors found';
+  else if (hasWarn) statusLine = 'Warnings found';
+  if (origin === 'launcher') statusLine += ' (via Pendo Launcher)';
+  else if (origin === 'launcher-beta') statusLine += ' (via Pendo Launcher Beta)';
+
   const lines = [];
   lines.push(`# Pendo Validate Report`);
   lines.push("");
+  lines.push(`Share this file with support or use the links below for official Pendo guidance.`);
+  lines.push("");
   lines.push(`- **Page URL:** ${pageUrl}`);
   lines.push(`- **Timestamp:** ${timestamp}`);
+  lines.push(`- **Status:** ${statusLine}`);
   lines.push("");
-  lines.push(`## Summary`);
-  lines.push(`- Pendo present: ${status.pendoPresent}`);
-  lines.push(`- validateInstall present: ${status.validatePresent}`);
-  lines.push(`- Agent version: ${status.version || 'unknown'}`);
-  lines.push(`- API key found: ${apiKeyFound}`);
-  lines.push(`- Detected API key: ${status.detectedApiKey || 'unknown'}`);
-  lines.push(`- VisitorId: ${status.visitorId || 'not set'}`);
-  lines.push(`- AccountId: ${status.accountId==null?'not set':status.accountId}`);
-  lines.push(`- Pendo resource hits: ${status.resourceHits ? status.resourceHits.length : 0}`);
-  lines.push("");
+  lines.push(`## Metadata`);
+  const meta = {
+    pageUrl,
+    timestamp,
+    origin: origin || 'page',
+    pendoPresent: status.pendoPresent,
+    validateInstallPresent: status.validatePresent,
+    agentVersion: status.version || 'unknown',
+    apiKeyFound: !!apiKeyFound,
+    detectedApiKey: status.detectedApiKey || 'unknown',
+    visitorId: status.visitorId || 'not set',
+    accountId: status.accountId == null ? 'not set' : status.accountId,
+    resourceHitCount: (status.resourceHits && status.resourceHits.length) || 0,
+    capturedLineCount: (captured && captured.length) || 0
+  };
   if (status.resourceHits && status.resourceHits.length) {
-    lines.push(`### Observed Pendo resources`);
-    status.resourceHits.forEach((r,i)=>{
-      lines.push(`- [${i+1}] ${r.initiatorType || 'resource'}: ${r.name}`);
+    meta.observedPendoResources = status.resourceHits.map(r => ({ initiatorType: r.initiatorType || 'resource', name: r.name }));
+  }
+  if (cspMeta) meta.cspMeta = cspMeta;
+  lines.push("```json");
+  lines.push(JSON.stringify(meta, null, 2));
+  lines.push("```");
+  lines.push("");
+
+  lines.push(`## Errors`);
+  if (errors.length === 0 && !hasError) {
+    lines.push(`No errors detected.`);
+  } else {
+    errors.forEach(l => {
+      lines.push(`- ${l.text} — [Pendo Help: Installation & troubleshooting](${PENDO_SUPPORT.installGuide})`);
     });
-    lines.push("");
+    if (errors.length === 0 && hasError) {
+      lines.push(`- Validation reported issues. See Advice and Captured Output below. — [Pendo Help Center](${PENDO_SUPPORT.helpCenter})`);
+    }
   }
-  if (cspMeta) {
-    lines.push(`### Meta CSP`);
-    lines.push("```");
-    lines.push(cspMeta);
-    lines.push("```");
-    lines.push("");
-  }
+  lines.push("");
+
+  lines.push(`## Advice`);
   if (checks && checks.length) {
-    lines.push(`## Checks Passed`);
+    lines.push(`### Checks passed`);
     checks.forEach(c => lines.push(`- ${c}`));
     lines.push("");
   }
-  const adviceList = normalizeAdviceList(advice);
-  if (adviceList && adviceList.length) {
-    lines.push(`## Advice`);
+  if (adviceList.length) {
+    lines.push(`### Recommendations`);
     adviceList.forEach(a => {
       const prefix = a.source === 'ai' ? '[AI] ' : '';
-      lines.push(`- ${prefix}${a.text}`);
+      lines.push(`- ${prefix}${a.text} — [Pendo Help](${a.supportUrl})`);
     });
-    lines.push("");
   }
+  if (!adviceList.length && (!checks || !checks.length)) lines.push(`No advice items.`);
+  lines.push("");
+
   lines.push(`## Captured Output`);
   if (!captured || !captured.length) lines.push(`No output captured.`);
   else captured.forEach(l => lines.push(`- [${l.level}] ${l.text}`));
@@ -83,6 +130,27 @@ function downloadBlob(filename, mime, text) {
   const a = document.createElement('a'); a.href = url; a.download = filename;
   document.body.appendChild(a); a.click();
   setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
+}
+
+// ========== Pendo debugger / VDS (run in page via executeScript) ==========
+function enableDebuggingInPage() {
+  const pendo = (typeof window !== 'undefined' && (window.pendo || window.Pendo)) || null;
+  if (!pendo || typeof pendo.enableDebugging !== 'function') return { ok: false, message: 'Pendo not found or enableDebugging not available on this page.' };
+  try {
+    pendo.enableDebugging();
+    return { ok: true };
+  } catch (e) { return { ok: false, message: (e && e.message) || String(e) }; }
+}
+function startVisitorDebugSessionInPage() {
+  const pendo = (typeof window !== 'undefined' && (window.pendo || window.Pendo)) || null;
+  if (!pendo) return { ok: false, message: 'Pendo not found on this page.' };
+  if (typeof pendo.startVisitorDebugSession === 'function') {
+    try {
+      pendo.startVisitorDebugSession();
+      return { ok: true };
+    } catch (e) { return { ok: false, message: (e && e.message) || String(e) }; }
+  }
+  return { ok: false, message: 'startVisitorDebugSession not available on this agent.' };
 }
 
 // ========== Page validation: inject and run in tab ==========
@@ -205,18 +273,18 @@ async function runInPage() {
     const checks = [];
 
     if (!status.pendoPresent) {
-      advice.push({ text: "Pendo agent not detected. Ensure the snippet is installed and loads on this URL. Verify CSP and network allow Pendo domains.", source: 'builtin' });
+      advice.push({ text: "Pendo agent not detected. Ensure the snippet is installed and loads on this URL. Verify CSP and network allow Pendo domains.", source: 'builtin', supportKey: 'installGuide' });
     } else if (!status.validatePresent) {
-      advice.push({ text: "Pendo found, but validateInstall() is unavailable. The agent may be customised or outdated. Update to a supported agent.", source: 'builtin' });
+      advice.push({ text: "Pendo found, but validateInstall() is unavailable. The agent may be customised or outdated. Update to a supported agent.", source: 'builtin', supportKey: 'agentSettings' });
     }
 
     if (apiKeyFound) checks.push("API key found in output or agent data.");
-    else advice.push({ text: "No API key detected. Verify the correct agent is loading and that the snippet references your subscription key.", source: 'builtin' });
+    else advice.push({ text: "No API key detected. Verify the correct agent is loading and that the snippet references your subscription key.", source: 'builtin', supportKey: 'installComponents' });
 
     if (status.pendoPresent) {
-      if (!status.visitorId) advice.push({ text: "Visitor identity is not set. Call pendo.initialize with a visitorId after authentication.", source: 'builtin' });
+      if (!status.visitorId) advice.push({ text: "Visitor identity is not set. Call pendo.initialize with a visitorId after authentication.", source: 'builtin', supportKey: 'identifyVisitors' });
       else checks.push("visitorId present.");
-      if (status.accountId == null) advice.push({ text: "accountId not found. If you use accounts, provide accountId in pendo.initialize.", source: 'builtin' });
+      if (status.accountId == null) advice.push({ text: "accountId not found. If you use accounts, provide accountId in pendo.initialize.", source: 'builtin', supportKey: 'identifyVisitors' });
       else checks.push("accountId present.");
     }
 
@@ -225,23 +293,23 @@ async function runInPage() {
       const lc = cspMeta.toLowerCase();
       needsDomains.forEach(d => {
         if (!lc.includes(d)) {
-          advice.push({ text: `CSP meta tag may be missing '${d}'. Ensure script-src and connect-src allow required Pendo domains.`, source: 'builtin' });
+          advice.push({ text: `CSP meta tag may be missing '${d}'. Ensure script-src and connect-src allow required Pendo domains.`, source: 'builtin', supportKey: 'csp' });
         }
       });
     } else if (/content security policy|refused to connect|blocked by csp/i.test(all)) {
-      advice.push({ text: "CSP is blocking Pendo. Add required Pendo domains to script-src and connect-src.", source: 'builtin' });
+      advice.push({ text: "CSP is blocking Pendo. Add required Pendo domains to script-src and connect-src.", source: 'builtin', supportKey: 'csp' });
     }
 
     if (status.resourceHits.length === 0 && status.pendoPresent) {
-      advice.push({ text: "No Pendo network resources observed. If using a deferred or self-hosted setup, ensure agent requests are not blocked.", source: 'builtin' });
+      advice.push({ text: "No Pendo network resources observed. If using a deferred or self-hosted setup, ensure agent requests are not blocked.", source: 'builtin', supportKey: 'spa' });
     }
 
     if (status.validatePresent && !hasError && !hasWarn && captured.length > 0) {
       checks.push("validateInstall() produced no warnings or errors.");
     }
 
-    if (advice.length === 0 && checks.length > 0) advice.push({ text: "Installation looks healthy based on current checks.", source: 'builtin' });
-    else if (advice.length === 0) advice.push({ text: "Review the output below and compare with a known-good page. Check initialise timing and data mapping.", source: 'builtin' });
+    if (advice.length === 0 && checks.length > 0) advice.push({ text: "Installation looks healthy based on current checks.", source: 'builtin', supportKey: 'helpCenter' });
+    else if (advice.length === 0) advice.push({ text: "Review the output below and compare with a known-good page. Check initialise timing and data mapping.", source: 'builtin', supportKey: 'spa' });
 
     if (variant === 'launcher') {
       captured.unshift({ level: 'info', text: 'Validated via Pendo Launcher window.' });
@@ -393,11 +461,11 @@ async function getAiConfig() {
       const data = await res.json();
       const content = data?.choices?.[0]?.message?.content || '';
       if (!content) return [];
-      return content.split(/\n+/).map(t => t.replace(/^[-*]\s*/, '').trim()).filter(Boolean).map(text => ({ text, source: 'ai' }));
+      return content.split(/\n+/).map(t => t.replace(/^[-*]\s*/, '').trim()).filter(Boolean).map(text => ({ text, source: 'ai', supportUrl: PENDO_SUPPORT.technicalSupport }));
     } catch (e) {
       clearTimeout(timer);
       console.error('AI request failed', e);
-      return [{ text: 'AI suggestion unavailable: request failed or timed out. Check API key/endpoint configuration.', source: 'ai' }];
+      return [{ text: 'AI suggestion unavailable: request failed or timed out. Check API key/endpoint configuration.', source: 'ai', supportUrl: PENDO_SUPPORT.technicalSupport }];
     }
   }
 
@@ -479,7 +547,8 @@ async function getAiConfig() {
       lastContext = {
         pageUrl: pageUrl || 'unknown',
         timestamp: toIso(new Date()),
-        status, captured, advice: adviceList, checks, cspMeta: cspMeta || '', apiKeyFound, origin: origin || 'page'
+        status, captured, advice: adviceList, checks, cspMeta: cspMeta || '', apiKeyFound, origin: origin || 'page',
+        hasError: !!hasError, hasWarn: !!hasWarn
       };
 
       const failureDetected = !status.validatePresent || hasError || hasWarn;
@@ -495,6 +564,36 @@ async function getAiConfig() {
       setStatus(statusEl, 'err', 'Failed');
       console.error(e);
     }
+  });
+
+  /** Run a function in the active tab (MAIN world) and return its result. */
+  async function runInActiveTab(fn) {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab || !tab.id) return { ok: false, message: 'No active tab' };
+    try {
+      const [{ result }] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: 'MAIN', func: fn });
+      return result || { ok: false, message: 'No result' };
+    } catch (e) {
+      return { ok: false, message: e && e.message ? e.message : String(e) };
+    }
+  }
+
+  /** Enable Pendo Debugger: calls pendo.enableDebugging() in the page. See https://web-sdk.pendo.io/public/debugging/ */
+  document.getElementById('launchDebugger').addEventListener('click', async () => {
+    const statusEl = document.getElementById('status');
+    setStatus(statusEl, '', '…');
+    const res = await runInActiveTab(enableDebuggingInPage);
+    if (res.ok) setStatus(statusEl, 'ok', 'Debugger enabled');
+    else setStatus(statusEl, 'err', res.message || 'Failed');
+  });
+
+  /** Start Visitor Debug Session (VDS): calls pendo.startVisitorDebugSession() if available. */
+  document.getElementById('launchVds').addEventListener('click', async () => {
+    const statusEl = document.getElementById('status');
+    setStatus(statusEl, '', '…');
+    const res = await runInActiveTab(startVisitorDebugSessionInPage);
+    if (res.ok) setStatus(statusEl, 'ok', 'VDS started');
+    else setStatus(statusEl, 'err', res.message || 'Failed');
   });
 
   /** Export last run as Markdown report file. */
