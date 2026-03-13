@@ -19,7 +19,7 @@
     <div class="content">
       <!-- Run validation button and status badge -->
       <div class="row">
-        <button id="run">Validate Pendo Install</button>
+        <button id="run" data-action="validate">Validate Pendo Install</button>
         <span id="status" class="badge">Idle</span>
       </div>
 
@@ -43,7 +43,7 @@
       <div class="panel">
         <div class="flex">
           <strong>Advice</strong>
-          <button id="copyAdvice" class="small button--ghost">Copy</button>
+          <button id="copyAdvice" class="small button--ghost" data-action="copy-advice">Copy</button>
         </div>
         <ul id="advice" class="advice-list" aria-live="polite"></ul>
       </div>
@@ -52,11 +52,11 @@
       <div class="panel">
         <div class="flex">
           <strong>Debug</strong>
-          <a href="https://web-sdk.pendo.io/public/debugging/" target="_blank" rel="noopener" class="small muted">Docs</a>
+          <a href="https://web-sdk.pendo.io/public/debugging/" target="_blank" rel="noopener" class="small muted" data-action="docs-debugging">Docs</a>
         </div>
         <div class="row">
-          <button id="launchDebugger">Enable Pendo Debugger</button>
-          <button id="launchVds" class="button--ghost">Start VDS</button>
+          <button id="launchDebugger" data-action="launch-debugger">Enable Pendo Debugger</button>
+          <button id="launchVds" class="button--ghost" data-action="launch-vds">Start VDS</button>
         </div>
       </div>
 
@@ -66,8 +66,8 @@
           <strong>Export</strong>
         </div>
         <div class="row">
-          <button id="exportMd">Download Report</button>
-          <button id="exportJson" class="button--ghost">Download raw JSON</button>
+          <button id="exportMd" data-action="export-report">Download Report</button>
+          <button id="exportJson" class="button--ghost" data-action="export-json">Download raw JSON</button>
         </div>
       </div>
 
@@ -75,7 +75,7 @@
       <div class="panel">
         <div class="flex">
           <strong>Captured Output</strong>
-          <button id="copyLogs" class="small button--ghost">Copy</button>
+          <button id="copyLogs" class="small button--ghost" data-action="copy-logs">Copy</button>
         </div>
         <div id="logs"></div>
       </div>

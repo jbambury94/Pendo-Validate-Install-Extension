@@ -1,7 +1,6 @@
 /* CSS custom properties aligned to Pendo brand (pendo.io/brand-guide); Sora for headings, Inter for body */
 :root {
   --pendo-pank: #FF4876;
-  --pendo-pink: #FF4876;
   --pendo-ink: #0b2239;
   --pendo-rose: #fef0f4;
   --pendo-border: #f0d4de;
@@ -49,7 +48,7 @@ button {
   padding: 10px 12px;
   border-radius: 10px;
   border: 1px solid transparent;
-  background: var(--pendo-pink);
+  background: var(--pendo-pank);
   color: #fff;
   font-weight: 600;
   box-shadow: 0 6px 14px rgba(255, 72, 118, 0.18);
