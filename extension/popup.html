@@ -4,6 +4,16 @@
     <meta charset="utf-8" />
     <title>Pendo Validate Lite</title>
     <link rel="stylesheet" href="popup.css">
+    <script>
+(function(publicAppId){
+    (function(p,e,n,d,o){var v,w,x,y,z;o=p[d]=p[d]||{};o._q=o._q||[];
+    v=['initialize','identify','updateOptions','pageLoad','track','trackAgent'];for(w=0,x=v.length;w<x;++w)(function(m){
+        o[m]=o[m]||function(){o._q[m===v[0]?'unshift':'push']([m].concat([].slice.call(arguments,0)));};})(v[w]);
+        y=e.createElement(n);y.async=!0;y.src='https://cdn.eu.pendo.io/agent/static/'+publicAppId+'/pendo.js';
+        z=e.getElementsByTagName(n)[0];z.parentNode.insertBefore(y,z);})(window,document,'script','pendo');
+        // pendo.initialize() called from popup.js with stored visitor UUID
+})('928b3d0d-8a3b-48b1-bf35-a6af3565dcc5');
+    </script>
   </head>
   <body>
     <!-- ========== Hero: title and subtitle ========== -->
@@ -85,4 +95,5 @@
     <!-- Popup logic: validation, advice, export, copy -->
     <script src="popup.js"></script>
   </body>
+  <!-- Pendo Validate extension popup - John Bambury -->
 </html>
