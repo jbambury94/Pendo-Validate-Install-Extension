@@ -3,6 +3,9 @@
   <head>
     <meta charset="utf-8" />
     <title>Pendo Validate Lite</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Sora:wght@400;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="popup.css">
     <script src="pendo-loader.js"></script>
   </head>
@@ -16,11 +19,11 @@
     <div class="content">
       <!-- Run validation button and status badge -->
       <div class="row">
-        <button id="run">Validate Pendo Install</button>
+        <button id="run" data-action="validate">Validate Pendo Install</button>
         <span id="status" class="badge">Idle</span>
       </div>
 
-      <!-- Summary: key-value grid of Pendo/validate state (filled by popup.js) -->
+      <!-- Panel: key-value summary from last run (filled by popup.js) -->
       <div id="summary" class="panel small">
         <div><strong>Page status</strong></div>
         <div class="kv">
@@ -36,43 +39,43 @@
         </div>
       </div>
 
-      <!-- Advice list: checks passed and remediation notes (built-in + optional AI) -->
+      <!-- Panel: checks passed and remediation notes (built-in + optional AI) -->
       <div class="panel">
         <div class="flex">
           <strong>Advice</strong>
-          <button id="copyAdvice" class="small button--ghost">Copy</button>
+          <button id="copyAdvice" class="small button--ghost" data-action="copy-advice">Copy</button>
         </div>
         <ul id="advice" class="advice-list" aria-live="polite"></ul>
       </div>
 
-      <!-- Debug: launch Pendo debugger or VDS on the page -->
+      <!-- Panel: launch Pendo debugger or VDS on the page -->
       <div class="panel">
         <div class="flex">
           <strong>Debug</strong>
-          <a href="https://web-sdk.pendo.io/public/debugging/" target="_blank" rel="noopener" class="small muted">Docs</a>
+          <a href="https://web-sdk.pendo.io/public/debugging/" target="_blank" rel="noopener" class="small muted" data-action="docs-debugging">Docs</a>
         </div>
         <div class="row">
-          <button id="launchDebugger">Enable Pendo Debugger</button>
-          <button id="launchVds" class="button--ghost">Start VDS</button>
+          <button id="launchDebugger" data-action="launch-debugger">Enable Pendo Debugger</button>
+          <button id="launchVds" class="button--ghost" data-action="launch-vds">Start VDS</button>
         </div>
       </div>
 
-      <!-- Export: download report as Markdown or raw JSON -->
+      <!-- Panel: download report as Markdown or raw JSON -->
       <div class="panel">
         <div class="flex">
           <strong>Export</strong>
         </div>
         <div class="row">
-          <button id="exportMd">Download Report</button>
-          <button id="exportJson" class="button--ghost">Download raw JSON</button>
+          <button id="exportMd" data-action="export-report">Download Report</button>
+          <button id="exportJson" class="button--ghost" data-action="export-json">Download raw JSON</button>
         </div>
       </div>
 
-      <!-- Captured console output from validateInstall() run in the page -->
+      <!-- Panel: captured console output from validateInstall() run in the page -->
       <div class="panel">
         <div class="flex">
           <strong>Captured Output</strong>
-          <button id="copyLogs" class="small button--ghost">Copy</button>
+          <button id="copyLogs" class="small button--ghost" data-action="copy-logs">Copy</button>
         </div>
         <div id="logs"></div>
       </div>

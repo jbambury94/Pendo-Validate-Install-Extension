@@ -11,7 +11,7 @@
   for (var w = 0, x = v.length; w < x; ++w) (function (m) {
     o[m] = o[m] || function () { o._q[m === v[0] ? 'unshift' : 'push']([m].concat([].slice.call(arguments, 0))); };
   })(v[w]);
-  // MV3 compatibility: agent checks this to avoid "incompatible with manifest V3" warning
+  // useAssetHostForDesigner tells the agent this is an MV3 extension so it uses the correct asset host and avoids "incompatible with manifest V3" warning
   p.PendoConfig = p.PendoConfig || {};
   p.PendoConfig.useAssetHostForDesigner = true;
   var y = e.createElement(n);
