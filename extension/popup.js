@@ -528,10 +528,11 @@ async function getAiConfig() {
       });
     }
 
-    /** Set text of a key-value cell by id; use "—" for null/empty. */
+    /** Set text of a key-value cell by id; use "—" for null/empty. No-op if element is missing. */
     function setKV(id, value) {
-    document.getElementById(id).textContent = value == null || value === "" ? "—" : String(value);
-  }
+      const el = document.getElementById(id);
+      if (el) el.textContent = value == null || value === "" ? "—" : String(value);
+    }
 
   let lastContext = null;
 

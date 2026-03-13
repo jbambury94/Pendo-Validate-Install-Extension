@@ -6,8 +6,12 @@ A tiny Chrome extension that runs `pendo.validateInstall()` on the current tab a
 
 - `extension/` – the unpacked Chrome extension (Manifest V3)
   - `manifest.json`
-  - `popup.html`, `popup.js`
+  - `popup.html`, `popup.js`, `popup.css`
+  - `pendo-loader.js` – loads the bundled Pendo agent in the popup
+  - `vendor/pendo.js` – bundled Pendo agent (used by the extension; no end-user update)
   - `icons/`
+
+The popup uses the Pendo agent from `extension/vendor/pendo.js` so it complies with MV3 CSP (`script-src 'self'`).
 
 ## Run locally (unpacked extension)
 
