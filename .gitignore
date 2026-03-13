@@ -3,3 +3,4 @@
 *.bak
 *.tmp
 *.swp
+.cursor/rules/version-on-commit.mdc

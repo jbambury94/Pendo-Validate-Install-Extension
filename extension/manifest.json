@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Pendo Validate Install Ext",
-  "version": "1.3.1",
+  "version": "1.4.0",
   "description": "Validates Pendo Install (Snippet or Launcher), captures console, checks identity/CSP, and confirms whether an API key is present.",
   "permissions": [
     "scripting",

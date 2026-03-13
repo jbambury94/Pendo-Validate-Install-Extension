@@ -528,10 +528,11 @@ async function getAiConfig() {
       });
     }
 
-    /** Set text of a key-value cell by id; use "—" for null/empty. */
+    /** Set text of a key-value cell by id; use "—" for null/empty. No-op if element is missing. */
     function setKV(id, value) {
-    document.getElementById(id).textContent = value == null || value === "" ? "—" : String(value);
-  }
+      const el = document.getElementById(id);
+      if (el) el.textContent = value == null || value === "" ? "—" : String(value);
+    }
 
   let lastContext = null;
 
@@ -543,14 +544,20 @@ async function getAiConfig() {
 
     try {
       const res = await runInPage();
+      if (!res || !res.status) {
+        setStatus(statusEl, 'err', 'Failed');
+        return;
+      }
       const { status, captured, advice, checks, cspMeta, apiKeyFound, hasError, hasWarn, origin, pageUrl } = res;
 
       const originNote = origin === 'launcher' ? ' (via Pendo Launcher)' : origin === 'launcher-beta' ? ' (via Pendo Launcher Beta)' : '';
+      const hasPositiveSignals = !!(status.visitorId || apiKeyFound || (status.detectedApiKey && status.pendoPresent));
 
       if (!status.pendoPresent) setStatus(statusEl, 'err', 'Pendo not found' + originNote);
       else if (!status.validatePresent) setStatus(statusEl, 'warn', 'No validateInstall()' + originNote);
       else if (captured.some(l => l.level === 'error')) setStatus(statusEl, 'err', 'Errors found' + originNote);
       else if (captured.some(l => l.level === 'warn')) setStatus(statusEl, 'warn', 'Warnings found' + originNote);
+      else if (hasPositiveSignals) setStatus(statusEl, 'ok', 'Looks healthy' + originNote);
       else setStatus(statusEl, 'ok', 'Looks healthy' + originNote);
 
       setKV('kv_pendo', status.pendoPresent);
