@@ -554,9 +554,9 @@ async function getAiConfig() {
 
       if (!status.pendoPresent) setStatus(statusEl, 'err', 'Pendo not found' + originNote);
       else if (!status.validatePresent) setStatus(statusEl, 'warn', 'No validateInstall()' + originNote);
-      else if (hasPositiveSignals) setStatus(statusEl, 'ok', 'Looks healthy' + originNote);
       else if (captured.some(l => l.level === 'error')) setStatus(statusEl, 'err', 'Errors found' + originNote);
       else if (captured.some(l => l.level === 'warn')) setStatus(statusEl, 'warn', 'Warnings found' + originNote);
+      else if (hasPositiveSignals) setStatus(statusEl, 'ok', 'Looks healthy' + originNote);
       else setStatus(statusEl, 'ok', 'Looks healthy' + originNote);
 
       setKV('kv_pendo', status.pendoPresent);
