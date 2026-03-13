@@ -44,6 +44,7 @@ function setStatus(el, cls, text) {
 function toIso(dt=new Date()) { return dt.toISOString(); }
 
 // ========== Pendo support base URLs (for report links) ==========
+/** Support article URLs for report links and advice; keys match supportKey in advice items. */
 const PENDO_SUPPORT = {
   installGuide: 'https://support.pendo.io/hc/en-us/articles/360046272771',
   installComponents: 'https://support.pendo.io/hc/en-us/articles/21362607464987-Components-of-the-install-script',
@@ -191,10 +192,10 @@ function launchVisualDesignStudioInPage() {
 // ========== Page validation: inject and run in tab ==========
 /**
  * Run validation: execute captureAndInspect in the active tab (MAIN world).
- * If Pendo isn't found there, try to find a Pendo Launcher tab and run there; merge result back.
+ * Step 1: run in active tab. Step 2: if Pendo not present, find Pendo Launcher (or Beta) tab and run there; merge result back.
  */
 async function runInPage() {
-  /** Runs in the page context (or Launcher). Captures console, inspects Pendo/validateInstall, builds status/advice/checks. */
+  /** Runs in the page context (or Launcher). Phases: capture console → resolve agent/validate fn → run validateInstall → build status/advice/checks. */
   function captureAndInspect(variant = 'page') {
     const captured = [];
     // Intercept console so we can capture validateInstall() output
@@ -429,7 +430,7 @@ async function runInPage() {
 }
 
 // ========== AI advice (optional) ==========
-/** Read AI endpoint, API key, and model from extension storage. */
+/** Read AI config from chrome.storage.local: aiEndpoint, aiApiKey, aiModel. Used for optional ChatGPT-powered advice. */
 async function getAiConfig() {
     return new Promise(resolve => {
       try {
