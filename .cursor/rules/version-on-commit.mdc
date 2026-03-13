@@ -1,0 +1,11 @@
+---
+description: Bump extension version patch on every commit; major versions are owner-only
+globs: extension/manifest.json
+alwaysApply: true
+---
+
+# Version on commit
+
+- **On every commit**: Update the **patch** version number in `extension/manifest.json` (e.g. `1.3.1` → `1.3.2`).
+- **Major version changes**: Leave these to the project owner; do not bump major (or minor unless asked).
+- Version field is in `extension/manifest.json` under `"version"`.
