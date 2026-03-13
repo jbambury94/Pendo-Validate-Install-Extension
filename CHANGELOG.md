@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.4.3
+- Popup UI redesign: section labels (Page status, Advice, Tools, Captured output), action block, tools two-column layout (Debug | Export), scrollable content and logs, Pendo spacing scale and hierarchy.
+
 ## 1.4.2
 - MV3 compatibility improvements in `pendo-loader.js`; `PendoConfig.useAssetHostForDesigner` for asset host usage in extension context.
 

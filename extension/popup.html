@@ -17,16 +17,22 @@
     </div>
     <!-- ========== Main content ========== -->
     <div class="content">
-      <!-- Run validation button and status badge -->
-      <div class="row">
-        <button id="run" data-action="validate">Validate Pendo Install</button>
-        <span id="status" class="badge">Idle</span>
-      </div>
+      <!-- Primary action: run validation + status -->
+      <section class="action-block">
+        <div class="row">
+          <button id="run" data-action="validate">Validate Pendo Install</button>
+          <span id="status" class="badge">Idle</span>
+        </div>
+      </section>
 
+      <span class="section-label">Page status</span>
       <!-- Panel: key-value summary from last run (filled by popup.js) -->
-      <div id="summary" class="panel small">
+      <div id="summary" class="panel panel--summary small">
         <div><strong>Page status</strong></div>
         <div class="kv">
+          <div>Snippet on page:</div><div class="mono" id="kv_snippet">—</div>
+          <div>Pendo Launcher:</div><div class="mono" id="kv_launcher">—</div>
+          <div>Validated in:</div><div class="mono" id="kv_validated_in">—</div>
           <div>Pendo present:</div><div class="mono" id="kv_pendo">—</div>
           <div>ValidateInstall present:</div><div class="mono" id="kv_validate">—</div>
           <div>Agent version:</div><div class="mono" id="kv_version">—</div>
@@ -39,49 +45,53 @@
         </div>
       </div>
 
+      <span class="section-label">Advice</span>
       <!-- Panel: checks passed and remediation notes (built-in + optional AI) -->
       <div class="panel">
         <div class="flex">
-          <strong>Advice</strong>
+          <strong>Checks and recommendations</strong>
           <button id="copyAdvice" class="small button--ghost" data-action="copy-advice">Copy</button>
         </div>
         <ul id="advice" class="advice-list" aria-live="polite"></ul>
       </div>
 
-      <!-- Panel: launch Pendo debugger or VDS on the page -->
-      <div class="panel">
-        <div class="flex">
-          <strong>Debug</strong>
-          <a href="https://web-sdk.pendo.io/public/debugging/" target="_blank" rel="noopener" class="small muted" data-action="docs-debugging">Docs</a>
+      <span class="section-label">Tools</span>
+      <section class="tools-section">
+        <!-- Panel: launch Pendo debugger or VDS on the page -->
+        <div class="panel">
+          <div class="flex">
+            <strong>Debug</strong>
+            <a href="https://web-sdk.pendo.io/public/debugging/" target="_blank" rel="noopener" class="small muted" data-action="docs-debugging">Docs</a>
+          </div>
+          <div class="row">
+            <button id="launchDebugger" data-action="launch-debugger">Enable Pendo Debugger</button>
+            <button id="launchVds" class="button--ghost" data-action="launch-vds">Start VDS</button>
+          </div>
         </div>
-        <div class="row">
-          <button id="launchDebugger" data-action="launch-debugger">Enable Pendo Debugger</button>
-          <button id="launchVds" class="button--ghost" data-action="launch-vds">Start VDS</button>
+        <!-- Panel: download report as Markdown or raw JSON -->
+        <div class="panel">
+          <div class="flex">
+            <strong>Export</strong>
+          </div>
+          <div class="row">
+            <button id="exportMd" data-action="export-report">Download Report</button>
+            <button id="exportJson" class="button--ghost" data-action="export-json">Download raw JSON</button>
+          </div>
         </div>
-      </div>
+      </section>
 
-      <!-- Panel: download report as Markdown or raw JSON -->
-      <div class="panel">
-        <div class="flex">
-          <strong>Export</strong>
-        </div>
-        <div class="row">
-          <button id="exportMd" data-action="export-report">Download Report</button>
-          <button id="exportJson" class="button--ghost" data-action="export-json">Download raw JSON</button>
-        </div>
-      </div>
-
+      <span class="section-label">Captured output</span>
       <!-- Panel: captured console output from validateInstall() run in the page -->
       <div class="panel">
         <div class="flex">
           <strong>Captured Output</strong>
           <button id="copyLogs" class="small button--ghost" data-action="copy-logs">Copy</button>
         </div>
-        <div id="logs"></div>
+        <div id="logs" class="logs-container"></div>
       </div>
 
       <!-- User tip about where to run validation -->
-      <p class="muted small">
+      <p class="muted small tip">
         Tip: run this on the target page where the Pendo agent should be present. If extensions or network filters are blocking requests, try Incognito with other extensions disabled.
       </p>
     </div>
