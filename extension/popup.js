@@ -3,6 +3,39 @@
  * Runs validation in the active tab (or Pendo Launcher fallback), shows advice, and supports export/copy.
  */
 
+// ========== Pendo visitor ID (persistent UUID in extension storage) ==========
+const PENDO_VISITOR_ID_KEY = 'pendoVisitorId';
+
+/** Get or create a persistent visitor UUID; store in chrome.storage.local and return it. */
+function getOrCreateVisitorId() {
+  return new Promise((resolve) => {
+    try {
+      if (!chrome.storage || !chrome.storage.local) {
+        resolve(typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : '');
+        return;
+      }
+      chrome.storage.local.get([PENDO_VISITOR_ID_KEY], (result) => {
+        let id = result && result[PENDO_VISITOR_ID_KEY];
+        if (!id || typeof id !== 'string') {
+          id = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : '';
+          if (id) chrome.storage.local.set({ [PENDO_VISITOR_ID_KEY]: id });
+        }
+        resolve(id);
+      });
+    } catch (e) {
+      resolve(typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : '');
+    }
+  });
+}
+
+/** Initialize Pendo with stored visitor UUID (runs as soon as script loads). */
+(async function initPendoWithStoredVisitor() {
+  const visitorId = await getOrCreateVisitorId();
+  if (typeof window.pendo !== 'undefined' && visitorId) {
+    window.pendo.initialize({ visitor: { id: visitorId } });
+  }
+})();
+
 // ========== UI helpers ==========
 function setStatus(el, cls, text) {
   el.className = `badge ${cls}`;
