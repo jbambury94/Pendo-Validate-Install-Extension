@@ -226,9 +226,12 @@ async function runInPage() {
     console.error = (...a) => { push('error', a); original.error(...a); };
     console.info = (...a) => { push('info', a); original.info(...a); };
 
-    // Resolve Pendo agent and validate function (page uses pendo.validateInstall; Launcher may use validateInstallation)
-    const agent = variant === 'launcher' ? ((window && (window.Pendo || window.pendo)) || null) : ((window && window.pendo) || null);
-    const validateFn = variant === 'launcher' ? (agent && agent.validateInstallation) : (agent && agent.validateInstall);
+    // Resolve Pendo agent and validate function (page uses pendo.validateInstall; Launcher/Beta may use validateInstallation or validateInstall)
+    const isLauncher = variant === 'launcher' || variant === 'launcher-beta';
+    const agent = isLauncher ? ((window && (window.Pendo || window.pendo)) || null) : ((window && window.pendo) || null);
+    const validateFn = isLauncher
+      ? (agent && (agent.validateInstallation || agent.validateInstall)) || null
+      : (agent && agent.validateInstall) || null;
 
     const status = {
       pendoPresent: !!agent,
@@ -294,8 +297,8 @@ async function runInPage() {
         } catch (e) {
           captured.push({ level: 'error', text: e && e.message ? e.message : String(e) });
         }
-      } else if (variant === 'launcher') {
-        captured.push({ level: 'warn', text: 'Pendo Launcher found but validateInstallation() is unavailable.' });
+      } else if (isLauncher) {
+        captured.push({ level: 'warn', text: 'Pendo Launcher found but validateInstall/validateInstallation is unavailable.' });
       }
     } catch (e) {
       captured.push({ level: 'error', text: e && e.message ? e.message : String(e) });
@@ -357,6 +360,8 @@ async function runInPage() {
 
     if (variant === 'launcher') {
       captured.unshift({ level: 'info', text: 'Validated via Pendo Launcher window.' });
+    } else if (variant === 'launcher-beta') {
+      captured.unshift({ level: 'info', text: 'Validated via Pendo Launcher (Beta) window.' });
     }
 
     return { status, captured, advice, checks, cspMeta, apiKeyFound, hasError, hasWarn };
@@ -387,10 +392,18 @@ async function runInPage() {
       }
       return null;
     }
-    const standard = await searchWithPatterns([/pendo launcher/, /pendo-launcher/]);
-    if (standard) return { tab: standard, variant: 'launcher' };
-    const beta = await searchWithPatterns([/pendo launcher \(beta\)/, /pendo-launcher-beta/, /launcher beta/]);
+    // Prefer Beta first so "Pendo Launcher (Beta)" is not matched as standard
+    const beta = await searchWithPatterns([
+      /pendo launcher\s*\(\s*beta\s*\)/i,
+      /pendo launcher beta/i,
+      /pendo-launcher-beta/i,
+      /launcher beta/i,
+      /pendo.*beta.*launcher/i,
+      /launcher.*beta/i
+    ]);
     if (beta) return { tab: beta, variant: 'launcher-beta' };
+    const standard = await searchWithPatterns([/pendo launcher/i, /pendo-launcher/i]);
+    if (standard) return { tab: standard, variant: 'launcher' };
     return null;
   }
 
@@ -441,7 +454,7 @@ async function runInPage() {
     target: { tabId: launcherTab.id },
     world: "MAIN",
     func: captureAndInspect,
-    args: [launcherVariant === 'launcher-beta' ? 'launcher' : launcherVariant]
+    args: [launcherVariant]
   });
 
   const fallback = launcherResult || pageResult || { status: { pendoPresent: false, validatePresent: false, version: null, detectedApiKey: null, visitorId: null, accountId: null, resourceHits: [] }, captured: [], advice: [], checks: [], cspMeta: '', apiKeyFound: false, hasError: true, hasWarn: false };
