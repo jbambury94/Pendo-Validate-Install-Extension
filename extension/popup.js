@@ -392,8 +392,12 @@ async function runInPage() {
       }
       return null;
     }
+    // Pendo Launcher (Beta) Chrome extension ID — match by chrome-extension:// URL for reliable detection
+    const PENDO_LAUNCHER_BETA_EXTENSION_ID = 'ggbfghmbjlgbagomdlifpdflpeafbekl';
+    const betaIdPattern = new RegExp(PENDO_LAUNCHER_BETA_EXTENSION_ID, 'i');
     // Prefer Beta first so "Pendo Launcher (Beta)" is not matched as standard
     const beta = await searchWithPatterns([
+      betaIdPattern,
       /pendo launcher\s*\(\s*beta\s*\)/i,
       /pendo launcher beta/i,
       /pendo-launcher-beta/i,
