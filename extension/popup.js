@@ -308,8 +308,8 @@ async function runInPage() {
     }
 
     // Determine API key presence: from output text OR detected data
-    const all = captured.map(m => m.text).join('\\n');
-    const keyRegex = /\\b[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\\b/i;
+    const all = captured.map(m => m.text).join('\n');
+    const keyRegex = /\b[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\b/i;
     const apiKeyFound = keyRegex.test(all) || !!status.detectedApiKey;
 
     const hasError = captured.some(m => m.level === 'error' || /error|failed|not found|blocked/i.test(m.text));
@@ -411,8 +411,14 @@ async function runInPage() {
     return null;
   }
 
+  const EMPTY_RESULT = {
+    status: { pendoPresent: false, validatePresent: false, version: null, detectedApiKey: null, visitorId: null, accountId: null, resourceHits: [] },
+    captured: [], advice: [], checks: [], cspMeta: '', apiKeyFound: false, hasError: true, hasWarn: false
+  };
+
   // Phase 1: Always run in the active tab (top window)
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab || !tab.id) throw new Error('No active tab found.');
   const [{ result: pageResult }] = await chrome.scripting.executeScript({
     target: { tabId: tab.id },
     world: "MAIN",
@@ -440,7 +446,7 @@ async function runInPage() {
   const launcherVariant = launcherLookup && launcherLookup.variant ? launcherLookup.variant : 'launcher';
 
   if (!launcherTab) {
-    const base = pageResult || { status: { pendoPresent: false, validatePresent: false, version: null, detectedApiKey: null, visitorId: null, accountId: null, resourceHits: [] }, captured: [], advice: [], checks: [], cspMeta: '', apiKeyFound: false, hasError: true, hasWarn: false };
+    const base = pageResult || EMPTY_RESULT;
     base.captured = (base.captured || []).concat([{ level: 'info', text: 'Pendo Launcher window not found. Also checked the Pendo Launcher (Beta) extension.' }]);
     return {
       ...base,
@@ -461,7 +467,7 @@ async function runInPage() {
     args: [launcherVariant]
   });
 
-  const fallback = launcherResult || pageResult || { status: { pendoPresent: false, validatePresent: false, version: null, detectedApiKey: null, visitorId: null, accountId: null, resourceHits: [] }, captured: [], advice: [], checks: [], cspMeta: '', apiKeyFound: false, hasError: true, hasWarn: false };
+  const fallback = launcherResult || pageResult || EMPTY_RESULT;
   return {
     ...fallback,
     pageUrl: basePageUrl,
@@ -562,14 +568,32 @@ async function getAiConfig() {
       (checks || []).forEach(c => {
         const li = document.createElement('li');
         li.className = 'advice-item advice-item--check';
-        li.innerHTML = `<span class="advice-item__icon" aria-hidden="true">✔</span><span>${c}</span>`;
+        const icon = document.createElement('span');
+        icon.className = 'advice-item__icon';
+        icon.setAttribute('aria-hidden', 'true');
+        icon.textContent = '✔';
+        const body = document.createElement('span');
+        body.textContent = c;
+        li.appendChild(icon);
+        li.appendChild(body);
         adviceEl.appendChild(li);
       });
       normalizeAdviceList(adviceList).forEach(a => {
         const li = document.createElement('li');
         li.className = 'advice-item advice-item--note';
-        const label = a.source === 'ai' ? '<strong>AI suggestion:</strong> ' : '';
-        li.innerHTML = `<span class="advice-item__icon" aria-hidden="true">•</span><span>${label}${a.text}</span>`;
+        const icon = document.createElement('span');
+        icon.className = 'advice-item__icon';
+        icon.setAttribute('aria-hidden', 'true');
+        icon.textContent = '•';
+        const body = document.createElement('span');
+        if (a.source === 'ai') {
+          const strong = document.createElement('strong');
+          strong.textContent = 'AI suggestion: ';
+          body.appendChild(strong);
+        }
+        body.appendChild(document.createTextNode(a.text));
+        li.appendChild(icon);
+        li.appendChild(body);
         adviceEl.appendChild(li);
       });
     }
@@ -607,7 +631,6 @@ async function getAiConfig() {
       } else if (!status.validatePresent) setStatus(statusEl, 'warn', 'No validateInstall()' + originNote);
       else if (captured.some(l => l.level === 'error')) setStatus(statusEl, 'err', 'Errors found' + originNote);
       else if (captured.some(l => l.level === 'warn')) setStatus(statusEl, 'warn', 'Warnings found' + originNote);
-      else if (hasPositiveSignals) setStatus(statusEl, 'ok', 'Looks healthy' + originNote);
       else setStatus(statusEl, 'ok', 'Looks healthy' + originNote);
 
       // Page status: snippet, Launcher, validated-in context
@@ -643,7 +666,14 @@ async function getAiConfig() {
           const div = document.createElement('div');
           const badgeClass = level === 'error' ? 'err' : level === 'warn' ? 'warn' : 'ok';
           div.className = `log-line ${badgeClass}`;
-          div.innerHTML = `<span class="badge ${badgeClass}">${level}</span><span class="log-text">${text}</span>`;
+          const badge = document.createElement('span');
+          badge.className = `badge ${badgeClass}`;
+          badge.textContent = level;
+          const msg = document.createElement('span');
+          msg.className = 'log-text';
+          msg.textContent = text;
+          div.appendChild(badge);
+          div.appendChild(msg);
           logsEl.appendChild(div);
         });
       }
