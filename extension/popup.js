@@ -229,15 +229,23 @@ async function runInPage() {
     console.error = (...a) => { push('error', a); original.error(...a); };
     console.info = (...a) => { push('info', a); original.info(...a); };
 
-    // Resolve Pendo agent and validate function; both page and Launcher contexts use validateInstall
+    // Resolve Pendo agent; track which global was found for Launcher detection.
+    // window.Pendo (capital P) is the Launcher-specific global; window.pendo is the standard snippet.
     const isLauncher = variant === 'launcher' || variant === 'launcher-beta';
-    const agent = isLauncher ? ((window && (window.Pendo || window.pendo)) || null) : ((window && window.pendo) || null);
-    const validateFn = isLauncher
-      ? (agent && agent.validateInstall) || null
-      : (agent && agent.validateInstall) || null;
+    let agent, pendoGlobal;
+    if (isLauncher) {
+      if (window && window.Pendo) { agent = window.Pendo; pendoGlobal = 'Pendo'; }
+      else if (window && window.pendo) { agent = window.pendo; pendoGlobal = 'pendo'; }
+      else { agent = null; pendoGlobal = null; }
+    } else {
+      agent = (window && window.pendo) || null;
+      pendoGlobal = agent ? 'pendo' : null;
+    }
+    const validateFn = (agent && agent.validateInstall) || null;
 
     const status = {
       pendoPresent: !!agent,
+      pendoGlobal,
       validatePresent: typeof validateFn === 'function',
       version: null,
       detectedApiKey: null,
@@ -398,12 +406,8 @@ async function runInPage() {
       }
       return null;
     }
-    // Pendo Launcher (Beta) extension ID — used as a title/URL pattern for any web-based tab opened by the extension
-    const PENDO_LAUNCHER_BETA_EXTENSION_ID = 'ggbfghmbjlgbagomdlifpdflpeafbekl';
-    const betaIdPattern = new RegExp(PENDO_LAUNCHER_BETA_EXTENSION_ID, 'i');
     // Prefer Beta first so "Pendo Launcher (Beta)" is not matched as standard
     const beta = await searchWithPatterns([
-      betaIdPattern,
       /pendo launcher\s*\(\s*beta\s*\)/i,
       /pendo launcher beta/i,
       /pendo-launcher-beta/i,
@@ -434,40 +438,49 @@ async function runInPage() {
   const snippetOnPage = !!(pageResult && pageResult.status && pageResult.status.pendoPresent);
   const basePageUrl = tab && tab.url ? tab.url : 'unknown';
 
-  if (snippetOnPage) {
-    return {
-      ...pageResult,
-      pageUrl: basePageUrl,
-      snippetOnPage: true,
-      launcherAttempted: false,
-      launcherPresent: undefined,
-      validatedIn: 'page',
-      origin: 'page'
-    };
-  }
-
-  // Phase 1.5: Snippet absent — check same active tab for window.Pendo injected by the Launcher extension
+  // Phase 1.5: Always check for window.Pendo (Launcher-specific global) in the same tab.
+  // Runs even when a snippet was found — Launcher and snippet can coexist on the same page.
+  // Only pendoGlobal === 'Pendo' counts as Launcher presence; this prevents the snippet's
+  // own window.pendo from being falsely counted as a Launcher detection.
+  let launcherInPageResult = null;
   try {
-    const [{ result: launcherInPageResult }] = await chrome.scripting.executeScript({
+    const [{ result: p15result }] = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       world: 'MAIN',
       func: captureAndInspect,
       args: ['launcher']
     });
-    if (launcherInPageResult && launcherInPageResult.status && launcherInPageResult.status.pendoPresent) {
-      return {
-        ...launcherInPageResult,
-        pageUrl: basePageUrl,
-        snippetOnPage: false,
-        launcherAttempted: true,
-        launcherPresent: true,
-        validatedIn: 'launcher',
-        launcherUrl: basePageUrl,
-        origin: 'launcher'
-      };
+    if (p15result && p15result.status && p15result.status.pendoGlobal === 'Pendo') {
+      launcherInPageResult = p15result;
     }
   } catch (e) {
     console.warn('Phase 1.5 launcher-in-page check failed:', e);
+  }
+  const launcherInPage = launcherInPageResult !== null;
+
+  if (snippetOnPage) {
+    return {
+      ...pageResult,
+      pageUrl: basePageUrl,
+      snippetOnPage: true,
+      launcherAttempted: true,
+      launcherPresent: launcherInPage,
+      validatedIn: 'page',
+      origin: 'page'
+    };
+  }
+
+  if (launcherInPage) {
+    return {
+      ...launcherInPageResult,
+      pageUrl: basePageUrl,
+      snippetOnPage: false,
+      launcherAttempted: true,
+      launcherPresent: true,
+      validatedIn: 'launcher',
+      launcherUrl: basePageUrl,
+      origin: 'launcher'
+    };
   }
 
   // Phase 2: Snippet absent and no Launcher agent on active tab — search for a separate Launcher tab
