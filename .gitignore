@@ -4,3 +4,13 @@
 *.tmp
 *.swp
 .cursor/rules/version-on-commit.mdc
+
+# Dependencies
+node_modules/
+
+# Test output
+coverage/
+.nyc_output/
+
+# Vitest cache
+.vitest-cache/
