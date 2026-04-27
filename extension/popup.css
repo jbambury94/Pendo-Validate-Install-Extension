@@ -216,3 +216,37 @@ pre, code { white-space: pre-wrap; word-break: break-word; font-family: ui-monos
 @media (max-width: 360px) { .tools-section { grid-template-columns: 1fr; } }
 /* Tip at bottom */
 .tip { margin-top: var(--space-4); margin-bottom: 0; }
+/* AI Settings toggle button */
+.ai-settings-toggle {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  font-size: 12px;
+  margin-bottom: var(--space-2);
+}
+.toggle-chevron { transition: transform 0.15s ease; display: inline-block; }
+.ai-settings-toggle[aria-expanded="true"] .toggle-chevron { transform: rotate(90deg); }
+/* AI Settings panel */
+.ai-settings-panel { margin-bottom: var(--space-3); }
+.ai-settings-panel p { margin: var(--space-1) 0 var(--space-3); }
+.settings-field { display: flex; flex-direction: column; gap: 4px; margin-bottom: var(--space-3); }
+.settings-label { font-size: 12px; font-weight: 600; color: var(--pendo-ink); }
+.settings-select,
+.settings-input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--pendo-border);
+  border-radius: 8px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--pendo-ink);
+  background: #fff;
+  box-sizing: border-box;
+  outline: none;
+  transition: border-color 0.12s ease;
+}
+.settings-select:focus, .settings-input:focus { border-color: var(--pendo-pank); }
+.settings-key-row { display: flex; gap: var(--space-2); align-items: center; }
+.settings-key-row .settings-input { flex: 1; }

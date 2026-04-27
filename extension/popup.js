@@ -486,7 +486,7 @@ async function getAiConfig() {
     return new Promise(resolve => {
       try {
         if (!chrome.storage || !chrome.storage.local) return resolve({});
-        chrome.storage.local.get({ aiEndpoint: '', aiApiKey: '', aiModel: 'gpt-4o-mini' }, resolve);
+        chrome.storage.local.get({ aiProvider: 'openai', aiEndpoint: '', aiApiKey: '', aiModel: '' }, resolve);
       } catch (e) {
         console.error(e);
         resolve({});
@@ -519,40 +519,50 @@ async function getAiConfig() {
   /** Call configured AI API for remediation suggestions; returns array of { text, source: 'ai' }. */
   async function requestAiAdvice(context) {
     const cfg = await getAiConfig();
-    if (!cfg.aiEndpoint || !cfg.aiApiKey) return [];
+    if (!cfg.aiApiKey) return [];
 
-    const body = {
-      model: cfg.aiModel || 'gpt-4o-mini',
-      messages: [
-        { role: 'system', content: 'You are a concise Pendo install troubleshooting assistant. Only rely on official Pendo documentation and avoid speculative advice.' },
-        { role: 'user', content: buildAiPrompt(context) }
-      ],
-      temperature: 0.1
-    };
+    const provider = cfg.aiProvider || 'openai';
+    const prompt = buildAiPrompt(context);
+    const systemMsg = 'You are a concise Pendo install troubleshooting assistant. Only rely on official Pendo documentation and avoid speculative advice.';
+
+    let endpoint, headers, body;
+
+    if (provider === 'claude') {
+      const model = cfg.aiModel || 'claude-haiku-4-5-20251001';
+      endpoint = 'https://api.anthropic.com/v1/messages';
+      headers = { 'Content-Type': 'application/json', 'x-api-key': cfg.aiApiKey, 'anthropic-version': '2023-06-01' };
+      body = { model, max_tokens: 1024, system: systemMsg, messages: [{ role: 'user', content: prompt }] };
+    } else if (provider === 'gemini') {
+      const model = cfg.aiModel || 'gemini-2.0-flash';
+      endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${cfg.aiApiKey}`;
+      headers = { 'Content-Type': 'application/json' };
+      body = { contents: [{ parts: [{ text: systemMsg + '\n\n' + prompt }] }], generationConfig: { temperature: 0.1 } };
+    } else {
+      const model = cfg.aiModel || 'gpt-4o-mini';
+      endpoint = cfg.aiEndpoint || 'https://api.openai.com/v1/chat/completions';
+      headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${cfg.aiApiKey}` };
+      body = { model, messages: [{ role: 'system', content: systemMsg }, { role: 'user', content: prompt }], temperature: 0.1 };
+    }
 
     const controller = new AbortController();
     const timeoutMs = cfg.timeoutMs || 8000;
     const timer = setTimeout(() => controller.abort('timeout'), timeoutMs);
     try {
-      const res = await fetch(cfg.aiEndpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${cfg.aiApiKey}`
-        },
-        body: JSON.stringify(body),
-        signal: controller.signal
-      });
+      const res = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify(body), signal: controller.signal });
       clearTimeout(timer);
       if (!res.ok) throw new Error(`AI request failed with status ${res.status}`);
       const data = await res.json();
-      const content = data?.choices?.[0]?.message?.content || '';
+      let content = '';
+      if (provider === 'claude') content = data?.content?.[0]?.text || '';
+      else if (provider === 'gemini') content = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      else content = data?.choices?.[0]?.message?.content || '';
       if (!content) return [];
-      return content.split(/\n+/).map(t => t.replace(/^[-*]\s*/, '').trim()).filter(Boolean).map(text => ({ text, source: 'ai', supportUrl: PENDO_SUPPORT.technicalSupport }));
+      return content.split(/\n+/).map(t => t.replace(/^[-*]\s*/, '').trim()).filter(Boolean)
+        .map(text => ({ text, source: 'ai', supportUrl: PENDO_SUPPORT.technicalSupport }));
     } catch (e) {
       clearTimeout(timer);
       console.error('AI request failed', e);
-      return [{ text: 'AI suggestion unavailable: request failed or timed out. Check API key/endpoint configuration.', source: 'ai', supportUrl: PENDO_SUPPORT.technicalSupport }];
+      return [{ text: 'AI suggestion unavailable: request failed or timed out. Check your API key and provider selection.', source: 'ai', supportUrl: PENDO_SUPPORT.technicalSupport }];
     }
   }
 
@@ -763,4 +773,39 @@ async function getAiConfig() {
     const all = Array.from(document.querySelectorAll('#logs .log-line')).map(div => div.textContent.trim()).join('\\n');
     navigator.clipboard.writeText(all || 'No logs captured.');
   };
+
+  // --- AI Settings panel ---
+  const aiToggleBtn = document.getElementById('aiSettingsToggle');
+  const aiPanel = document.getElementById('aiSettingsPanel');
+  const aiProviderSelect = document.getElementById('aiProviderSelect');
+  const aiApiKeyInput = document.getElementById('aiApiKeyInput');
+  const aiKeyToggle = document.getElementById('aiKeyToggleVisibility');
+  const aiSaveBtn = document.getElementById('aiSettingsSave');
+  const aiSaveStatus = document.getElementById('aiSettingsStatus');
+
+  getAiConfig().then(cfg => {
+    if (cfg.aiProvider) aiProviderSelect.value = cfg.aiProvider;
+    if (cfg.aiApiKey) aiApiKeyInput.value = cfg.aiApiKey;
+  });
+
+  aiToggleBtn.addEventListener('click', () => {
+    const isOpen = !aiPanel.hidden;
+    aiPanel.hidden = isOpen;
+    aiToggleBtn.setAttribute('aria-expanded', String(!isOpen));
+  });
+
+  aiKeyToggle.addEventListener('click', () => {
+    const isPassword = aiApiKeyInput.type === 'password';
+    aiApiKeyInput.type = isPassword ? 'text' : 'password';
+    aiKeyToggle.textContent = isPassword ? 'Hide' : 'Show';
+  });
+
+  aiSaveBtn.addEventListener('click', () => {
+    const provider = aiProviderSelect.value;
+    const apiKey = aiApiKeyInput.value.trim();
+    chrome.storage.local.set({ aiProvider: provider, aiApiKey: apiKey }, () => {
+      aiSaveStatus.textContent = 'Saved.';
+      setTimeout(() => { aiSaveStatus.textContent = ''; }, 2000);
+    });
+  });
 });
