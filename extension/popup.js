@@ -229,11 +229,11 @@ async function runInPage() {
     console.error = (...a) => { push('error', a); original.error(...a); };
     console.info = (...a) => { push('info', a); original.info(...a); };
 
-    // Resolve Pendo agent and validate function (page uses pendo.validateInstall; Launcher/Beta may use validateInstallation or validateInstall)
+    // Resolve Pendo agent and validate function; both page and Launcher contexts use validateInstall
     const isLauncher = variant === 'launcher' || variant === 'launcher-beta';
     const agent = isLauncher ? ((window && (window.Pendo || window.pendo)) || null) : ((window && window.pendo) || null);
     const validateFn = isLauncher
-      ? (agent && (agent.validateInstall || agent.validateInstallation)) || null
+      ? (agent && agent.validateInstall) || null
       : (agent && agent.validateInstall) || null;
 
     const status = {
@@ -301,7 +301,7 @@ async function runInPage() {
           captured.push({ level: 'error', text: e && e.message ? e.message : String(e) });
         }
       } else if (isLauncher) {
-        captured.push({ level: 'warn', text: 'Pendo Launcher found but validateInstall/validateInstallation is unavailable.' });
+        captured.push({ level: 'warn', text: 'Pendo Launcher found but validateInstall() is unavailable.' });
       }
     } catch (e) {
       captured.push({ level: 'error', text: e && e.message ? e.message : String(e) });
