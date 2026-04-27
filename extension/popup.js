@@ -233,7 +233,7 @@ async function runInPage() {
     const isLauncher = variant === 'launcher' || variant === 'launcher-beta';
     const agent = isLauncher ? ((window && (window.Pendo || window.pendo)) || null) : ((window && window.pendo) || null);
     const validateFn = isLauncher
-      ? (agent && (agent.validateInstallation || agent.validateInstall)) || null
+      ? (agent && (agent.validateInstall || agent.validateInstallation)) || null
       : (agent && agent.validateInstall) || null;
 
     const status = {
