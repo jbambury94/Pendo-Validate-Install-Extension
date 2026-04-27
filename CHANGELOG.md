@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.4.4
+- Add CLAUDE.md with codebase overview, architecture guide, two-phase validation flow, MV3 CSP compliance details, permissions, and UI conventions.
+- Fix regex escaping in popup.js: `\n` join and `\b` word boundaries were literal backslash sequences, breaking UUID detection in captured console output.
+- Add null guard after `chrome.tabs.query` to handle restricted pages (`chrome://`) without crashing.
+- Fix XSS: replace `innerHTML` assignments with DOM construction for log lines and advice items.
+- Remove duplicate `else` branch in status badge logic (dead code); extract repeated fallback result into `EMPTY_RESULT` constant.
+- README overhaul: expanded description, new Features and How it works sections, corrected permissions list (added `tabs`), updated repo structure tree, removed WIP label from AI advice section.
+
 ## 1.4.3
 - Popup UI redesign: section labels (Page status, Advice, Tools, Captured output), action block, tools two-column layout (Debug | Export), scrollable content and logs, Pendo spacing scale and hierarchy.
 
