@@ -199,8 +199,11 @@ function launchVisualDesignStudioInPage() {
 
 // ========== Page validation: inject and run in tab ==========
 /**
- * Two-phase validation: (1) Always run in active tab (top window). (2) If snippet absent, find Pendo Launcher (or Beta) and run there without focusing.
- * Returns: pageUrl (always the tab under test), snippetOnPage, launcherPresent, launcherAttempted, validatedIn, launcherUrl (optional), plus status/captured/advice/checks.
+ * Three-phase validation:
+ *   1. Run in active tab — checks window.pendo (standard snippet).
+ *   1.5. If no snippet, re-run in same tab — checks window.Pendo (Launcher-injected agent).
+ *   2. If still absent, search other open tabs for a web-based Pendo Launcher window and run there.
+ * Returns: pageUrl (always the active tab URL), snippetOnPage, launcherPresent, launcherAttempted, validatedIn, launcherUrl (optional), plus status/captured/advice/checks.
  */
 async function runInPage() {
   /** Runs in the page context (or Launcher). Phases: capture console → resolve agent/validate fn → run validateInstall → build status/advice/checks. */
@@ -383,7 +386,10 @@ async function runInPage() {
             const title = (t.title || '').toLowerCase();
             const url = (t.url || '').toLowerCase();
             if (patterns.some(re => re.test(title) || re.test(url))) {
-              return t;
+              // Skip chrome-extension:// and chrome:// URLs — executeScript cannot inject into other extensions' pages
+              if (!url.startsWith('chrome-extension://') && !url.startsWith('chrome://') && !url.startsWith('about:')) {
+                return t;
+              }
             }
           }
         }
@@ -392,7 +398,7 @@ async function runInPage() {
       }
       return null;
     }
-    // Pendo Launcher (Beta) Chrome extension ID — match by chrome-extension:// URL for reliable detection
+    // Pendo Launcher (Beta) extension ID — used as a title/URL pattern for any web-based tab opened by the extension
     const PENDO_LAUNCHER_BETA_EXTENSION_ID = 'ggbfghmbjlgbagomdlifpdflpeafbekl';
     const betaIdPattern = new RegExp(PENDO_LAUNCHER_BETA_EXTENSION_ID, 'i');
     // Prefer Beta first so "Pendo Launcher (Beta)" is not matched as standard
@@ -440,7 +446,31 @@ async function runInPage() {
     };
   }
 
-  // Phase 2: Snippet absent — check Pendo Launcher (or Beta); run there without focusing
+  // Phase 1.5: Snippet absent — check same active tab for window.Pendo injected by the Launcher extension
+  try {
+    const [{ result: launcherInPageResult }] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      world: 'MAIN',
+      func: captureAndInspect,
+      args: ['launcher']
+    });
+    if (launcherInPageResult && launcherInPageResult.status && launcherInPageResult.status.pendoPresent) {
+      return {
+        ...launcherInPageResult,
+        pageUrl: basePageUrl,
+        snippetOnPage: false,
+        launcherAttempted: true,
+        launcherPresent: true,
+        validatedIn: 'launcher',
+        launcherUrl: basePageUrl,
+        origin: 'launcher'
+      };
+    }
+  } catch (e) {
+    console.warn('Phase 1.5 launcher-in-page check failed:', e);
+  }
+
+  // Phase 2: Snippet absent and no Launcher agent on active tab — search for a separate Launcher tab
   const launcherLookup = await findLauncherTab();
   const launcherTab = launcherLookup && launcherLookup.tab;
   const launcherVariant = launcherLookup && launcherLookup.variant ? launcherLookup.variant : 'launcher';
@@ -460,12 +490,18 @@ async function runInPage() {
   }
 
   // Run in Launcher tab without changing focus (no chrome.windows.update / chrome.tabs.update)
-  const [{ result: launcherResult }] = await chrome.scripting.executeScript({
-    target: { tabId: launcherTab.id },
-    world: "MAIN",
-    func: captureAndInspect,
-    args: [launcherVariant]
-  });
+  let launcherResult = null;
+  try {
+    const [{ result }] = await chrome.scripting.executeScript({
+      target: { tabId: launcherTab.id },
+      world: 'MAIN',
+      func: captureAndInspect,
+      args: [launcherVariant]
+    });
+    launcherResult = result;
+  } catch (e) {
+    console.warn('Phase 2 launcher tab injection failed:', e);
+  }
 
   const fallback = launcherResult || pageResult || EMPTY_RESULT;
   return {
