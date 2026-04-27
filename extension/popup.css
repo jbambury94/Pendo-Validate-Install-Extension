@@ -110,28 +110,51 @@ body {
   background: radial-gradient(circle at 20% 20%, rgba(255, 72, 118, 0.06) 0, #ffffff 35%, #ffffff 100%);
   color: var(--pendo-ink);
 }
-/* Hero banner at top of popup (Pank primary) */
+/* Hero banner — flex row so close button sits at right; drag handle in overlay mode */
 .hero {
   background: linear-gradient(120deg, var(--pendo-pank), #ff6b8a);
   color: #fff;
   padding: 12px var(--space-4);
   border-bottom: 4px solid rgba(255, 72, 118, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  user-select: none;
 }
 .hero__title {
   font-family: "Sora", "Inter", system-ui, sans-serif;
   font-size: 18px;
   font-weight: 700;
   letter-spacing: 0.2px;
+  flex: 1;
+  cursor: grab;
 }
 .hero__subtitle {
   font-size: 13px;
   opacity: 0.9;
   margin-top: 2px;
 }
-/* Main content area; fixed width for extension popup; scroll when long */
+/* Close button — overrides all inherited base button styles */
+.hero__close {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 18px;
+  font-weight: 400;
+  line-height: 1;
+  padding: 3px 7px;
+  border-radius: 6px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.1s ease, color 0.1s ease;
+}
+.hero__close:hover { background: rgba(255, 255, 255, 0.18); box-shadow: none; color: #fff; }
+.hero__close:active { background: rgba(255, 255, 255, 0.28); box-shadow: none; transform: none; }
+/* Main content area; fills iframe width in overlay mode; scroll when long */
 .content {
   padding: var(--space-4);
-  width: 420px;
+  width: 100%;
   max-height: 560px;
   overflow-y: auto;
   box-sizing: border-box;
@@ -199,6 +222,8 @@ pre, code { white-space: pre-wrap; word-break: break-word; font-family: ui-monos
 .log-text { flex: 1; }
 .muted { color: var(--pendo-ink-soft); font-size: 12px; }
 .small { font-size: 12px; }
+button.small { padding: 4px 10px; }
+.action-block .badge { align-self: center; white-space: nowrap; }
 .flex { display: flex; justify-content: space-between; align-items: center; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 /* Advice list: checks and recommendations */
@@ -212,7 +237,8 @@ pre, code { white-space: pre-wrap; word-break: break-word; font-family: ui-monos
 /* Tools: Debug + Export side by side; stack on narrow */
 .tools-section { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); margin-bottom: var(--space-3); }
 .tools-section .panel { margin-bottom: 0; }
-.tools-section .row { margin-bottom: 0; }
+/* Stack buttons vertically so they fill the panel width — avoids wrapping at small panel widths */
+.tools-section .row { flex-direction: column; align-items: stretch; margin-bottom: 0; gap: var(--space-2); }
 @media (max-width: 360px) { .tools-section { grid-template-columns: 1fr; } }
 /* Tip at bottom */
 .tip { margin-top: var(--space-4); margin-bottom: 0; }

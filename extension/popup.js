@@ -572,6 +572,31 @@ async function getAiConfig() {
     const logsEl = document.getElementById('logs');
     const adviceEl = document.getElementById('advice');
 
+    // ── Overlay mode: wire close button and hero drag handle ──────────────────
+    // When popup.html runs inside the content.js iframe (not as a Chrome popup),
+    // show the close button and relay drag/close events to the parent page via postMessage.
+    // The parent (content.js) listens for these messages and manages the iframe lifecycle.
+    const inIframe = window !== window.parent;
+    if (inIframe) {
+      const closeBtn = document.getElementById('closeBtn');
+      if (closeBtn) {
+        closeBtn.style.display = 'block';
+        closeBtn.addEventListener('click', () => {
+          // '*' is required — parent origin is an arbitrary host page
+          window.parent.postMessage({ type: 'pendo-validate-close' }, '*');
+        });
+      }
+      const heroEl = document.getElementById('hero');
+      if (heroEl) {
+        heroEl.addEventListener('mousedown', (e) => {
+          if (e.target?.id === 'closeBtn') return;
+          // clientX/Y are relative to the iframe viewport = offset from iframe's own top-left.
+          // content.js uses these directly to compute how far to shift the iframe on mousemove.
+          window.parent.postMessage({ type: 'pendo-validate-dragstart', x: e.clientX, y: e.clientY }, '*');
+        });
+      }
+    }
+
     /** Render checks (passed) and advice items into the advice list. */
     function renderAdvice(checks, adviceList) {
       adviceEl.innerHTML = '';
