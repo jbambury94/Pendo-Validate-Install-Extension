@@ -199,8 +199,11 @@ function launchVisualDesignStudioInPage() {
 
 // ========== Page validation: inject and run in tab ==========
 /**
- * Two-phase validation: (1) Always run in active tab (top window). (2) If snippet absent, find Pendo Launcher (or Beta) and run there without focusing.
- * Returns: pageUrl (always the tab under test), snippetOnPage, launcherPresent, launcherAttempted, validatedIn, launcherUrl (optional), plus status/captured/advice/checks.
+ * Three-phase validation:
+ *   1. Run in active tab — checks window.pendo (standard snippet).
+ *   1.5. If no snippet, re-run in same tab — checks window.Pendo (Launcher-injected agent).
+ *   2. If still absent, search other open tabs for a web-based Pendo Launcher window and run there.
+ * Returns: pageUrl (always the active tab URL), snippetOnPage, launcherPresent, launcherAttempted, validatedIn, launcherUrl (optional), plus status/captured/advice/checks.
  */
 async function runInPage() {
   /** Runs in the page context (or Launcher). Phases: capture console → resolve agent/validate fn → run validateInstall → build status/advice/checks. */
@@ -226,11 +229,11 @@ async function runInPage() {
     console.error = (...a) => { push('error', a); original.error(...a); };
     console.info = (...a) => { push('info', a); original.info(...a); };
 
-    // Resolve Pendo agent and validate function (page uses pendo.validateInstall; Launcher/Beta may use validateInstallation or validateInstall)
+    // Resolve Pendo agent and validate function; both page and Launcher contexts use validateInstall
     const isLauncher = variant === 'launcher' || variant === 'launcher-beta';
     const agent = isLauncher ? ((window && (window.Pendo || window.pendo)) || null) : ((window && window.pendo) || null);
     const validateFn = isLauncher
-      ? (agent && (agent.validateInstallation || agent.validateInstall)) || null
+      ? (agent && agent.validateInstall) || null
       : (agent && agent.validateInstall) || null;
 
     const status = {
@@ -298,7 +301,7 @@ async function runInPage() {
           captured.push({ level: 'error', text: e && e.message ? e.message : String(e) });
         }
       } else if (isLauncher) {
-        captured.push({ level: 'warn', text: 'Pendo Launcher found but validateInstall/validateInstallation is unavailable.' });
+        captured.push({ level: 'warn', text: 'Pendo Launcher found but validateInstall() is unavailable.' });
       }
     } catch (e) {
       captured.push({ level: 'error', text: e && e.message ? e.message : String(e) });
@@ -383,7 +386,10 @@ async function runInPage() {
             const title = (t.title || '').toLowerCase();
             const url = (t.url || '').toLowerCase();
             if (patterns.some(re => re.test(title) || re.test(url))) {
-              return t;
+              // Skip chrome-extension:// and chrome:// URLs — executeScript cannot inject into other extensions' pages
+              if (!url.startsWith('chrome-extension://') && !url.startsWith('chrome://') && !url.startsWith('about:')) {
+                return t;
+              }
             }
           }
         }
@@ -392,7 +398,7 @@ async function runInPage() {
       }
       return null;
     }
-    // Pendo Launcher (Beta) Chrome extension ID — match by chrome-extension:// URL for reliable detection
+    // Pendo Launcher (Beta) extension ID — used as a title/URL pattern for any web-based tab opened by the extension
     const PENDO_LAUNCHER_BETA_EXTENSION_ID = 'ggbfghmbjlgbagomdlifpdflpeafbekl';
     const betaIdPattern = new RegExp(PENDO_LAUNCHER_BETA_EXTENSION_ID, 'i');
     // Prefer Beta first so "Pendo Launcher (Beta)" is not matched as standard
@@ -440,7 +446,31 @@ async function runInPage() {
     };
   }
 
-  // Phase 2: Snippet absent — check Pendo Launcher (or Beta); run there without focusing
+  // Phase 1.5: Snippet absent — check same active tab for window.Pendo injected by the Launcher extension
+  try {
+    const [{ result: launcherInPageResult }] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      world: 'MAIN',
+      func: captureAndInspect,
+      args: ['launcher']
+    });
+    if (launcherInPageResult && launcherInPageResult.status && launcherInPageResult.status.pendoPresent) {
+      return {
+        ...launcherInPageResult,
+        pageUrl: basePageUrl,
+        snippetOnPage: false,
+        launcherAttempted: true,
+        launcherPresent: true,
+        validatedIn: 'launcher',
+        launcherUrl: basePageUrl,
+        origin: 'launcher'
+      };
+    }
+  } catch (e) {
+    console.warn('Phase 1.5 launcher-in-page check failed:', e);
+  }
+
+  // Phase 2: Snippet absent and no Launcher agent on active tab — search for a separate Launcher tab
   const launcherLookup = await findLauncherTab();
   const launcherTab = launcherLookup && launcherLookup.tab;
   const launcherVariant = launcherLookup && launcherLookup.variant ? launcherLookup.variant : 'launcher';
@@ -460,12 +490,18 @@ async function runInPage() {
   }
 
   // Run in Launcher tab without changing focus (no chrome.windows.update / chrome.tabs.update)
-  const [{ result: launcherResult }] = await chrome.scripting.executeScript({
-    target: { tabId: launcherTab.id },
-    world: "MAIN",
-    func: captureAndInspect,
-    args: [launcherVariant]
-  });
+  let launcherResult = null;
+  try {
+    const [{ result }] = await chrome.scripting.executeScript({
+      target: { tabId: launcherTab.id },
+      world: 'MAIN',
+      func: captureAndInspect,
+      args: [launcherVariant]
+    });
+    launcherResult = result;
+  } catch (e) {
+    console.warn('Phase 2 launcher tab injection failed:', e);
+  }
 
   const fallback = launcherResult || pageResult || EMPTY_RESULT;
   return {
@@ -486,7 +522,7 @@ async function getAiConfig() {
     return new Promise(resolve => {
       try {
         if (!chrome.storage || !chrome.storage.local) return resolve({});
-        chrome.storage.local.get({ aiEndpoint: '', aiApiKey: '', aiModel: 'gpt-4o-mini' }, resolve);
+        chrome.storage.local.get({ aiProvider: 'openai', aiEndpoint: '', aiApiKey: '', aiModel: '' }, resolve);
       } catch (e) {
         console.error(e);
         resolve({});
@@ -519,40 +555,50 @@ async function getAiConfig() {
   /** Call configured AI API for remediation suggestions; returns array of { text, source: 'ai' }. */
   async function requestAiAdvice(context) {
     const cfg = await getAiConfig();
-    if (!cfg.aiEndpoint || !cfg.aiApiKey) return [];
+    if (!cfg.aiApiKey) return [];
 
-    const body = {
-      model: cfg.aiModel || 'gpt-4o-mini',
-      messages: [
-        { role: 'system', content: 'You are a concise Pendo install troubleshooting assistant. Only rely on official Pendo documentation and avoid speculative advice.' },
-        { role: 'user', content: buildAiPrompt(context) }
-      ],
-      temperature: 0.1
-    };
+    const provider = cfg.aiProvider || 'openai';
+    const prompt = buildAiPrompt(context);
+    const systemMsg = 'You are a concise Pendo install troubleshooting assistant. Only rely on official Pendo documentation and avoid speculative advice.';
+
+    let endpoint, headers, body;
+
+    if (provider === 'claude') {
+      const model = cfg.aiModel || 'claude-haiku-4-5-20251001';
+      endpoint = 'https://api.anthropic.com/v1/messages';
+      headers = { 'Content-Type': 'application/json', 'x-api-key': cfg.aiApiKey, 'anthropic-version': '2023-06-01' };
+      body = { model, max_tokens: 1024, system: systemMsg, messages: [{ role: 'user', content: prompt }] };
+    } else if (provider === 'gemini') {
+      const model = cfg.aiModel || 'gemini-2.0-flash';
+      endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${cfg.aiApiKey}`;
+      headers = { 'Content-Type': 'application/json' };
+      body = { contents: [{ parts: [{ text: systemMsg + '\n\n' + prompt }] }], generationConfig: { temperature: 0.1 } };
+    } else {
+      const model = cfg.aiModel || 'gpt-4o-mini';
+      endpoint = cfg.aiEndpoint || 'https://api.openai.com/v1/chat/completions';
+      headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${cfg.aiApiKey}` };
+      body = { model, messages: [{ role: 'system', content: systemMsg }, { role: 'user', content: prompt }], temperature: 0.1 };
+    }
 
     const controller = new AbortController();
     const timeoutMs = cfg.timeoutMs || 8000;
     const timer = setTimeout(() => controller.abort('timeout'), timeoutMs);
     try {
-      const res = await fetch(cfg.aiEndpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${cfg.aiApiKey}`
-        },
-        body: JSON.stringify(body),
-        signal: controller.signal
-      });
+      const res = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify(body), signal: controller.signal });
       clearTimeout(timer);
       if (!res.ok) throw new Error(`AI request failed with status ${res.status}`);
       const data = await res.json();
-      const content = data?.choices?.[0]?.message?.content || '';
+      let content = '';
+      if (provider === 'claude') content = data?.content?.[0]?.text || '';
+      else if (provider === 'gemini') content = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      else content = data?.choices?.[0]?.message?.content || '';
       if (!content) return [];
-      return content.split(/\n+/).map(t => t.replace(/^[-*]\s*/, '').trim()).filter(Boolean).map(text => ({ text, source: 'ai', supportUrl: PENDO_SUPPORT.technicalSupport }));
+      return content.split(/\n+/).map(t => t.replace(/^[-*]\s*/, '').trim()).filter(Boolean)
+        .map(text => ({ text, source: 'ai', supportUrl: PENDO_SUPPORT.technicalSupport }));
     } catch (e) {
       clearTimeout(timer);
       console.error('AI request failed', e);
-      return [{ text: 'AI suggestion unavailable: request failed or timed out. Check API key/endpoint configuration.', source: 'ai', supportUrl: PENDO_SUPPORT.technicalSupport }];
+      return [{ text: 'AI suggestion unavailable: request failed or timed out. Check your API key and provider selection.', source: 'ai', supportUrl: PENDO_SUPPORT.technicalSupport }];
     }
   }
 
@@ -561,6 +607,31 @@ async function getAiConfig() {
     const statusEl = document.getElementById('status');
     const logsEl = document.getElementById('logs');
     const adviceEl = document.getElementById('advice');
+
+    // ── Overlay mode: wire close button and hero drag handle ──────────────────
+    // When popup.html runs inside the content.js iframe (not as a Chrome popup),
+    // show the close button and relay drag/close events to the parent page via postMessage.
+    // The parent (content.js) listens for these messages and manages the iframe lifecycle.
+    const inIframe = window !== window.parent;
+    if (inIframe) {
+      const closeBtn = document.getElementById('closeBtn');
+      if (closeBtn) {
+        closeBtn.style.display = 'block';
+        closeBtn.addEventListener('click', () => {
+          // '*' is required — parent origin is an arbitrary host page
+          window.parent.postMessage({ type: 'pendo-validate-close' }, '*');
+        });
+      }
+      const heroEl = document.getElementById('hero');
+      if (heroEl) {
+        heroEl.addEventListener('mousedown', (e) => {
+          if (e.target?.id === 'closeBtn') return;
+          // clientX/Y are relative to the iframe viewport = offset from iframe's own top-left.
+          // content.js uses these directly to compute how far to shift the iframe on mousemove.
+          window.parent.postMessage({ type: 'pendo-validate-dragstart', x: e.clientX, y: e.clientY }, '*');
+        });
+      }
+    }
 
     /** Render checks (passed) and advice items into the advice list. */
     function renderAdvice(checks, adviceList) {
@@ -763,4 +834,39 @@ async function getAiConfig() {
     const all = Array.from(document.querySelectorAll('#logs .log-line')).map(div => div.textContent.trim()).join('\\n');
     navigator.clipboard.writeText(all || 'No logs captured.');
   };
+
+  // --- AI Settings panel ---
+  const aiToggleBtn = document.getElementById('aiSettingsToggle');
+  const aiPanel = document.getElementById('aiSettingsPanel');
+  const aiProviderSelect = document.getElementById('aiProviderSelect');
+  const aiApiKeyInput = document.getElementById('aiApiKeyInput');
+  const aiKeyToggle = document.getElementById('aiKeyToggleVisibility');
+  const aiSaveBtn = document.getElementById('aiSettingsSave');
+  const aiSaveStatus = document.getElementById('aiSettingsStatus');
+
+  getAiConfig().then(cfg => {
+    if (cfg.aiProvider) aiProviderSelect.value = cfg.aiProvider;
+    if (cfg.aiApiKey) aiApiKeyInput.value = cfg.aiApiKey;
+  });
+
+  aiToggleBtn.addEventListener('click', () => {
+    const isOpen = !aiPanel.hidden;
+    aiPanel.hidden = isOpen;
+    aiToggleBtn.setAttribute('aria-expanded', String(!isOpen));
+  });
+
+  aiKeyToggle.addEventListener('click', () => {
+    const isPassword = aiApiKeyInput.type === 'password';
+    aiApiKeyInput.type = isPassword ? 'text' : 'password';
+    aiKeyToggle.textContent = isPassword ? 'Hide' : 'Show';
+  });
+
+  aiSaveBtn.addEventListener('click', () => {
+    const provider = aiProviderSelect.value;
+    const apiKey = aiApiKeyInput.value.trim();
+    chrome.storage.local.set({ aiProvider: provider, aiApiKey: apiKey }, () => {
+      aiSaveStatus.textContent = 'Saved.';
+      setTimeout(() => { aiSaveStatus.textContent = ''; }, 2000);
+    });
+  });
 });

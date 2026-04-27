@@ -10,3 +10,6 @@
 | Download Report | `export-report` |
 | Download raw JSON | `export-json` |
 | Copy (Captured Output) | `copy-logs` |
+| AI Advice Settings (toggle) | `ai-settings-toggle` |
+| Show/Hide API Key | `toggle-key-visibility` |
+| Save AI Settings | `save-ai-settings` |

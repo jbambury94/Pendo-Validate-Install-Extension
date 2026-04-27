@@ -9,9 +9,10 @@
   </head>
   <body>
     <!-- ========== Hero: title and subtitle ========== -->
-    <div class="hero">
+    <div class="hero" id="hero">
       <div class="hero__title">Pendo Validate Install assistant</div>
       <!-- <div class="hero__subtitle"></div> -->
+      <button id="closeBtn" class="hero__close" aria-label="Close panel" style="display:none">&#x2715;</button>
     </div>
     <!-- ========== Main content ========== -->
     <div class="content">
@@ -22,6 +23,37 @@
           <span id="status" class="badge">Idle</span>
         </div>
       </section>
+
+      <!-- AI Advice settings toggle -->
+      <button id="aiSettingsToggle" class="button--ghost ai-settings-toggle" data-action="ai-settings-toggle" aria-expanded="false" aria-controls="aiSettingsPanel">
+        AI Advice Settings
+        <span class="toggle-chevron" aria-hidden="true">&#9656;</span>
+      </button>
+
+      <!-- AI Settings panel (hidden by default) -->
+      <div id="aiSettingsPanel" class="panel ai-settings-panel" hidden>
+        <strong>AI Advice Configuration</strong>
+        <p class="muted small">Choose a provider and paste your API key. Advice is requested automatically when validation failures are detected.</p>
+        <div class="settings-field">
+          <label for="aiProviderSelect" class="settings-label">Provider</label>
+          <select id="aiProviderSelect" class="settings-select" data-action="ai-provider-select">
+            <option value="openai">OpenAI (gpt-4o-mini)</option>
+            <option value="claude">Anthropic Claude (claude-haiku-4-5)</option>
+            <option value="gemini">Google Gemini (gemini-2.0-flash)</option>
+          </select>
+        </div>
+        <div class="settings-field">
+          <label for="aiApiKeyInput" class="settings-label">API Key</label>
+          <div class="settings-key-row">
+            <input type="password" id="aiApiKeyInput" class="settings-input" placeholder="Paste your API key" autocomplete="off" spellcheck="false" data-action="ai-api-key-input" />
+            <button id="aiKeyToggleVisibility" class="button--ghost small" type="button" data-action="toggle-key-visibility">Show</button>
+          </div>
+        </div>
+        <div class="row">
+          <button id="aiSettingsSave" data-action="save-ai-settings">Save</button>
+          <span id="aiSettingsStatus" class="muted small"></span>
+        </div>
+      </div>
 
       <span class="section-label">Page status</span>
       <!-- Panel: key-value summary from last run (filled by popup.js) -->

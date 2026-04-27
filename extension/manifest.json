@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Pendo Validate Install Ext",
-  "version": "1.4.4",
+  "version": "1.5.0",
   "description": "Validates Pendo Install (Snippet or Launcher), captures console, checks identity/CSP, and confirms whether an API key is present.",
   "permissions": [
     "scripting",
@@ -13,9 +13,32 @@
     "<all_urls>"
   ],
   "action": {
-    "default_title": "Validate Pendo",
-    "default_popup": "popup.html"
+    "default_title": "Validate Pendo"
   },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "popup.html",
+        "popup.css",
+        "popup.js",
+        "pendo-loader.js",
+        "vendor/pendo.js",
+        "fonts/*.woff2",
+        "icons/*.png"
+      ],
+      "matches": ["<all_urls>"]
+    }
+  ],
   "icons": {
     "128": "icons/icon128.png"
   }
