@@ -438,10 +438,11 @@ async function runInPage() {
   const snippetOnPage = !!(pageResult && pageResult.status && pageResult.status.pendoPresent);
   const basePageUrl = tab && tab.url ? tab.url : 'unknown';
 
-  // Phase 1.5: Always check for window.Pendo (Launcher-specific global) in the same tab.
+  // Phase 1.5: Always check for the Launcher in the same tab.
   // Runs even when a snippet was found — Launcher and snippet can coexist on the same page.
-  // Only pendoGlobal === 'Pendo' counts as Launcher presence; this prevents the snippet's
-  // own window.pendo from being falsely counted as a Launcher detection.
+  // When no snippet was found: any pendo agent found here is from the Launcher.
+  // When a snippet was found: only window.Pendo (capital P) counts as Launcher — prevents
+  // the snippet's own window.pendo from being double-counted as a Launcher detection.
   let launcherInPageResult = null;
   try {
     const [{ result: p15result }] = await chrome.scripting.executeScript({
@@ -450,8 +451,10 @@ async function runInPage() {
       func: captureAndInspect,
       args: ['launcher']
     });
-    if (p15result && p15result.status && p15result.status.pendoGlobal === 'Pendo') {
-      launcherInPageResult = p15result;
+    if (p15result && p15result.status && p15result.status.pendoPresent) {
+      if (!snippetOnPage || p15result.status.pendoGlobal === 'Pendo') {
+        launcherInPageResult = p15result;
+      }
     }
   } catch (e) {
     console.warn('Phase 1.5 launcher-in-page check failed:', e);
