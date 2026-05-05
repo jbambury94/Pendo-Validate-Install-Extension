@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a **Chrome browser extension (Manifest V3)** that validates Pendo installations on web pages. It runs `pendo.validateInstall()` in the page context, captures console output, checks visitor/account identity, detects API key presence, and provides remediation advice.
+This is a **Chrome browser extension (Manifest V3)** that validates Pendo installations on web pages. It runs `pendo.validateInstall()` in the page context, captures console output, checks visitor/account identity, detects API key presence, and provides remediation advice. The UI is delivered as a draggable iframe overlay injected into the active tab — not as a Chrome toolbar popup.
 
-There is no build system, package manager, or test framework. All source files are loaded directly by Chrome — the `extension/` folder is loaded as an unpacked extension.
+There is no build system. The `extension/` folder is loaded directly by Chrome as an unpacked extension. There is a Vitest + jsdom test suite at the repo root (`npm install && npm test`).
 
 ## Running the Extension
 
@@ -15,52 +15,74 @@ Load it in Chrome:
 2. Enable **Developer mode**
 3. Click **Load unpacked** → select the `extension/` folder
 
-To apply code changes: click the refresh icon on the extension card in `chrome://extensions`, then reopen the popup.
+To apply code changes: click the refresh icon on the extension card in `chrome://extensions`, then click the extension icon to reopen the floating panel.
 
 ## Architecture
 
 ### Entry Points
 
-- **`extension/popup.html`** — Extension popup UI; loaded when the user clicks the extension icon. References `pendo-loader.js` (runs first) and `popup.js`.
-- **`extension/pendo-loader.js`** — Immediately queues Pendo API calls, then defers loading `vendor/pendo.js` via `requestIdleCallback`/`setTimeout` to avoid blocking popup responsiveness.
-- **`extension/popup.js`** — All validation logic (~737 lines). Runs in the popup's own context (not injected into the page).
+- **`extension/manifest.json`** — MV3 manifest. No `default_popup`; the icon click is handled by the background service worker. Declares `background.service_worker`, `content_scripts`, and `web_accessible_resources` so `popup.html` can be loaded as a `chrome-extension://` iframe on any host page.
+- **`extension/background.js`** — Service worker. Listens for `chrome.action.onClicked`, ensures `content.js` is injected into pre-existing tabs (new navigations get it automatically), then sends a `pendo-validate-toggle` message.
+- **`extension/content.js`** — Content script. Owns the overlay lifecycle: creates/destroys an iframe (`#pendo-validate-overlay-iframe`) pointing at `popup.html`, and tracks drag state via `postMessage` from the iframe (`pendo-validate-dragstart` / `-drag` / `-dragend`). Guards against double-injection via `window.__pendoValidateInjected`.
+- **`extension/popup.html`** — Panel UI loaded inside the iframe. Tabs strip switches between *Output* (advice, captured logs) and *Settings* (page status, debug, export, AI config). References `pendo-loader.js` (runs first) and `popup.js`.
+- **`extension/pendo-loader.js`** — Immediately queues Pendo API calls, then defers loading `vendor/pendo.js` via `requestIdleCallback`/`setTimeout` to avoid blocking panel responsiveness.
+- **`extension/popup.js`** — All validation, advice, export, debug, AI, and tab-switching logic (~1,066 lines). Runs in the iframe's own context (not injected into the host page); detects iframe context via `window !== window.parent` and wires the close button + hero drag handle to relay events to `content.js`.
 
-### Two-Phase Validation Flow
+### Validation Flow (Three Phases)
 
 When the user clicks "Validate Pendo Install", `popup.js` runs `runInPage()`:
 
-1. **Phase 1**: Injects `captureAndInspect('page')` into the active tab using `chrome.scripting.executeScript()` with `world: "MAIN"` to access `window.pendo`.
-   - Intercepts `console.log/warn/error`
-   - Checks for `window.pendo` and `pendo.validateInstall()`
-   - Extracts version, API key, visitorId, accountId from agent state
-   - Reads visitor/account **metadata** fields (name, email, role, plan, etc.) per [Choose IDs and metadata](https://support.pendo.io/hc/en-us/articles/21326198721563-Choose-IDs-and-metadata). These are read from the agent object on the injectable page; Chrome blocks reading state from other extensions' pages, so Launcher metadata is only available when the agent runs on the active tab.
+1. **Phase 1 — Active tab snippet.** Injects `captureAndInspect('page')` into the active tab via `chrome.scripting.executeScript({ world: "MAIN" })` so it can read `window.pendo`.
+   - Intercepts `console.log/warn/error/info`
+   - Calls `pendo.validateInstall()`
+   - Extracts version, API key, `visitorId`, `accountId` from agent state
+   - Reads visitor/account **metadata** fields (name, email, role, plan, etc.) per [Choose IDs and metadata](https://support.pendo.io/hc/en-us/articles/21326198721563-Choose-IDs-and-metadata). Metadata can only be read when the agent is reachable from the active tab; Chrome blocks reading state from other extensions' pages, so Launcher metadata is only available when the agent runs on the active tab.
    - Collects Pendo resource hits from the Performance API
    - Reads CSP meta tags
+   - Reports `pendoGlobal` (`'Pendo' | 'pendo' | null`) so callers can distinguish snippet from Launcher.
 
-2. **Phase 2** (if Pendo snippet absent on the active tab): Searches for an open Pendo Launcher or Pendo Launcher (Beta) extension tab via `findLauncherTab()`, then re-runs `captureAndInspect('launcher' | 'launcher-beta')` in that tab instead.
+2. **Phase 1.5 — Active tab Launcher.** Re-runs `captureAndInspect('launcher')` on the same tab to catch `window.Pendo` (capital P) injected by the Pendo Launcher / Pendo Launcher (Beta) extension into the host page. This is the most common Launcher scenario.
+   - When a snippet was found in Phase 1, only `pendoGlobal === 'Pendo'` counts as a Launcher detection (avoids double-counting the snippet's own `window.pendo`).
+   - When no snippet was found in Phase 1, any agent detected in Phase 1.5 is from the Launcher.
 
-Results flow back to popup context → `renderAdvice()` + `renderLogs()` populate the UI.
+3. **Phase 2 — Separate Launcher tab.** If neither phase finds an agent, `findLauncherTab()` searches all open windows for a Pendo Launcher / Pendo Launcher (Beta) tab and re-runs `captureAndInspect('launcher' | 'launcher-beta')` there. `chrome-extension://`, `chrome://`, and `about:` URLs are filtered out — `executeScript({ world: 'MAIN' })` cannot inject into another extension's pages regardless of `host_permissions`. The injection is wrapped in `try/catch` so a failure degrades to the Phase 1 fallback.
+
+Results flow back to the panel context → `renderAdvice()` + `renderLogs()` populate the UI. Activating "Validate Pendo Install" auto-switches the tab strip to *Output*.
 
 ### Key Subsystems in `popup.js`
 
 | Subsystem | What it does |
 |---|---|
-| `captureAndInspect()` | Injected into page; captures all validation data |
-| `runInPage()` | Orchestrates two-phase injection logic |
-| `findLauncherTab()` | Searches windows/tabs for Pendo Launcher |
+| `captureAndInspect()` | Injected into page; captures all validation data + reports `pendoGlobal` |
+| `runInPage()` | Orchestrates Phase 1 → Phase 1.5 → Phase 2 |
+| `findLauncherTab()` | Searches windows/tabs for Pendo Launcher; filters non-web origins |
 | `renderAdvice()` | Renders key-value summary + advice list |
 | `renderLogs()` | Renders color-coded captured console output |
-| `requestAiAdvice()` | Optional ChatGPT call for dynamic recommendations |
+| `buildAiPrompt()` / `requestAiAdvice()` | Build provider-specific request body, call OpenAI / Claude / Gemini, parse response |
+| `getAiConfig()` | Reads `aiProvider`, `aiApiKey`, `aiEndpoint`, `aiModel`, `timeoutMs` from `chrome.storage.local` |
 | `buildMarkdownReport()` / `buildJsonReport()` | Generates downloadable reports |
+| `getOrCreateVisitorId()` | Persistent UUID in `chrome.storage.local` for self-instrumentation |
+| `activateTab()` | Switches the *Output* / *Settings* tabs |
+| Iframe wiring | When `window !== window.parent`, shows the close button and relays `pendo-validate-close` / `-dragstart` / `-drag` / `-dragend` messages |
 | Debug buttons | Calls `pendo.enableDebugging()` / `pendo.designerv2.launchInAppDesigner()` via injection |
 
 ### MV3 CSP Compliance
 
 Chrome's Manifest V3 prohibits remotely-hosted scripts. The Pendo Web SDK (`vendor/pendo.js`, ~540KB, v2.314.1) is bundled locally. The manifest's `content_security_policy` allows `script-src 'self'` only. `pendo-loader.js` loads the agent via `chrome.runtime.getURL('vendor/pendo.js')`.
 
-### Optional AI Integration
+`web_accessible_resources` exposes `popup.html`, `popup.css`, `popup.js`, `pendo-loader.js`, `vendor/pendo.js`, and the fonts/icons folders so the iframe can load them on any host origin.
 
-If the validation detects failures, `requestAiAdvice()` optionally calls a ChatGPT-compatible endpoint. Credentials are stored in `chrome.storage.local` under keys `aiEndpoint`, `aiApiKey`, and `aiModel`. The feature degrades gracefully when these are absent.
+### Optional Multi-provider AI
+
+If the user has saved an API key in Settings, `requestAiAdvice()` calls one of three providers when validation detects failures:
+
+| Provider | Endpoint | Default model |
+|---|---|---|
+| OpenAI | `https://api.openai.com/v1/chat/completions` | `gpt-4o-mini` |
+| Anthropic Claude | `https://api.anthropic.com/v1/messages` | `claude-haiku-4-5-20251001` |
+| Google Gemini | `https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent` | `gemini-2.0-flash` |
+
+The endpoint URL, model, and request shape vary per provider; response parsing also branches per provider. Credentials live in `chrome.storage.local` under `aiProvider`, `aiApiKey`, and (optional overrides) `aiEndpoint`, `aiModel`, `timeoutMs`. The feature degrades gracefully when no key is set.
 
 ### Persistent Visitor ID
 
@@ -71,17 +93,29 @@ The extension instruments itself with Pendo. A UUID is generated on first run an
 Declared in `manifest.json`:
 - `scripting` — inject scripts into tabs
 - `activeTab` — access the currently active tab
-- `storage` — persist visitor UUID and optional AI credentials
-- `tabs` — enumerate tabs when searching for Launcher
+- `storage` — persist visitor UUID and AI credentials
+- `tabs` — enumerate tabs when searching for a Launcher tab in Phase 2
+- `management` — recognise the Pendo Launcher / Launcher (Beta) extensions when present
+- `debugger` — reserved for future debug tooling
 - `host_permissions: <all_urls>` — run scripts on any page
+
+## Tests
+
+Vitest + jsdom test suite at the repo root. Pure functions are extracted into `tests/helpers.js` so they can run without a build step.
+
+- `npm test` — single run
+- `npm run test:watch` — watch mode
+- `npm run test:coverage` — v8 coverage
+
+Suites: `normalizeAdviceList`, `buildMarkdownReport`/`buildJsonReport`, `captureAndInspect`, `getOrCreateVisitorId`, `requestAiAdvice` (all three providers + timeout/error paths), and `content.js` drag-clamping. ~127 tests.
 
 ## Updating the Bundled Pendo Agent
 
-`vendor/pendo.js` is not managed by npm. To update: replace the file with a new production build of the Pendo Web SDK and update the version comment at the top of `vendor/README.md`.
+`vendor/pendo.js` is not managed by npm. To update: replace the file with a new production build of the Pendo Web SDK and update the version comment in `vendor/README.md`.
 
 ## UI Reference
 
-`extension/popup-actions.md` is a reference table mapping every popup UI element to its `data-action` attribute — useful when adding new buttons or event bindings in `popup.js`.
+`extension/popup-actions.md` is a reference table mapping every panel UI element to its `data-action` attribute and DOM `id` — useful when adding new buttons or event bindings in `popup.js`.
 
 ## Design Tokens (CSS)
 

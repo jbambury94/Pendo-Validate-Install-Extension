@@ -166,24 +166,39 @@ body {
   overflow-y: auto;
   box-sizing: border-box;
 }
-/* Section labels */
-.section-label {
-  display: block;
-  font-family: "Inter", system-ui, sans-serif;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--pendo-ink-soft);
-  margin-top: var(--space-4);
-  margin-bottom: var(--space-2);
-}
-.section-label:first-of-type { margin-top: 0; }
 /* Primary action: run validation + status */
 .action-block {
-  margin-bottom: var(--space-3);
+  margin-bottom: var(--space-2);
 }
 .action-block .row { margin-bottom: 0; }
+/* Tab strip: sits flush below the action block, ghost buttons with pink underline on active */
+.tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--pendo-border);
+  margin-bottom: var(--space-3);
+}
+.tabs__btn {
+  background: transparent;
+  color: var(--pendo-ink-soft);
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+.tabs__btn:hover { background: transparent; color: var(--pendo-ink); box-shadow: none; transform: none; }
+.tabs__btn:active { background: transparent; box-shadow: none; transform: none; }
+.tabs__btn[aria-selected="true"] {
+  color: var(--pendo-ink);
+  border-bottom-color: var(--pendo-pank);
+  font-weight: 700;
+}
+.tab-panel[hidden] { display: none; }
 /* Primary and ghost button styles */
 button {
   cursor: pointer;
@@ -250,21 +265,8 @@ button.small { padding: 4px 10px; }
 @media (max-width: 360px) { .tools-section { grid-template-columns: 1fr; } }
 /* Tip at bottom */
 .tip { margin-top: var(--space-4); margin-bottom: 0; }
-/* AI Settings toggle button */
-.ai-settings-toggle {
-  width: 100%;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 8px 12px;
-  font-size: 12px;
-  margin-bottom: var(--space-2);
-}
-.toggle-chevron { transition: transform 0.15s ease; display: inline-block; }
-.ai-settings-toggle[aria-expanded="true"] .toggle-chevron { transform: rotate(90deg); }
 /* AI Settings panel */
-.ai-settings-panel { margin-bottom: var(--space-3); }
-.ai-settings-panel p { margin: var(--space-1) 0 var(--space-3); }
+#aiSettingsPanel p { margin: var(--space-1) 0 var(--space-3); }
 .settings-field { display: flex; flex-direction: column; gap: 4px; margin-bottom: var(--space-3); }
 .settings-label { font-size: 12px; font-weight: 600; color: var(--pendo-ink); }
 .settings-select,

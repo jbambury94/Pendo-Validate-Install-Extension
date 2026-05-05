@@ -24,109 +24,110 @@
         </div>
       </section>
 
-      <!-- AI Advice settings toggle -->
-      <button id="aiSettingsToggle" class="button--ghost ai-settings-toggle" data-action="ai-settings-toggle" aria-expanded="false" aria-controls="aiSettingsPanel">
-        AI Advice Settings
-        <span class="toggle-chevron" aria-hidden="true">&#9656;</span>
-      </button>
-
-      <!-- AI Settings panel (hidden by default) -->
-      <div id="aiSettingsPanel" class="panel ai-settings-panel" hidden>
-        <strong>AI Advice Configuration</strong>
-        <p class="muted small">Choose a provider and paste your API key. Advice is requested automatically when validation failures are detected.</p>
-        <div class="settings-field">
-          <label for="aiProviderSelect" class="settings-label">Provider</label>
-          <select id="aiProviderSelect" class="settings-select" data-action="ai-provider-select">
-            <option value="openai">OpenAI (gpt-4o-mini)</option>
-            <option value="claude">Anthropic Claude (claude-haiku-4-5)</option>
-            <option value="gemini">Google Gemini (gemini-2.0-flash)</option>
-          </select>
-        </div>
-        <div class="settings-field">
-          <label for="aiApiKeyInput" class="settings-label">API Key</label>
-          <div class="settings-key-row">
-            <input type="password" id="aiApiKeyInput" class="settings-input" placeholder="Paste your API key" autocomplete="off" spellcheck="false" data-action="ai-api-key-input" />
-            <button id="aiKeyToggleVisibility" class="button--ghost small" type="button" data-action="toggle-key-visibility">Show</button>
-          </div>
-        </div>
-        <div class="row">
-          <button id="aiSettingsSave" data-action="save-ai-settings">Save</button>
-          <span id="aiSettingsStatus" class="muted small"></span>
-        </div>
+      <!-- Tab strip: Output (results) | Settings (page status, tools, AI config) -->
+      <div id="tabs" class="tabs" role="tablist">
+        <button id="tabOutputBtn" class="tabs__btn" data-action="tab-output" role="tab" aria-controls="tabOutputPanel" aria-selected="true">Output</button>
+        <button id="tabSettingsBtn" class="tabs__btn" data-action="tab-settings" role="tab" aria-controls="tabSettingsPanel" aria-selected="false">Settings</button>
       </div>
 
-      <span class="section-label">Page status</span>
-      <!-- Panel: key-value summary from last run (filled by popup.js) -->
-      <div id="summary" class="panel panel--summary small">
-        <div><strong>Page status</strong></div>
-        <div class="kv">
-          <div>Snippet on page:</div><div class="mono" id="kv_snippet">—</div>
-          <div>Pendo Launcher:</div><div class="mono" id="kv_launcher">—</div>
-          <div>Launcher data validated:</div><div class="mono" id="kv_launcher_validated">—</div>
-          <div>Validated in:</div><div class="mono" id="kv_validated_in">—</div>
-          <div>Pendo present:</div><div class="mono" id="kv_pendo">—</div>
-          <div>ValidateInstall present:</div><div class="mono" id="kv_validate">—</div>
-          <div>Agent version:</div><div class="mono" id="kv_version">—</div>
-          <div>API key found:</div><div class="mono" id="kv_keyfound">—</div>
-          <div>Detected API key:</div><div class="mono" id="kv_detected">—</div>
-          <div>VisitorId:</div><div class="mono" id="kv_visitor">—</div>
-          <div>AccountId:</div><div class="mono" id="kv_account">—</div>
-          <div>Visitor metadata:</div><div class="mono kv-json" id="kv_visitor_meta">—</div>
-          <div>Account metadata:</div><div class="mono kv-json" id="kv_account_meta">—</div>
-          <div>Resource hits:</div><div class="mono" id="kv_hits">—</div>
-          <div>Lines captured:</div><div class="mono" id="kv_lines">—</div>
-        </div>
-      </div>
-
-      <span class="section-label">Advice</span>
-      <!-- Panel: checks passed and remediation notes (built-in + optional AI) -->
-      <div class="panel">
-        <div class="flex">
-          <strong>Checks and recommendations</strong>
-          <button id="copyAdvice" class="small button--ghost" data-action="copy-advice">Copy</button>
-        </div>
-        <ul id="advice" class="advice-list" aria-live="polite"></ul>
-      </div>
-
-      <span class="section-label">Tools</span>
-      <section class="tools-section">
-        <!-- Panel: launch Pendo debugger or VDS on the page -->
+      <!-- Output tab: Advice + Captured Output + Tip -->
+      <div id="tabOutputPanel" class="tab-panel" role="tabpanel" aria-labelledby="tabOutputBtn">
+        <!-- Panel: checks passed and remediation notes (built-in + optional AI) -->
         <div class="panel">
           <div class="flex">
-            <strong>Debug</strong>
-            <a href="https://web-sdk.pendo.io/public/debugging/" target="_blank" rel="noopener" class="small muted" data-action="docs-debugging">Docs</a>
+            <strong>Checks and recommendations</strong>
+            <button id="copyAdvice" class="small button--ghost" data-action="copy-advice">Copy</button>
           </div>
-          <div class="row">
-            <button id="launchDebugger" data-action="launch-debugger">Enable Pendo Debugger</button>
-            <button id="launchVds" class="button--ghost" data-action="launch-vds">Start VDS</button>
-          </div>
+          <ul id="advice" class="advice-list" aria-live="polite"></ul>
         </div>
-        <!-- Panel: download report as Markdown or raw JSON -->
+
+        <!-- Panel: captured console output from validateInstall() run in the page -->
         <div class="panel">
           <div class="flex">
-            <strong>Export</strong>
+            <strong>Captured Output</strong>
+            <button id="copyLogs" class="small button--ghost" data-action="copy-logs">Copy</button>
           </div>
-          <div class="row">
-            <button id="exportMd" data-action="export-report">Download Report</button>
-            <button id="exportJson" class="button--ghost" data-action="export-json">Download raw JSON</button>
-          </div>
+          <div id="logs" class="logs-container"></div>
         </div>
-      </section>
 
-      <span class="section-label">Captured output</span>
-      <!-- Panel: captured console output from validateInstall() run in the page -->
-      <div class="panel">
-        <div class="flex">
-          <strong>Captured Output</strong>
-          <button id="copyLogs" class="small button--ghost" data-action="copy-logs">Copy</button>
-        </div>
-        <div id="logs" class="logs-container"></div>
+        <!-- User tip about where to run validation -->
+        <p class="muted small tip">
+          Tip: run this on the target page where the Pendo agent should be present. If extensions or network filters are blocking requests, try Incognito with other extensions disabled.
+        </p>
       </div>
 
-      <!-- User tip about where to run validation -->
-      <p class="muted small tip">
-        Tip: run this on the target page where the Pendo agent should be present. If extensions or network filters are blocking requests, try Incognito with other extensions disabled.
-      </p>
+      <!-- Settings tab: Page status + Tools + AI configuration -->
+      <div id="tabSettingsPanel" class="tab-panel" role="tabpanel" aria-labelledby="tabSettingsBtn" hidden>
+        <!-- Panel: key-value summary from last run (filled by popup.js) -->
+        <div id="summary" class="panel panel--summary small">
+          <div class="kv">
+            <div>Snippet on page:</div><div class="mono" id="kv_snippet">—</div>
+            <div>Pendo Launcher:</div><div class="mono" id="kv_launcher">—</div>
+            <div>Launcher data validated:</div><div class="mono" id="kv_launcher_validated">—</div>
+            <div>Validated in:</div><div class="mono" id="kv_validated_in">—</div>
+            <div>Pendo present:</div><div class="mono" id="kv_pendo">—</div>
+            <div>ValidateInstall present:</div><div class="mono" id="kv_validate">—</div>
+            <div>Agent version:</div><div class="mono" id="kv_version">—</div>
+            <div>API key found:</div><div class="mono" id="kv_keyfound">—</div>
+            <div>Detected API key:</div><div class="mono" id="kv_detected">—</div>
+            <div>VisitorId:</div><div class="mono" id="kv_visitor">—</div>
+            <div>AccountId:</div><div class="mono" id="kv_account">—</div>
+            <div>Visitor metadata:</div><div class="mono kv-json" id="kv_visitor_meta">—</div>
+            <div>Account metadata:</div><div class="mono kv-json" id="kv_account_meta">—</div>
+            <div>Resource hits:</div><div class="mono" id="kv_hits">—</div>
+            <div>Lines captured:</div><div class="mono" id="kv_lines">—</div>
+          </div>
+        </div>
+
+        <section class="tools-section">
+          <!-- Panel: launch Pendo debugger or VDS on the page -->
+          <div class="panel">
+            <div class="flex">
+              <strong>Debug</strong>
+              <a href="https://web-sdk.pendo.io/public/debugging/" target="_blank" rel="noopener" class="small muted" data-action="docs-debugging">Docs</a>
+            </div>
+            <div class="row">
+              <button id="launchDebugger" data-action="launch-debugger">Enable Pendo Debugger</button>
+              <button id="launchVds" class="button--ghost" data-action="launch-vds">Start VDS</button>
+            </div>
+          </div>
+          <!-- Panel: download report as Markdown or raw JSON -->
+          <div class="panel">
+            <div class="flex">
+              <strong>Export</strong>
+            </div>
+            <div class="row">
+              <button id="exportMd" data-action="export-report">Download Report</button>
+              <button id="exportJson" class="button--ghost" data-action="export-json">Download raw JSON</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- AI Settings panel -->
+        <div id="aiSettingsPanel" class="panel">
+          <strong>AI Advice Configuration</strong>
+          <p class="muted small">Choose a provider and paste your API key. Advice is requested automatically when validation failures are detected.</p>
+          <div class="settings-field">
+            <label for="aiProviderSelect" class="settings-label">Provider</label>
+            <select id="aiProviderSelect" class="settings-select" data-action="ai-provider-select">
+              <option value="openai">OpenAI (gpt-4o-mini)</option>
+              <option value="claude">Anthropic Claude (claude-haiku-4-5)</option>
+              <option value="gemini">Google Gemini (gemini-2.0-flash)</option>
+            </select>
+          </div>
+          <div class="settings-field">
+            <label for="aiApiKeyInput" class="settings-label">API Key</label>
+            <div class="settings-key-row">
+              <input type="password" id="aiApiKeyInput" class="settings-input" placeholder="Paste your API key" autocomplete="off" spellcheck="false" data-action="ai-api-key-input" />
+              <button id="aiKeyToggleVisibility" class="button--ghost small" type="button" data-action="toggle-key-visibility">Show</button>
+            </div>
+          </div>
+          <div class="row">
+            <button id="aiSettingsSave" data-action="save-ai-settings">Save</button>
+            <span id="aiSettingsStatus" class="muted small"></span>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Popup logic: validation, advice, export, copy -->

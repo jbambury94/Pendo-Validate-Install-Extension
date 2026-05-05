@@ -329,9 +329,22 @@ async function runInPage() {
             return Object.keys(out).length ? out : null;
           } catch { return null; }
         }
-        const opts = agent._ && agent._.options;
-        status.visitorMetadata = safeCloneFields(opts && opts.visitor) || safeCloneFields(agent._ && agent._.state && agent._.state.visitor);
-        status.accountMetadata = safeCloneFields(opts && opts.account) || safeCloneFields(agent._ && agent._.state && agent._.state.account);
+        // Newer Pendo agents (v2.3xx) expose visitor/account metadata via
+        // pendo.getSerializedMetadata(). Older agents stored it on agent._.options
+        // or agent._.state. In newer agents, agent._ is the underscore.js library
+        // (a function), so the legacy paths return undefined.
+        let serialized = null;
+        try {
+          if (typeof agent.getSerializedMetadata === 'function') {
+            serialized = agent.getSerializedMetadata();
+          }
+        } catch {}
+        const opts = agent._ && typeof agent._ === 'object' ? agent._.options : null;
+        const legacyState = agent._ && typeof agent._ === 'object' ? agent._.state : null;
+        const visitorSrc = (serialized && serialized.visitor) || (opts && opts.visitor) || (legacyState && legacyState.visitor);
+        const accountSrc = (serialized && serialized.account) || (opts && opts.account) || (legacyState && legacyState.account);
+        status.visitorMetadata = safeCloneFields(visitorSrc);
+        status.accountMetadata = safeCloneFields(accountSrc);
       }
     } catch {}
 
@@ -401,9 +414,10 @@ async function runInPage() {
       else checks.push("visitorId present.");
       if (status.accountId == null) advice.push({ text: "accountId not found. If you use accounts, provide accountId in pendo.initialize.", source: 'builtin', supportKey: 'identifyVisitors' });
       else checks.push("accountId present.");
-      if (status.visitorMetadata) checks.push("Visitor metadata fields detected.");
-      if (status.accountMetadata) checks.push("Account metadata fields detected.");
-      if (status.visitorId && !status.visitorMetadata) {
+      const hasFieldsBeyondId = (meta) => !!meta && typeof meta === 'object' && Object.keys(meta).some(k => k !== 'id');
+      if (hasFieldsBeyondId(status.visitorMetadata)) checks.push("Visitor metadata fields detected.");
+      if (hasFieldsBeyondId(status.accountMetadata)) checks.push("Account metadata fields detected.");
+      if (status.visitorId && !hasFieldsBeyondId(status.visitorMetadata)) {
         advice.push({ text: "No visitor metadata fields detected beyond the ID. Consider passing name, email, and role for better segmentation.", source: 'builtin', supportKey: 'chooseIdsMetadata' });
       }
     }
@@ -428,7 +442,7 @@ async function runInPage() {
       checks.push("validateInstall() produced no warnings or errors.");
     }
 
-    if (advice.length === 0 && checks.length > 0) advice.push({ text: "Installation looks healthy based on current checks.", source: 'builtin', supportKey: 'helpCenter' });
+    if (advice.length === 0 && checks.length > 0) checks.push("Installation looks healthy based on current checks.");
     else if (advice.length === 0) advice.push({ text: "Review the output below and compare with a known-good page. Check initialise timing and data mapping.", source: 'builtin', supportKey: 'spa' });
 
     if (variant === 'launcher') {
@@ -809,6 +823,7 @@ async function getAiConfig() {
 
   /** Run validation on current tab (or Launcher), update status/summary/advice/logs, optionally fetch AI advice. */
   document.getElementById('run').addEventListener('click', async () => {
+    activateTab(document.getElementById('tabOutputBtn'));
     setStatus(statusEl, '', 'Running…');
     adviceEl.innerHTML = '';
     logsEl.innerHTML = '';
@@ -966,10 +981,8 @@ async function getAiConfig() {
         await navigator.clipboard.writeText(payload);
         return 'clipboard-api';
       }
-    } catch (e) {
-      // #region agent log
-      fetch('http://127.0.0.1:7754/ingest/73dd5440-fbec-40e9-a3fc-69fe2842a34b',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'954c5c'},body:JSON.stringify({sessionId:'954c5c',location:'popup.js:copyTextToClipboard',message:'clipboard writeText failed, using execCommand fallback',data:{errName:e&&e.name||'unknown'},timestamp:Date.now(),hypothesisId:'H1'})}).catch(()=>{});
-      // #endregion
+    } catch (_) {
+      // Fall through to execCommand fallback
     }
     const ta = document.createElement('textarea');
     ta.value = payload;
@@ -984,9 +997,6 @@ async function getAiConfig() {
     ta.setSelectionRange(0, payload.length);
     try {
       const ok = document.execCommand('copy');
-      // #region agent log
-      fetch('http://127.0.0.1:7754/ingest/73dd5440-fbec-40e9-a3fc-69fe2842a34b',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'954c5c'},body:JSON.stringify({sessionId:'954c5c',location:'popup.js:copyTextToClipboard',message:'execCommand copy result',data:{ok},timestamp:Date.now(),hypothesisId:'H2',runId:'post-fix'})}).catch(()=>{});
-      // #endregion
       if (!ok) throw new Error('execCommand copy returned false');
       return 'execCommand';
     } finally {
@@ -1024,8 +1034,18 @@ async function getAiConfig() {
     copyTextToClipboard(all || 'No logs captured.').catch((err) => console.warn('Copy logs failed:', err));
   };
 
+  // --- Tab strip controller ---
+  const tabBtns = Array.from(document.querySelectorAll('.tabs__btn'));
+  const tabPanels = Array.from(document.querySelectorAll('.tab-panel'));
+  function activateTab(btn) {
+    if (!btn) return;
+    const targetId = btn.getAttribute('aria-controls');
+    tabBtns.forEach(b => b.setAttribute('aria-selected', b === btn ? 'true' : 'false'));
+    tabPanels.forEach(p => { p.hidden = p.id !== targetId; });
+  }
+  tabBtns.forEach(btn => btn.addEventListener('click', () => activateTab(btn)));
+
   // --- AI Settings panel ---
-  const aiToggleBtn = document.getElementById('aiSettingsToggle');
   const aiPanel = document.getElementById('aiSettingsPanel');
   const aiProviderSelect = document.getElementById('aiProviderSelect');
   const aiApiKeyInput = document.getElementById('aiApiKeyInput');
@@ -1036,12 +1056,6 @@ async function getAiConfig() {
   getAiConfig().then(cfg => {
     if (cfg.aiProvider) aiProviderSelect.value = cfg.aiProvider;
     if (cfg.aiApiKey) aiApiKeyInput.value = cfg.aiApiKey;
-  });
-
-  aiToggleBtn.addEventListener('click', () => {
-    const isOpen = !aiPanel.hidden;
-    aiPanel.hidden = isOpen;
-    aiToggleBtn.setAttribute('aria-expanded', String(!isOpen));
   });
 
   aiKeyToggle.addEventListener('click', () => {

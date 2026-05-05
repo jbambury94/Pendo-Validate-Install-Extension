@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.5.1
+- Output / Settings tabbed UI: replaces the inline section labels and the collapsible "AI Advice Settings" toggle. The Output tab shows checks/recommendations + captured logs; the Settings tab consolidates Page status, Debug, Export, and AI provider configuration.
+- Activating "Validate Pendo Install" auto-switches to the Output tab so results are immediately visible.
+- `popup-actions.md` reference table extended with element ids and new tab actions (`tab-output`, `tab-settings`).
+
+## 1.5.0
+- **Architecture: floating modal overlay.** The extension no longer opens as a Chrome toolbar popup. Clicking the icon now toggles a draggable iframe (`popup.html`) injected into the active tab — same UX as the Pendo Tagging Aid.
+  - New `background.js` service worker handles `chrome.action.onClicked` and ensures `content.js` is present in pre-existing tabs.
+  - New `content.js` content script creates/destroys the overlay iframe and owns drag state via `postMessage` from the iframe.
+  - `popup.html` gains a draggable hero with close button; `popup.js` detects iframe context and relays drag/close events to the parent.
+  - `manifest.json` adds `background.service_worker`, `content_scripts`, and `web_accessible_resources` for `popup.html`/`popup.js`/`popup.css`/`pendo-loader.js`/`vendor/pendo.js`/fonts/icons.
+- **Multi-provider AI advice.** Adds an AI provider selector covering OpenAI (`gpt-4o-mini`), Anthropic Claude (`claude-haiku-4-5`), and Google Gemini (`gemini-2.0-flash`). `requestAiAdvice()` builds the correct request shape and parses each provider's response. API key is stored in `chrome.storage.local` with a show/hide toggle.
+- **Pendo Launcher detection rebuilt.**
+  - New **Phase 1.5**: after Phase 1 finds no `window.pendo`, re-runs `captureAndInspect('launcher')` in the same active tab to catch `window.Pendo` (capital P) injected by the Pendo Launcher extension — the most common previously-undetected case.
+  - `captureAndInspect()` now reports `pendoGlobal` (`'Pendo' | 'pendo' | null`) so callers can distinguish Launcher from snippet correctly.
+  - `findLauncherTab()` filters out `chrome-extension://`, `chrome://`, and `about:` URLs (cannot inject into other extensions' pages); removes dead `betaIdPattern` regex.
+  - Phase 2 `executeScript` is wrapped in `try/catch` so a failing injection degrades gracefully to the Phase 1 fallback.
+- **Visitor and account metadata extraction.** `captureAndInspect()` now reads visitor/account metadata fields (name, email, role, plan, etc.) from the agent state per [Choose IDs and metadata](https://support.pendo.io/hc/en-us/articles/21326198721563-Choose-IDs-and-metadata) and surfaces them in the Page status panel.
+- **Launcher data validation status** (`launcherDataValidated`) added to the Page status summary and Markdown report.
+- **API surface aligned with documented Pendo Web SDK.** Removed undocumented `validateInstallation` fallback; all paths use `validateInstall`.
+- **New permissions:** `management` (better extension recognition for Launcher / Launcher Beta) and `debugger` (enables future debug tooling).
+- **Test scaffold (Vitest + jsdom).** Adds 127 tests across 6 suites covering `normalizeAdviceList`, `buildMarkdownReport`/`buildJsonReport`, `captureAndInspect`, `getOrCreateVisitorId`, `requestAiAdvice` (all three providers + timeout/error paths), and `content.js` drag-clamping. Pure functions extracted to `tests/helpers.js`. Run with `npm test`.
+- `.gitignore` excludes `node_modules/`, `coverage/`, `.vitest-cache/`, and `*.zip`.
+
 ## 1.4.4
 - Add CLAUDE.md with codebase overview, architecture guide, two-phase validation flow, MV3 CSP compliance details, permissions, and UI conventions.
 - Fix regex escaping in popup.js: `\n` join and `\b` word boundaries were literal backslash sequences, breaking UUID detection in captured console output.
