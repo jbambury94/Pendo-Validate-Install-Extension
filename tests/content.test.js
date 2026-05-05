@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { clampDragPosition } from './helpers.js'
-import { enableDebuggingInPage, launchVisualDesignStudioInPage } from './helpers.js'
+import { enableDebuggingInPage } from './helpers.js'
 
 // ── Drag clamping ─────────────────────────────────────────────────────────────
 
@@ -93,49 +93,3 @@ describe('enableDebuggingInPage', () => {
   })
 })
 
-// ── launchVisualDesignStudioInPage ────────────────────────────────────────────
-
-describe('launchVisualDesignStudioInPage', () => {
-  beforeEach(() => {
-    delete window.pendo
-    delete window.Pendo
-  })
-
-  it('returns ok: false when no pendo agent on window', () => {
-    const result = launchVisualDesignStudioInPage()
-    expect(result.ok).toBe(false)
-    expect(result.message).toMatch(/Pendo not found/)
-  })
-
-  it('returns ok: false when designer object is missing', () => {
-    window.pendo = {}
-    const result = launchVisualDesignStudioInPage()
-    expect(result.ok).toBe(false)
-    expect(result.message).toMatch(/Visual Design Studio/)
-  })
-
-  it('returns ok: false when launchInAppDesigner method is missing', () => {
-    window.pendo = { designerv2: {} }
-    expect(launchVisualDesignStudioInPage().ok).toBe(false)
-  })
-
-  it('calls designerv2.launchInAppDesigner() and returns ok: true', () => {
-    const launch = vi.fn()
-    window.pendo = { designerv2: { launchInAppDesigner: launch } }
-    expect(launchVisualDesignStudioInPage()).toEqual({ ok: true })
-    expect(launch).toHaveBeenCalledOnce()
-  })
-
-  it('falls back to pendo.designer when designerv2 is absent', () => {
-    const launch = vi.fn()
-    window.pendo = { designer: { launchInAppDesigner: launch } }
-    expect(launchVisualDesignStudioInPage().ok).toBe(true)
-  })
-
-  it('returns ok: false with error message when launch throws', () => {
-    window.pendo = { designerv2: { launchInAppDesigner: () => { throw new Error('vds error') } } }
-    const result = launchVisualDesignStudioInPage()
-    expect(result.ok).toBe(false)
-    expect(result.message).toBe('vds error')
-  })
-})

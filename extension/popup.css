@@ -257,12 +257,6 @@ button.small { padding: 4px 10px; }
 .advice-item--check .advice-item__icon { background: #fff; border-color: #bbdccb; color: var(--pendo-green); }
 .advice-item--note .advice-item__icon { background: #fef0f4; border-color: rgba(255, 72, 118, 0.35); color: var(--pendo-pank); }
 .advice-item strong { color: var(--pendo-ink); }
-/* Tools: Debug + Export side by side; stack on narrow */
-.tools-section { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); margin-bottom: var(--space-3); }
-.tools-section .panel { margin-bottom: 0; }
-/* Stack buttons vertically so they fill the panel width — avoids wrapping at small panel widths */
-.tools-section .row { flex-direction: column; align-items: stretch; margin-bottom: 0; gap: var(--space-2); }
-@media (max-width: 360px) { .tools-section { grid-template-columns: 1fr; } }
 /* Tip at bottom */
 .tip { margin-top: var(--space-4); margin-bottom: 0; }
 /* AI Settings panel */

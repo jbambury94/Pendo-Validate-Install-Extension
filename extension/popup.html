@@ -20,6 +20,7 @@
       <section class="action-block">
         <div class="row">
           <button id="run" data-action="validate">Validate Pendo Install</button>
+          <button id="launchDebugger" class="button--ghost" data-action="launch-debugger">Enable Pendo Debugger</button>
           <span id="status" class="badge">Idle</span>
         </div>
       </section>
@@ -79,29 +80,16 @@
           </div>
         </div>
 
-        <section class="tools-section">
-          <!-- Panel: launch Pendo debugger or VDS on the page -->
-          <div class="panel">
-            <div class="flex">
-              <strong>Debug</strong>
-              <a href="https://web-sdk.pendo.io/public/debugging/" target="_blank" rel="noopener" class="small muted" data-action="docs-debugging">Docs</a>
-            </div>
-            <div class="row">
-              <button id="launchDebugger" data-action="launch-debugger">Enable Pendo Debugger</button>
-              <button id="launchVds" class="button--ghost" data-action="launch-vds">Start VDS</button>
-            </div>
+        <!-- Panel: download report as Markdown or raw JSON -->
+        <div class="panel">
+          <div class="flex">
+            <strong>Export</strong>
           </div>
-          <!-- Panel: download report as Markdown or raw JSON -->
-          <div class="panel">
-            <div class="flex">
-              <strong>Export</strong>
-            </div>
-            <div class="row">
-              <button id="exportMd" data-action="export-report">Download Report</button>
-              <button id="exportJson" class="button--ghost" data-action="export-json">Download raw JSON</button>
-            </div>
+          <div class="row">
+            <button id="exportMd" data-action="export-report">Download Report</button>
+            <button id="exportJson" class="button--ghost" data-action="export-json">Download raw JSON</button>
           </div>
-        </section>
+        </div>
 
         <!-- AI Settings panel -->
         <div id="aiSettingsPanel" class="panel">

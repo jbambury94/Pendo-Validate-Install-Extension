@@ -188,20 +188,6 @@ export function enableDebuggingInPage() {
   }
 }
 
-export function launchVisualDesignStudioInPage() {
-  const pendo = (typeof window !== 'undefined' && (window.pendo || window.Pendo)) || null
-  if (!pendo) return { ok: false, message: 'Pendo not found on this page.' }
-  const designer = pendo.designerv2 || pendo.designer
-  if (!designer || typeof designer.launchInAppDesigner !== 'function') {
-    return { ok: false, message: 'Visual Design Studio (designerv2.launchInAppDesigner) not available on this agent.' }
-  }
-  try {
-    designer.launchInAppDesigner()
-    return { ok: true }
-  } catch (e) {
-    return { ok: false, message: (e && e.message) || String(e) }
-  }
-}
 
 export async function getAiConfig() {
   return new Promise(resolve => {

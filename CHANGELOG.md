@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.5.2
+- "Enable Pendo Debugger" promoted from Settings → Debug panel to the action row as a secondary CTA next to "Validate Pendo Install". `id` and `data-action` preserved for Pendo auto-tagging stability.
+- Debug panel removed from Settings tab (along with the "Docs" link and "Start VDS" button). `launchVisualDesignStudioInPage` function and `#launchVds` handler/tests deleted.
+
 ## 1.5.1
 - Output / Settings tabbed UI: replaces the inline section labels and the collapsible "AI Advice Settings" toggle. The Output tab shows checks/recommendations + captured logs; the Settings tab consolidates Page status, Debug, Export, and AI provider configuration.
 - Activating "Validate Pendo Install" auto-switches to the Output tab so results are immediately visible.

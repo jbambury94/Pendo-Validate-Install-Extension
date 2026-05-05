@@ -64,7 +64,7 @@ Results flow back to the panel context → `renderAdvice()` + `renderLogs()` pop
 | `getOrCreateVisitorId()` | Persistent UUID in `chrome.storage.local` for self-instrumentation |
 | `activateTab()` | Switches the *Output* / *Settings* tabs |
 | Iframe wiring | When `window !== window.parent`, shows the close button and relays `pendo-validate-close` / `-dragstart` / `-drag` / `-dragend` messages |
-| Debug buttons | Calls `pendo.enableDebugging()` / `pendo.designerv2.launchInAppDesigner()` via injection |
+| Debug button | Calls `pendo.enableDebugging()` via injection |
 
 ### MV3 CSP Compliance
 

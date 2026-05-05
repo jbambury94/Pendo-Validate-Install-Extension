@@ -6,14 +6,14 @@ A Chrome extension for validating Pendo installations. Click the extension icon 
 
 - **Floating modal overlay**: clicking the icon toggles a draggable iframe panel injected into the active tab — no Chrome toolbar popup, so the panel persists while you navigate and inspect.
 - **Three-phase validation**: runs `pendo.validateInstall()` against the page's `window.pendo` first; falls back to a same-tab Launcher detection (Phase 1.5, for `window.Pendo` injected by the Pendo Launcher extension); finally searches other windows for an open Pendo Launcher / Pendo Launcher (Beta) tab and runs validation there.
-- **Tabbed UI** — *Output* (checks, recommendations, captured logs) and *Settings* (page status summary, debug tools, export, AI configuration).
+- **Tabbed UI** — *Output* (checks, recommendations, captured logs) and *Settings* (page status summary, export, AI configuration).
 - **Console interception**: captures all `console.log`, `warn`, `error`, and `info` output produced during validation and displays it colour-coded.
 - **Agent and identity inspection**: reads agent version, detected API key, `visitorId`, `accountId`, and visitor/account metadata fields directly from the Pendo agent state.
 - **Performance API resource tracking**: collects Pendo-related network resource hits from the browser's Performance API.
 - **CSP meta tag inspection**: reads `Content-Security-Policy` meta tags from the page and flags missing Pendo domains.
 - **Built-in advice**: generates prioritised, check-based recommendations with links to official Pendo support articles.
 - **Optional multi-provider AI advice**: sends validation context to OpenAI, Anthropic Claude, or Google Gemini and surfaces remediation suggestions (requires you to paste an API key in Settings).
-- **Debug tools**: "Enable Pendo Debugger" calls `pendo.enableDebugging()`; "Start VDS" launches the Visual Design Studio via `pendo.designerv2.launchInAppDesigner()`.
+- **Debug tools**: "Enable Pendo Debugger" (in the action row) calls `pendo.enableDebugging()` on the active tab.
 - **Export**: download results as a Markdown report (with support links) or raw JSON; copy advice or captured logs to clipboard.
 - **Self-contained**: all fonts (Inter, Sora) and the Pendo agent are bundled locally — no external network requests at panel load time.
 - **Persistent visitor ID**: instruments itself with Pendo using a UUID stored in `chrome.storage.local` for consistent session tracking.
@@ -79,7 +79,7 @@ npm run test:coverage
 
 ## Notes
 
-- **Version**: 1.5.1 (see [CHANGELOG.md](CHANGELOG.md))
+- **Version**: 1.5.2 (see [CHANGELOG.md](CHANGELOG.md))
 - **Manifest version**: 3
 - **Permissions**: `activeTab`, `scripting`, `storage`, `tabs`, `management`, `debugger`
 - **Host permissions**: `<all_urls>`

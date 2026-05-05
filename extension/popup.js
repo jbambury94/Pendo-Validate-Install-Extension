@@ -218,19 +218,6 @@ function enableDebuggingInPage() {
     return { ok: true };
   } catch (e) { return { ok: false, message: (e && e.message) || String(e) }; }
 }
-/** Launch Visual Design Studio (VDS) via pendo.designerv2.launchInAppDesigner(). See https://support.pendo.io/hc/en-us/articles/360031864732 */
-function launchVisualDesignStudioInPage() {
-  const pendo = (typeof window !== 'undefined' && (window.pendo || window.Pendo)) || null;
-  if (!pendo) return { ok: false, message: 'Pendo not found on this page.' };
-  const designer = pendo.designerv2 || pendo.designer;
-  if (!designer || typeof designer.launchInAppDesigner !== 'function') {
-    return { ok: false, message: 'Visual Design Studio (designerv2.launchInAppDesigner) not available on this agent.' };
-  }
-  try {
-    designer.launchInAppDesigner();
-    return { ok: true };
-  } catch (e) { return { ok: false, message: (e && e.message) || String(e) }; }
-}
 
 // ========== Page validation: inject and run in tab ==========
 /**
@@ -943,14 +930,6 @@ async function getAiConfig() {
     else setStatus(statusEl, 'err', res.message || 'Failed');
   });
 
-  /** Launch Visual Design Studio (VDS): calls pendo.designerv2.launchInAppDesigner() in the page. */
-  document.getElementById('launchVds').addEventListener('click', async () => {
-    const statusEl = document.getElementById('status');
-    setStatus(statusEl, '', '…');
-    const res = await runInActiveTab(launchVisualDesignStudioInPage);
-    if (res.ok) setStatus(statusEl, 'ok', 'VDS launched');
-    else setStatus(statusEl, 'err', res.message || 'Failed');
-  });
 
   /** Export last run as Markdown report file. */
   document.getElementById('exportMd').addEventListener('click', async () => {
