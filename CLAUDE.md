@@ -33,6 +33,7 @@ When the user clicks "Validate Pendo Install", `popup.js` runs `runInPage()`:
    - Intercepts `console.log/warn/error`
    - Checks for `window.pendo` and `pendo.validateInstall()`
    - Extracts version, API key, visitorId, accountId from agent state
+   - Reads visitor/account **metadata** fields (name, email, role, plan, etc.) per [Choose IDs and metadata](https://support.pendo.io/hc/en-us/articles/21326198721563-Choose-IDs-and-metadata). These are read from the agent object on the injectable page; Chrome blocks reading state from other extensions' pages, so Launcher metadata is only available when the agent runs on the active tab.
    - Collects Pendo resource hits from the Performance API
    - Reads CSP meta tags
 

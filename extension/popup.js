@@ -6,6 +6,33 @@
 // ========== Pendo visitor ID (persistent UUID in extension storage) ==========
 const PENDO_VISITOR_ID_KEY = 'pendoVisitorId';
 
+/** Chrome Web Store extension IDs — Launcher tabs use chrome-extension://<id>/…; URL path rarely matches title/regex-only search. */
+const PENDO_LAUNCHER_EXTENSION_IDS = {
+  stable: 'epnhoepnmfjdbjjfanpjklemanhkjgil',
+  beta: 'pndmgfbnmbbgkikpcnndoeknbmlkhgmj'
+};
+
+/** Launcher often has no open tab (toolbar popup only). Detect install via chrome.management when tab search finds nothing. */
+function detectInstalledPendoLauncherExtension() {
+  return new Promise((resolve) => {
+    try {
+      if (!chrome.management || typeof chrome.management.getAll !== 'function') return resolve(null);
+      chrome.management.getAll((exts) => {
+        if (chrome.runtime.lastError || !exts) return resolve(null);
+        const enabled = exts.filter(e => e.enabled);
+        if (enabled.find(e => e.id === PENDO_LAUNCHER_EXTENSION_IDS.beta)) return resolve({ variant: 'launcher-beta' });
+        if (enabled.find(e => e.id === PENDO_LAUNCHER_EXTENSION_IDS.stable)) return resolve({ variant: 'launcher' });
+        const launcherNamed = enabled.filter(e => /pendo\s*launcher/i.test(e.name || ''));
+        if (launcherNamed.find(e => /\bbeta\b/i.test(e.name || ''))) return resolve({ variant: 'launcher-beta' });
+        if (launcherNamed.find(e => !/\bbeta\b/i.test(e.name || ''))) return resolve({ variant: 'launcher' });
+        resolve(null);
+      });
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
 /** Get or create a persistent visitor UUID; store in chrome.storage.local and return it. */
 function getOrCreateVisitorId() {
   return new Promise((resolve) => {
@@ -50,6 +77,7 @@ const PENDO_SUPPORT = {
   installComponents: 'https://support.pendo.io/hc/en-us/articles/21362607464987-Components-of-the-install-script',
   agentSettings: 'https://support.pendo.io/hc/en-us/articles/360031832152-Pendo-agent-settings',
   identifyVisitors: 'https://support.pendo.io/hc/en-us/articles/22764466082715-Identify-visitors-and-metadata-through-browser-scripting',
+  chooseIdsMetadata: 'https://support.pendo.io/hc/en-us/articles/21326198721563-Choose-IDs-and-metadata',
   csp: 'https://support.pendo.io/hc/en-us/articles/360032209131-Content-Security-Policy-CSP',
   spa: 'https://support.pendo.io/hc/en-us/articles/360031862272-Install-Pendo-on-a-single-page-web-application',
   helpCenter: 'https://support.pendo.io/hc/en-us',
@@ -118,6 +146,8 @@ function buildMarkdownReport(context) {
     resourceHitCount: (status.resourceHits && status.resourceHits.length) || 0,
     capturedLineCount: (captured && captured.length) || 0
   };
+  if (status.visitorMetadata) meta.visitorMetadata = status.visitorMetadata;
+  if (status.accountMetadata) meta.accountMetadata = status.accountMetadata;
   if (status.resourceHits && status.resourceHits.length) {
     meta.observedPendoResources = status.resourceHits.map(r => ({ initiatorType: r.initiatorType || 'resource', name: r.name }));
   }
@@ -251,6 +281,8 @@ async function runInPage() {
       detectedApiKey: null,
       visitorId: null,
       accountId: null,
+      visitorMetadata: null,
+      accountMetadata: null,
       resourceHits: []
     };
 
@@ -275,6 +307,26 @@ async function runInPage() {
         if (state && state.accountId) status.accountId = state.accountId;
         if (!status.visitorId && agent.getVisitorId) { try { status.visitorId = agent.getVisitorId(); } catch {} }
         if (!status.accountId && agent.getAccountId) { try { status.accountId = agent.getAccountId(); } catch {} }
+
+        /** Extract visitor/account metadata objects (per Pendo "Choose IDs and metadata" docs). */
+        function safeCloneFields(src, maxKeys, maxLen) {
+          if (!src || typeof src !== 'object') return null;
+          try {
+            const keys = Object.keys(src).slice(0, maxKeys || 50);
+            if (!keys.length) return null;
+            const out = {};
+            for (const k of keys) {
+              const v = src[k];
+              if (v === undefined || typeof v === 'function') continue;
+              const s = typeof v === 'string' ? v : JSON.stringify(v);
+              out[k] = s && s.length > (maxLen || 500) ? s.slice(0, maxLen || 500) + '…' : v;
+            }
+            return Object.keys(out).length ? out : null;
+          } catch { return null; }
+        }
+        const opts = agent._ && agent._.options;
+        status.visitorMetadata = safeCloneFields(opts && opts.visitor) || safeCloneFields(agent._ && agent._.state && agent._.state.visitor);
+        status.accountMetadata = safeCloneFields(opts && opts.account) || safeCloneFields(agent._ && agent._.state && agent._.state.account);
       }
     } catch {}
 
@@ -344,6 +396,11 @@ async function runInPage() {
       else checks.push("visitorId present.");
       if (status.accountId == null) advice.push({ text: "accountId not found. If you use accounts, provide accountId in pendo.initialize.", source: 'builtin', supportKey: 'identifyVisitors' });
       else checks.push("accountId present.");
+      if (status.visitorMetadata) checks.push("Visitor metadata fields detected.");
+      if (status.accountMetadata) checks.push("Account metadata fields detected.");
+      if (status.visitorId && !status.visitorMetadata) {
+        advice.push({ text: "No visitor metadata fields detected beyond the ID. Consider passing name, email, and role for better segmentation.", source: 'builtin', supportKey: 'chooseIdsMetadata' });
+      }
     }
 
     const needsDomains = ["pendo.io", "cdn.pendo.io", "data.pendo.io"];
@@ -418,11 +475,37 @@ async function runInPage() {
     if (beta) return { tab: beta, variant: 'launcher-beta' };
     const standard = await searchWithPatterns([/pendo launcher/i, /pendo-launcher/i]);
     if (standard) return { tab: standard, variant: 'launcher' };
+
+    async function findByOfficialExtensionId() {
+      try {
+        const wins = await chrome.windows.getAll({ populate: true });
+        for (const idOrder of [
+          { id: PENDO_LAUNCHER_EXTENSION_IDS.beta, variant: 'launcher-beta' },
+          { id: PENDO_LAUNCHER_EXTENSION_IDS.stable, variant: 'launcher' }
+        ]) {
+          const extOrigin = `chrome-extension://${idOrder.id}`.toLowerCase();
+          for (const w of wins) {
+            for (const t of (w.tabs || [])) {
+              const url = (t.url || '').toLowerCase();
+              if (url === extOrigin || url.startsWith(extOrigin + '/')) {
+                return { tab: t, variant: idOrder.variant };
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.error('findByOfficialExtensionId failed', e);
+      }
+      return null;
+    }
+
+    const byStoreId = await findByOfficialExtensionId();
+    if (byStoreId) return byStoreId;
     return null;
   }
 
   const EMPTY_RESULT = {
-    status: { pendoPresent: false, validatePresent: false, version: null, detectedApiKey: null, visitorId: null, accountId: null, resourceHits: [] },
+    status: { pendoPresent: false, validatePresent: false, version: null, detectedApiKey: null, visitorId: null, accountId: null, visitorMetadata: null, accountMetadata: null, resourceHits: [] },
     captured: [], advice: [], checks: [], cspMeta: '', apiKeyFound: false, hasError: true, hasWarn: false
   };
 
@@ -492,7 +575,22 @@ async function runInPage() {
   const launcherVariant = launcherLookup && launcherLookup.variant ? launcherLookup.variant : 'launcher';
 
   if (!launcherTab) {
+    const installedLauncher = await detectInstalledPendoLauncherExtension();
     const base = pageResult || EMPTY_RESULT;
+    if (installedLauncher) {
+      base.captured = (base.captured || []).concat([
+        { level: 'info', text: 'Pendo Launcher extension is installed and enabled. To see visitor/account metadata, run validation on the app tab where the Pendo agent is active.' }
+      ]);
+      return {
+        ...base,
+        pageUrl: basePageUrl,
+        snippetOnPage: false,
+        launcherAttempted: true,
+        launcherPresent: true,
+        validatedIn: 'page',
+        origin: 'page'
+      };
+    }
     base.captured = (base.captured || []).concat([{ level: 'info', text: 'Pendo Launcher window not found. Also checked the Pendo Launcher (Beta) extension.' }]);
     return {
       ...base,
@@ -519,16 +617,30 @@ async function runInPage() {
     console.warn('Phase 2 launcher tab injection failed:', e);
   }
 
+  const launcherUrlStr = launcherTab.url || '';
+  const isOfficialLauncherExtPage = (() => {
+    const u = launcherUrlStr.toLowerCase();
+    const beta = `chrome-extension://${PENDO_LAUNCHER_EXTENSION_IDS.beta}`;
+    const stable = `chrome-extension://${PENDO_LAUNCHER_EXTENSION_IDS.stable}`;
+    return u === beta || u.startsWith(beta + '/') || u === stable || u.startsWith(stable + '/');
+  })();
+  const treatAsValidatedInLauncher = !!launcherResult || (isOfficialLauncherExtPage && !launcherResult);
+
   const fallback = launcherResult || pageResult || EMPTY_RESULT;
+  const injectBlockedNote = !launcherResult && isOfficialLauncherExtPage
+    ? [{ level: 'info', text: 'Pendo Launcher extension tab found. Chrome blocks script injection into other extensions; run validation on an app tab where the Pendo agent loads to see visitor/account metadata.' }]
+    : [];
+
   return {
     ...fallback,
+    captured: injectBlockedNote.concat(fallback.captured || []),
     pageUrl: basePageUrl,
     snippetOnPage: false,
     launcherAttempted: true,
     launcherPresent: true,
-    validatedIn: launcherResult ? launcherVariant : 'page',
+    validatedIn: treatAsValidatedInLauncher ? launcherVariant : 'page',
     launcherUrl: launcherTab.url,
-    origin: launcherResult ? launcherVariant : 'page'
+    origin: treatAsValidatedInLauncher ? launcherVariant : 'page'
   };
 }
 
@@ -640,11 +752,35 @@ async function getAiConfig() {
       }
       const heroEl = document.getElementById('hero');
       if (heroEl) {
-        heroEl.addEventListener('mousedown', (e) => {
+        // Pointer capture keeps delivering pointermove/up to the hero even when the cursor
+        // leaves the iframe. We use screenX/screenY (absolute screen coords) for deltas
+        // because clientX/clientY shift when the parent moves the iframe under the pointer.
+        heroEl.addEventListener('pointerdown', (e) => {
           if (e.target?.id === 'closeBtn') return;
-          // clientX/Y are relative to the iframe viewport = offset from iframe's own top-left.
-          // content.js uses these directly to compute how far to shift the iframe on mousemove.
-          window.parent.postMessage({ type: 'pendo-validate-dragstart', x: e.clientX, y: e.clientY }, '*');
+          if (e.pointerType === 'mouse' && e.button !== 0) return;
+          e.preventDefault();
+          const startScreenX = e.screenX;
+          const startScreenY = e.screenY;
+          try { heroEl.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+          window.parent.postMessage({ type: 'pendo-validate-dragstart' }, '*');
+
+          function onMove(ev) {
+            const dx = ev.screenX - startScreenX;
+            const dy = ev.screenY - startScreenY;
+            window.parent.postMessage({ type: 'pendo-validate-drag', dx, dy }, '*');
+          }
+
+          function teardown(ev) {
+            try { heroEl.releasePointerCapture(ev.pointerId); } catch (_) { /* ignore */ }
+            heroEl.removeEventListener('pointermove', onMove);
+            heroEl.removeEventListener('pointerup', teardown);
+            heroEl.removeEventListener('pointercancel', teardown);
+            window.parent.postMessage({ type: 'pendo-validate-dragend' }, '*');
+          }
+
+          heroEl.addEventListener('pointermove', onMove);
+          heroEl.addEventListener('pointerup', teardown);
+          heroEl.addEventListener('pointercancel', teardown);
         });
       }
     }
@@ -733,6 +869,8 @@ async function getAiConfig() {
       setKV('kv_detected', status.detectedApiKey || 'unknown');
       setKV('kv_visitor', status.visitorId || 'not set');
       setKV('kv_account', (status.accountId==null?'not set':status.accountId));
+      setKV('kv_visitor_meta', status.visitorMetadata ? JSON.stringify(status.visitorMetadata, null, 1) : '—');
+      setKV('kv_account_meta', status.accountMetadata ? JSON.stringify(status.accountMetadata, null, 1) : '—');
       setKV('kv_hits', status.resourceHits.length);
       setKV('kv_lines', captured.length);
 
@@ -840,15 +978,70 @@ async function getAiConfig() {
     } catch (e) { console.error(e); }
   });
 
-  /** Copy advice list text to clipboard. */
+  /** Clipboard API is blocked by Permissions Policy in some extension contexts (see crbug.com/414348233); execCommand fallback works with user gesture. */
+  async function copyTextToClipboard(text) {
+    const payload = text ?? '';
+    try {
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        await navigator.clipboard.writeText(payload);
+        return 'clipboard-api';
+      }
+    } catch (e) {
+      // #region agent log
+      fetch('http://127.0.0.1:7754/ingest/73dd5440-fbec-40e9-a3fc-69fe2842a34b',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'954c5c'},body:JSON.stringify({sessionId:'954c5c',location:'popup.js:copyTextToClipboard',message:'clipboard writeText failed, using execCommand fallback',data:{errName:e&&e.name||'unknown'},timestamp:Date.now(),hypothesisId:'H1'})}).catch(()=>{});
+      // #endregion
+    }
+    const ta = document.createElement('textarea');
+    ta.value = payload;
+    ta.setAttribute('readonly', '');
+    ta.setAttribute('aria-hidden', 'true');
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    ta.style.top = '0';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    ta.setSelectionRange(0, payload.length);
+    try {
+      const ok = document.execCommand('copy');
+      // #region agent log
+      fetch('http://127.0.0.1:7754/ingest/73dd5440-fbec-40e9-a3fc-69fe2842a34b',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'954c5c'},body:JSON.stringify({sessionId:'954c5c',location:'popup.js:copyTextToClipboard',message:'execCommand copy result',data:{ok},timestamp:Date.now(),hypothesisId:'H2',runId:'post-fix'})}).catch(()=>{});
+      // #endregion
+      if (!ok) throw new Error('execCommand copy returned false');
+      return 'execCommand';
+    } finally {
+      document.body.removeChild(ta);
+    }
+  }
+
+  /** Copy advice list text to clipboard (prefer structured data; DOM li.textContent can merge icon + body). */
   document.getElementById('copyAdvice').onclick = () => {
-    const items = Array.from(adviceEl.querySelectorAll('li')).map(li => `• ${li.textContent}`).join('\\n');
-    navigator.clipboard.writeText(items || 'No advice.');
+    let items = '';
+    if (lastContext) {
+      const lines = [];
+      (lastContext.checks || []).forEach((c) => lines.push(`${c}`));
+      normalizeAdviceList(lastContext.advice || []).forEach((a) => lines.push(a.text));
+      items = lines.join('\n');
+    } else {
+      items = Array.from(adviceEl.querySelectorAll('li')).map((li) => li.innerText.trim()).join('\n\n');
+    }
+    copyTextToClipboard(items || 'No advice.').catch((err) => console.warn('Copy advice failed:', err));
   };
-  /** Copy captured log lines to clipboard. */
+  /** Copy captured log lines to clipboard (explicit [level] lines — parent textContent merges badge+body into "infoMessage"). */
   document.getElementById('copyLogs').onclick = () => {
-    const all = Array.from(document.querySelectorAll('#logs .log-line')).map(div => div.textContent.trim()).join('\\n');
-    navigator.clipboard.writeText(all || 'No logs captured.');
+    let all = '';
+    if (lastContext && Array.isArray(lastContext.captured) && lastContext.captured.length) {
+      all = lastContext.captured.map(({ level, text }) => `[${level}] ${text}`).join('\n');
+    } else {
+      all = Array.from(document.querySelectorAll('#logs .log-line')).map((div) => {
+        const levEl = div.querySelector(':scope > .badge');
+        const msgEl = div.querySelector(':scope > .log-text');
+        const level = levEl ? levEl.textContent.trim() : 'log';
+        const text = msgEl ? msgEl.textContent.trim() : div.textContent.trim();
+        return `[${level}] ${text}`;
+      }).join('\n');
+    }
+    copyTextToClipboard(all || 'No logs captured.').catch((err) => console.warn('Copy logs failed:', err));
   };
 
   // --- AI Settings panel ---

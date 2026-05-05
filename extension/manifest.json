@@ -7,7 +7,8 @@
     "scripting",
     "activeTab",
     "storage",
-    "tabs"
+    "tabs",
+    "management"
   ],
   "host_permissions": [
     "<all_urls>"

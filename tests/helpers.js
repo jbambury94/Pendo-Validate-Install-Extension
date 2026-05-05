@@ -10,6 +10,7 @@ export const PENDO_SUPPORT = {
   installComponents:'https://support.pendo.io/hc/en-us/articles/21362607464987-Components-of-the-install-script',
   agentSettings:    'https://support.pendo.io/hc/en-us/articles/360031832152-Pendo-agent-settings',
   identifyVisitors: 'https://support.pendo.io/hc/en-us/articles/22764466082715-Identify-visitors-and-metadata-through-browser-scripting',
+  chooseIdsMetadata: 'https://support.pendo.io/hc/en-us/articles/21326198721563-Choose-IDs-and-metadata',
   csp:              'https://support.pendo.io/hc/en-us/articles/360032209131-Content-Security-Policy-CSP',
   spa:              'https://support.pendo.io/hc/en-us/articles/360031862272-Install-Pendo-on-a-single-page-web-application',
   helpCenter:       'https://support.pendo.io/hc/en-us',
@@ -79,6 +80,8 @@ export function buildMarkdownReport(context) {
     resourceHitCount: (status.resourceHits && status.resourceHits.length) || 0,
     capturedLineCount: (captured && captured.length) || 0,
   }
+  if (status.visitorMetadata) meta.visitorMetadata = status.visitorMetadata
+  if (status.accountMetadata) meta.accountMetadata = status.accountMetadata
   if (status.resourceHits && status.resourceHits.length) {
     meta.observedPendoResources = status.resourceHits.map(r => ({ initiatorType: r.initiatorType || 'resource', name: r.name }))
   }
@@ -296,6 +299,8 @@ export function captureAndInspect(variant = 'page') {
     detectedApiKey: null,
     visitorId: null,
     accountId: null,
+    visitorMetadata: null,
+    accountMetadata: null,
     resourceHits: [],
   }
 
@@ -318,6 +323,25 @@ export function captureAndInspect(variant = 'page') {
       if (state && state.accountId) status.accountId = state.accountId
       if (!status.visitorId && agent.getVisitorId) { try { status.visitorId = agent.getVisitorId() } catch {} }
       if (!status.accountId && agent.getAccountId) { try { status.accountId = agent.getAccountId() } catch {} }
+
+      function safeCloneFields(src, maxKeys, maxLen) {
+        if (!src || typeof src !== 'object') return null
+        try {
+          const keys = Object.keys(src).slice(0, maxKeys || 50)
+          if (!keys.length) return null
+          const out = {}
+          for (const k of keys) {
+            const v = src[k]
+            if (v === undefined || typeof v === 'function') continue
+            const s = typeof v === 'string' ? v : JSON.stringify(v)
+            out[k] = s && s.length > (maxLen || 500) ? s.slice(0, maxLen || 500) + '…' : v
+          }
+          return Object.keys(out).length ? out : null
+        } catch { return null }
+      }
+      const opts = agent._ && agent._.options
+      status.visitorMetadata = safeCloneFields(opts && opts.visitor) || safeCloneFields(agent._ && agent._.state && agent._.state.visitor)
+      status.accountMetadata = safeCloneFields(opts && opts.account) || safeCloneFields(agent._ && agent._.state && agent._.state.account)
     }
   } catch {}
 
@@ -382,6 +406,11 @@ export function captureAndInspect(variant = 'page') {
     else checks.push("visitorId present.")
     if (status.accountId == null) advice.push({ text: "accountId not found. If you use accounts, provide accountId in pendo.initialize.", source: 'builtin', supportKey: 'identifyVisitors' })
     else checks.push("accountId present.")
+    if (status.visitorMetadata) checks.push("Visitor metadata fields detected.")
+    if (status.accountMetadata) checks.push("Account metadata fields detected.")
+    if (status.visitorId && !status.visitorMetadata) {
+      advice.push({ text: "No visitor metadata fields detected beyond the ID. Consider passing name, email, and role for better segmentation.", source: 'builtin', supportKey: 'chooseIdsMetadata' })
+    }
   }
 
   const needsDomains = ["pendo.io", "cdn.pendo.io", "data.pendo.io"]
