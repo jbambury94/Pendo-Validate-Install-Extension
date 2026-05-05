@@ -23,6 +23,7 @@ const baseContext = {
   origin: 'page',
   snippetOnPage: true,
   launcherPresent: undefined,
+  launcherDataValidated: undefined,
   launcherAttempted: false,
   validatedIn: 'page',
   launcherUrl: null,
@@ -67,13 +68,13 @@ describe('buildMarkdownReport — status line', () => {
   })
 
   it('appends "(via Pendo Launcher)" for launcher origin', () => {
-    const ctx = { ...baseContext, validatedIn: 'launcher', launcherUrl: 'https://launcher.example.com', launcherAttempted: true, launcherPresent: true }
+    const ctx = { ...baseContext, validatedIn: 'launcher', launcherUrl: 'https://launcher.example.com', launcherAttempted: true, launcherPresent: true, launcherDataValidated: true }
     const md = buildMarkdownReport(ctx)
     expect(md).toContain('via Pendo Launcher')
   })
 
   it('appends "(via Pendo Launcher Beta)" for launcher-beta origin', () => {
-    const ctx = { ...baseContext, validatedIn: 'launcher-beta', launcherUrl: 'https://beta.example.com', launcherAttempted: true, launcherPresent: true }
+    const ctx = { ...baseContext, validatedIn: 'launcher-beta', launcherUrl: 'https://beta.example.com', launcherAttempted: true, launcherPresent: true, launcherDataValidated: true }
     expect(buildMarkdownReport(ctx)).toContain('via Pendo Launcher Beta')
   })
 })
@@ -143,6 +144,23 @@ describe('buildMarkdownReport — content sections', () => {
     const md = buildMarkdownReport(baseContext)
     expect(md).toContain('```json')
     expect(md).toContain('"pendoPresent": true')
+  })
+
+  it('includes launcherDataValidated true in metadata for validated launcher context', () => {
+    const ctx = { ...baseContext, validatedIn: 'launcher', launcherUrl: 'https://launcher.example.com', launcherAttempted: true, launcherPresent: true, launcherDataValidated: true }
+    const md = buildMarkdownReport(ctx)
+    expect(md).toContain('"launcherDataValidated": true')
+  })
+
+  it('includes launcherDataValidated false in metadata when launcher present but no data', () => {
+    const ctx = { ...baseContext, launcherAttempted: true, launcherPresent: true, launcherDataValidated: false, validatedIn: 'page' }
+    const md = buildMarkdownReport(ctx)
+    expect(md).toContain('"launcherDataValidated": false')
+  })
+
+  it('omits launcherDataValidated from metadata when launcher was not attempted', () => {
+    const md = buildMarkdownReport(baseContext)
+    expect(md).not.toContain('"launcherDataValidated"')
   })
 
   it('includes resource hits in metadata when present', () => {

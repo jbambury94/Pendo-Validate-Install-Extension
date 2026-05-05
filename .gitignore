@@ -3,6 +3,7 @@
 *.bak
 *.tmp
 *.swp
+*.zip
 .cursor/rules/version-on-commit.mdc
 
 # Dependencies

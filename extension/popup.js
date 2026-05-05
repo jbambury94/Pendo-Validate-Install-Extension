@@ -12,7 +12,7 @@ const PENDO_LAUNCHER_EXTENSION_IDS = {
   beta: 'pndmgfbnmbbgkikpcnndoeknbmlkhgmj'
 };
 
-/** Launcher often has no open tab (toolbar popup only). Detect install via chrome.management when tab search finds nothing. */
+/** Launcher often has no open tab (toolbar popup only). Detect install via chrome.management when tab search finds nothing. Returns { variant, id } with the real extension ID, or null. */
 function detectInstalledPendoLauncherExtension() {
   return new Promise((resolve) => {
     try {
@@ -20,11 +20,15 @@ function detectInstalledPendoLauncherExtension() {
       chrome.management.getAll((exts) => {
         if (chrome.runtime.lastError || !exts) return resolve(null);
         const enabled = exts.filter(e => e.enabled);
-        if (enabled.find(e => e.id === PENDO_LAUNCHER_EXTENSION_IDS.beta)) return resolve({ variant: 'launcher-beta' });
-        if (enabled.find(e => e.id === PENDO_LAUNCHER_EXTENSION_IDS.stable)) return resolve({ variant: 'launcher' });
+        const byBetaId = enabled.find(e => e.id === PENDO_LAUNCHER_EXTENSION_IDS.beta);
+        if (byBetaId) return resolve({ variant: 'launcher-beta', id: byBetaId.id });
+        const byStableId = enabled.find(e => e.id === PENDO_LAUNCHER_EXTENSION_IDS.stable);
+        if (byStableId) return resolve({ variant: 'launcher', id: byStableId.id });
         const launcherNamed = enabled.filter(e => /pendo\s*launcher/i.test(e.name || ''));
-        if (launcherNamed.find(e => /\bbeta\b/i.test(e.name || ''))) return resolve({ variant: 'launcher-beta' });
-        if (launcherNamed.find(e => !/\bbeta\b/i.test(e.name || ''))) return resolve({ variant: 'launcher' });
+        const betaNamed = launcherNamed.find(e => /\bbeta\b/i.test(e.name || ''));
+        if (betaNamed) return resolve({ variant: 'launcher-beta', id: betaNamed.id });
+        const stableNamed = launcherNamed.find(e => !/\bbeta\b/i.test(e.name || ''));
+        if (stableNamed) return resolve({ variant: 'launcher', id: stableNamed.id });
         resolve(null);
       });
     } catch {
@@ -102,7 +106,7 @@ function normalizeAdviceList(advice = []) {
 // ========== Report building and download ==========
 /** Build a single human-readable Markdown report: overview, metadata, errors (with support links), advice (with support links), captured output. */
 function buildMarkdownReport(context) {
-  const { pageUrl, timestamp, status, captured, advice, checks, cspMeta, apiKeyFound, origin, snippetOnPage, launcherPresent, launcherAttempted, validatedIn, launcherUrl } = context;
+  const { pageUrl, timestamp, status, captured, advice, checks, cspMeta, apiKeyFound, origin, snippetOnPage, launcherPresent, launcherAttempted, launcherDataValidated, validatedIn, launcherUrl } = context;
   const adviceList = normalizeAdviceList(advice || []);
   const errors = (captured || []).filter(l => l.level === 'error');
   const hasError = errors.length > 0 || (context.hasError === true);
@@ -134,6 +138,7 @@ function buildMarkdownReport(context) {
     timestamp,
     snippetOnPage: !!snippetOnPage,
     launcherPresent: launcherAttempted ? !!launcherPresent : undefined,
+    launcherDataValidated: launcherAttempted ? !!launcherDataValidated : undefined,
     launcherAttempted: !!launcherAttempted,
     validatedIn: validatedIn || origin || 'page',
     pendoPresent: status.pendoPresent,
@@ -435,73 +440,58 @@ async function runInPage() {
     return { status, captured, advice, checks, cspMeta, apiKeyFound, hasError, hasWarn };
   }
 
-  async function findLauncherTab() {
-    const hasTabsPermission = !chrome.permissions || !chrome.permissions.contains
-      ? true
-      : await chrome.permissions.contains({ permissions: ['tabs'] });
-    if (!hasTabsPermission) {
-      console.warn('Tabs permission unavailable; skipping launcher search.');
-      return null;
-    }
-    async function searchWithPatterns(patterns = []) {
-      try {
-        const wins = await chrome.windows.getAll({ populate: true });
-        for (const w of wins) {
-          for (const t of (w.tabs || [])) {
-            const title = (t.title || '').toLowerCase();
-            const url = (t.url || '').toLowerCase();
-            if (patterns.some(re => re.test(title) || re.test(url))) {
-              // Skip chrome-extension:// and chrome:// URLs — executeScript cannot inject into other extensions' pages
-              if (!url.startsWith('chrome-extension://') && !url.startsWith('chrome://') && !url.startsWith('about:')) {
-                return t;
-              }
-            }
-          }
-        }
-      } catch (e) {
-        console.error('Failed to search for launcher window', e);
-      }
-      return null;
-    }
-    // Prefer Beta first so "Pendo Launcher (Beta)" is not matched as standard
-    const beta = await searchWithPatterns([
-      /pendo launcher\s*\(\s*beta\s*\)/i,
-      /pendo launcher beta/i,
-      /pendo-launcher-beta/i,
-      /launcher beta/i,
-      /pendo.*beta.*launcher/i,
-      /launcher.*beta/i
-    ]);
-    if (beta) return { tab: beta, variant: 'launcher-beta' };
-    const standard = await searchWithPatterns([/pendo launcher/i, /pendo-launcher/i]);
-    if (standard) return { tab: standard, variant: 'launcher' };
+  /**
+   * Use the Chrome DevTools Protocol (chrome.debugger) to run captureAndInspect
+   * inside the Pendo Launcher extension's content-script isolated world.
+   * This is the programmatic equivalent of switching the DevTools console context
+   * to "Pendo Launcher (Beta)" and running pendo.validateInstall().
+   */
+  async function runValidationInLauncherWorld(tabId, launcher) {
+    const target = { tabId };
+    const launcherId = launcher.id;
+    const expectedOrigin = `chrome-extension://${launcherId}`;
 
-    async function findByOfficialExtensionId() {
-      try {
-        const wins = await chrome.windows.getAll({ populate: true });
-        for (const idOrder of [
-          { id: PENDO_LAUNCHER_EXTENSION_IDS.beta, variant: 'launcher-beta' },
-          { id: PENDO_LAUNCHER_EXTENSION_IDS.stable, variant: 'launcher' }
-        ]) {
-          const extOrigin = `chrome-extension://${idOrder.id}`.toLowerCase();
-          for (const w of wins) {
-            for (const t of (w.tabs || [])) {
-              const url = (t.url || '').toLowerCase();
-              if (url === extOrigin || url.startsWith(extOrigin + '/')) {
-                return { tab: t, variant: idOrder.variant };
-              }
-            }
-          }
-        }
-      } catch (e) {
-        console.error('findByOfficialExtensionId failed', e);
-      }
+    try {
+      await chrome.debugger.attach(target, '1.3');
+    } catch (e) {
       return null;
     }
 
-    const byStoreId = await findByOfficialExtensionId();
-    if (byStoreId) return byStoreId;
-    return null;
+    try {
+      const contexts = [];
+      const handler = (source, method, params) => {
+        if (source.tabId === tabId && method === 'Runtime.executionContextCreated') {
+          contexts.push(params.context);
+        }
+      };
+      chrome.debugger.onEvent.addListener(handler);
+      await chrome.debugger.sendCommand(target, 'Runtime.enable');
+      // CDP delivers all existing executionContextCreated events after Runtime.enable;
+      // a brief yield lets the event queue flush before we read the collected contexts.
+      await new Promise(r => setTimeout(r, 60));
+      chrome.debugger.onEvent.removeListener(handler);
+
+      const launcherCtx = contexts.find(ctx =>
+        (ctx.origin || '').toLowerCase() === expectedOrigin
+      );
+      if (!launcherCtx) return null;
+
+      const variant = launcher.variant;
+      const expression = `(${captureAndInspect.toString()})('${variant}')`;
+
+      const evalResult = await chrome.debugger.sendCommand(target, 'Runtime.evaluate', {
+        expression,
+        contextId: launcherCtx.id,
+        returnByValue: true
+      });
+
+      if (evalResult?.result?.value) {
+        return { result: evalResult.result.value, variant };
+      }
+      return null;
+    } finally {
+      try { await chrome.debugger.detach(target); } catch {}
+    }
   }
 
   const EMPTY_RESULT = {
@@ -551,96 +541,84 @@ async function runInPage() {
       snippetOnPage: true,
       launcherAttempted: true,
       launcherPresent: launcherInPage,
+      launcherDataValidated: false,
       validatedIn: 'page',
       origin: 'page'
     };
   }
 
   if (launcherInPage) {
+    const lStatus = launcherInPageResult.status;
+    const launcherDataValidated = !!(lStatus.pendoPresent && lStatus.validatePresent && (lStatus.visitorId || lStatus.visitorMetadata));
     return {
       ...launcherInPageResult,
       pageUrl: basePageUrl,
       snippetOnPage: false,
       launcherAttempted: true,
       launcherPresent: true,
+      launcherDataValidated,
       validatedIn: 'launcher',
       launcherUrl: basePageUrl,
       origin: 'launcher'
     };
   }
 
-  // Phase 2: Snippet absent and no Launcher agent on active tab — search for a separate Launcher tab
-  const launcherLookup = await findLauncherTab();
-  const launcherTab = launcherLookup && launcherLookup.tab;
-  const launcherVariant = launcherLookup && launcherLookup.variant ? launcherLookup.variant : 'launcher';
+  // Phase 1.75: Launcher extension installed — use chrome.debugger (CDP) to run
+  // validation inside the Launcher's content-script isolated world.
+  const installedLauncher = await detectInstalledPendoLauncherExtension();
 
-  if (!launcherTab) {
-    const installedLauncher = await detectInstalledPendoLauncherExtension();
-    const base = pageResult || EMPTY_RESULT;
-    if (installedLauncher) {
-      base.captured = (base.captured || []).concat([
-        { level: 'info', text: 'Pendo Launcher extension is installed and enabled. To see visitor/account metadata, run validation on the app tab where the Pendo agent is active.' }
-      ]);
+  if (installedLauncher) {
+    const cdpResult = await runValidationInLauncherWorld(tab.id, installedLauncher);
+    if (cdpResult && cdpResult.result && cdpResult.result.status && cdpResult.result.status.pendoPresent) {
+      const lStatus = cdpResult.result.status;
+      const launcherDataValidated = !!(lStatus.pendoPresent && lStatus.validatePresent && (lStatus.visitorId || lStatus.visitorMetadata));
       return {
-        ...base,
+        ...cdpResult.result,
         pageUrl: basePageUrl,
         snippetOnPage: false,
         launcherAttempted: true,
         launcherPresent: true,
-        validatedIn: 'page',
-        origin: 'page'
+        launcherDataValidated,
+        validatedIn: cdpResult.variant,
+        launcherUrl: basePageUrl,
+        origin: cdpResult.variant
       };
     }
-    base.captured = (base.captured || []).concat([{ level: 'info', text: 'Pendo Launcher window not found. Also checked the Pendo Launcher (Beta) extension.' }]);
+
+    // CDP didn't find agent — fall through to installed-but-no-data message
+    const base = pageResult || EMPTY_RESULT;
+    base.captured = (base.captured || []).concat([
+      { level: 'warn', text: 'Pendo Launcher extension is installed but its agent is not active on this tab. Open the application where the Launcher is configured to inject Pendo, then re-run validation from that tab.' }
+    ]);
+    base.advice = (base.advice || []).concat([
+      { text: 'Navigate to the application where the Pendo Launcher is configured, then re-run validation. The Launcher must inject its agent into the page before data can be validated.', source: 'builtin', supportKey: 'installGuide' }
+    ]);
     return {
       ...base,
       pageUrl: basePageUrl,
       snippetOnPage: false,
       launcherAttempted: true,
-      launcherPresent: false,
+      launcherPresent: true,
+      launcherDataValidated: false,
       validatedIn: 'page',
       origin: 'page'
     };
   }
 
-  // Run in Launcher tab without changing focus (no chrome.windows.update / chrome.tabs.update)
-  let launcherResult = null;
-  try {
-    const [{ result }] = await chrome.scripting.executeScript({
-      target: { tabId: launcherTab.id },
-      world: 'MAIN',
-      func: captureAndInspect,
-      args: [launcherVariant]
-    });
-    launcherResult = result;
-  } catch (e) {
-    console.warn('Phase 2 launcher tab injection failed:', e);
-  }
-
-  const launcherUrlStr = launcherTab.url || '';
-  const isOfficialLauncherExtPage = (() => {
-    const u = launcherUrlStr.toLowerCase();
-    const beta = `chrome-extension://${PENDO_LAUNCHER_EXTENSION_IDS.beta}`;
-    const stable = `chrome-extension://${PENDO_LAUNCHER_EXTENSION_IDS.stable}`;
-    return u === beta || u.startsWith(beta + '/') || u === stable || u.startsWith(stable + '/');
-  })();
-  const treatAsValidatedInLauncher = !!launcherResult || (isOfficialLauncherExtPage && !launcherResult);
-
-  const fallback = launcherResult || pageResult || EMPTY_RESULT;
-  const injectBlockedNote = !launcherResult && isOfficialLauncherExtPage
-    ? [{ level: 'info', text: 'Pendo Launcher extension tab found. Chrome blocks script injection into other extensions; run validation on an app tab where the Pendo agent loads to see visitor/account metadata.' }]
-    : [];
-
+  // Phase 2: No snippet, no Launcher extension installed
+  const base = pageResult || EMPTY_RESULT;
+  base.captured = (base.captured || []).concat([
+    { level: 'info', text: 'Pendo snippet not found and Pendo Launcher extension is not installed.' }
+  ]);
   return {
-    ...fallback,
-    captured: injectBlockedNote.concat(fallback.captured || []),
+    ...base,
     pageUrl: basePageUrl,
     snippetOnPage: false,
     launcherAttempted: true,
-    launcherPresent: true,
-    validatedIn: treatAsValidatedInLauncher ? launcherVariant : 'page',
-    launcherUrl: launcherTab.url,
-    origin: treatAsValidatedInLauncher ? launcherVariant : 'page'
+    launcherPresent: false,
+    launcherDataValidated: false,
+    validatedIn: 'page',
+    origin: 'page'
   };
 }
 
@@ -841,14 +819,15 @@ async function getAiConfig() {
         setStatus(statusEl, 'err', 'Failed');
         return;
       }
-      const { status, captured, advice, checks, cspMeta, apiKeyFound, hasError, hasWarn, origin, pageUrl, snippetOnPage, launcherPresent, launcherAttempted, validatedIn } = res;
+      const { status, captured, advice, checks, cspMeta, apiKeyFound, hasError, hasWarn, origin, pageUrl, snippetOnPage, launcherPresent, launcherAttempted, launcherDataValidated, validatedIn } = res;
 
       const originNote = validatedIn === 'launcher' ? ' (via Pendo Launcher)' : validatedIn === 'launcher-beta' ? ' (via Pendo Launcher Beta)' : '';
-      const hasPositiveSignals = !!(status.visitorId || apiKeyFound || (status.detectedApiKey && status.pendoPresent));
 
       // Status badge: explicit when snippet and Launcher both absent
       if (!snippetOnPage && launcherAttempted && launcherPresent === false) {
         setStatus(statusEl, 'err', 'Pendo not found (snippet and Launcher)');
+      } else if (!snippetOnPage && launcherPresent === true && launcherDataValidated === false) {
+        setStatus(statusEl, 'warn', 'Launcher installed (no data on this tab)');
       } else if (!status.pendoPresent) {
         setStatus(statusEl, 'err', 'Pendo not found' + originNote);
       } else if (!status.validatePresent) setStatus(statusEl, 'warn', 'No validateInstall()' + originNote);
@@ -860,6 +839,7 @@ async function getAiConfig() {
       setKV('kv_snippet', snippetOnPage === true ? 'Yes' : snippetOnPage === false ? 'No' : '—');
       const launcherDisplay = !launcherAttempted ? 'Not checked' : launcherPresent === true ? 'Found' : 'Not found';
       setKV('kv_launcher', launcherDisplay);
+      setKV('kv_launcher_validated', launcherDataValidated === true ? 'Yes' : launcherAttempted ? 'No' : '—');
       const validatedInDisplay = validatedIn === 'launcher' ? 'Pendo Launcher' : validatedIn === 'launcher-beta' ? 'Pendo Launcher Beta' : validatedIn === 'page' ? 'Page' : '—';
       setKV('kv_validated_in', validatedInDisplay);
       setKV('kv_pendo', status.pendoPresent);
@@ -909,7 +889,7 @@ async function getAiConfig() {
         timestamp: toIso(new Date()),
         status, captured, advice: adviceList, checks: checksToRender, cspMeta: cspMeta || '', apiKeyFound, origin: validatedIn || origin || 'page',
         hasError: !!hasError, hasWarn: !!hasWarn,
-        snippetOnPage, launcherPresent, launcherAttempted, validatedIn: validatedIn || 'page', launcherUrl: res.launcherUrl
+        snippetOnPage, launcherPresent, launcherAttempted, launcherDataValidated: !!launcherDataValidated, validatedIn: validatedIn || 'page', launcherUrl: res.launcherUrl
       };
 
       const failureDetected = !status.validatePresent || hasError || hasWarn;

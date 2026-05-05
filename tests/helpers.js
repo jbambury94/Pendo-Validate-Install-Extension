@@ -36,7 +36,7 @@ export function normalizeAdviceList(advice = []) {
 }
 
 export function buildMarkdownReport(context) {
-  const { pageUrl, timestamp, status, captured, advice, checks, cspMeta, apiKeyFound, origin, snippetOnPage, launcherPresent, launcherAttempted, validatedIn, launcherUrl } = context
+  const { pageUrl, timestamp, status, captured, advice, checks, cspMeta, apiKeyFound, origin, snippetOnPage, launcherPresent, launcherAttempted, launcherDataValidated, validatedIn, launcherUrl } = context
   const adviceList = normalizeAdviceList(advice || [])
   const errors = (captured || []).filter(l => l.level === 'error')
   const hasError = errors.length > 0 || (context.hasError === true)
@@ -68,6 +68,7 @@ export function buildMarkdownReport(context) {
     timestamp,
     snippetOnPage: !!snippetOnPage,
     launcherPresent: launcherAttempted ? !!launcherPresent : undefined,
+    launcherDataValidated: launcherAttempted ? !!launcherDataValidated : undefined,
     launcherAttempted: !!launcherAttempted,
     validatedIn: validatedIn || origin || 'page',
     pendoPresent: status.pendoPresent,
