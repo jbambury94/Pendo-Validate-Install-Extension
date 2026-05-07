@@ -189,11 +189,20 @@ export function enableDebuggingInPage() {
 }
 
 
+/** Rewrite known provider errors into clearer guidance (kept in sync with popup.js). */
+export function friendlyAiFailureDetail(provider, rawDetail) {
+  const s = String(rawDetail || '')
+  if (provider === 'claude' && /cors requests are not allowed for this organization/i.test(s)) {
+    return 'Anthropic returned an organization policy error: client-side (browser) API access is disabled for your workspace, and Chrome extensions are treated as client-side. Use OpenAI or Google Gemini in Settings, use an API key from a workspace that allows browser access, ask an Anthropic org admin to update that policy, or set storage key aiClaudeEndpoint to an HTTPS URL of a proxy you run that forwards to Anthropic’s Messages API (same request/response shape as /v1/messages).'
+  }
+  return null
+}
+
 export async function getAiConfig() {
   return new Promise(resolve => {
     try {
       if (!chrome.storage || !chrome.storage.local) return resolve({})
-      chrome.storage.local.get({ aiProvider: 'openai', aiEndpoint: '', aiApiKey: '', aiModel: '' }, resolve)
+      chrome.storage.local.get({ aiProvider: 'openai', aiEndpoint: '', aiClaudeEndpoint: '', aiApiKey: '', aiModel: '' }, resolve)
     } catch (e) {
       resolve({})
     }
@@ -202,7 +211,8 @@ export async function getAiConfig() {
 
 export async function requestAiAdvice(context) {
   const cfg = await getAiConfig()
-  if (!cfg.aiApiKey) return []
+  const apiKey = String((cfg && cfg.aiApiKey) || '').trim()
+  if (!apiKey) return []
 
   const provider = cfg.aiProvider || 'openai'
   const prompt = buildAiPrompt(context)
@@ -212,18 +222,25 @@ export async function requestAiAdvice(context) {
 
   if (provider === 'claude') {
     const model = cfg.aiModel || 'claude-haiku-4-5-20251001'
-    endpoint = 'https://api.anthropic.com/v1/messages'
-    headers = { 'Content-Type': 'application/json', 'x-api-key': cfg.aiApiKey, 'anthropic-version': '2023-06-01' }
+    const claudeUrl = String((cfg && cfg.aiClaudeEndpoint) || '').trim()
+    endpoint = claudeUrl || 'https://api.anthropic.com/v1/messages'
+    const directAnthropic = /anthropic\.com/i.test(endpoint)
+    headers = {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+    }
+    if (directAnthropic) headers['anthropic-dangerous-direct-browser-access'] = 'true'
     body = { model, max_tokens: 1024, system: systemMsg, messages: [{ role: 'user', content: prompt }] }
   } else if (provider === 'gemini') {
     const model = cfg.aiModel || 'gemini-2.0-flash'
-    endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${cfg.aiApiKey}`
+    endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`
     headers = { 'Content-Type': 'application/json' }
     body = { contents: [{ parts: [{ text: systemMsg + '\n\n' + prompt }] }], generationConfig: { temperature: 0.1 } }
   } else {
     const model = cfg.aiModel || 'gpt-4o-mini'
     endpoint = cfg.aiEndpoint || 'https://api.openai.com/v1/chat/completions'
-    headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${cfg.aiApiKey}` }
+    headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` }
     body = { model, messages: [{ role: 'system', content: systemMsg }, { role: 'user', content: prompt }], temperature: 0.1 }
   }
 
@@ -231,10 +248,55 @@ export async function requestAiAdvice(context) {
   const timeoutMs = cfg.timeoutMs || 8000
   const timer = setTimeout(() => controller.abort('timeout'), timeoutMs)
   try {
-    const res = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify(body), signal: controller.signal })
-    clearTimeout(timer)
-    if (!res.ok) throw new Error(`AI request failed with status ${res.status}`)
-    const data = await res.json()
+    let data
+    if (provider === 'claude') {
+      clearTimeout(timer)
+      let bg
+      try {
+        bg = await chrome.runtime.sendMessage({
+          type: 'pendo-validate-ai-fetch',
+          endpoint,
+          headers,
+          body: JSON.stringify(body),
+          timeoutMs,
+        })
+      } catch (e) {
+        throw new Error((e && e.message) || 'Background AI proxy failed')
+      }
+      if (!bg || typeof bg.ok !== 'boolean') {
+        throw new Error('AI proxy unavailable: extension background did not respond.')
+      }
+      if (bg.error === 'timeout' || bg.error === 'network') {
+        throw new DOMException(bg.message || (bg.error === 'timeout' ? 'Aborted' : 'Network error'), bg.error === 'timeout' ? 'AbortError' : 'Error')
+      }
+      if (!bg.ok) {
+        const errBody = bg.json
+        let apiErr = ''
+        const m = errBody && errBody.error && (errBody.error.message || errBody.error.type)
+        if (m) apiErr = String(m).slice(0, 200)
+        const parts = [`AI request failed with status ${bg.status}`]
+        if (apiErr) parts.push(apiErr)
+        if (bg.status === 401) parts.push('Use an API key from the same provider you selected (e.g. Anthropic console for Claude).')
+        throw new Error(parts.join('. '))
+      }
+      data = bg.json
+    } else {
+      const res = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify(body), signal: controller.signal })
+      clearTimeout(timer)
+      if (!res.ok) {
+        let apiErr = ''
+        try {
+          const errBody = await res.json()
+          const m = errBody && errBody.error && (errBody.error.message || errBody.error.type)
+          if (m) apiErr = String(m).slice(0, 200)
+        } catch (_) {}
+        const parts = [`AI request failed with status ${res.status}`]
+        if (apiErr) parts.push(apiErr)
+        if (res.status === 401) parts.push('Use an API key from the same provider you selected (e.g. Anthropic console for Claude).')
+        throw new Error(parts.join('. '))
+      }
+      data = await res.json()
+    }
     let content = ''
     if (provider === 'claude') content = data?.content?.[0]?.text || ''
     else if (provider === 'gemini') content = data?.candidates?.[0]?.content?.parts?.[0]?.text || ''
@@ -244,7 +306,13 @@ export async function requestAiAdvice(context) {
       .map(text => ({ text, source: 'ai', supportUrl: PENDO_SUPPORT.technicalSupport }))
   } catch (e) {
     clearTimeout(timer)
-    return [{ text: 'AI suggestion unavailable: request failed or timed out. Check your API key and provider selection.', source: 'ai', supportUrl: PENDO_SUPPORT.technicalSupport }]
+    const isAbort = e && (e.name === 'AbortError' || (e.message && String(e.message).includes('aborted')))
+    let detail = isAbort
+      ? 'Request timed out. Check your network or increase timeoutMs in storage.'
+      : (e && e.message ? String(e.message) : String(e))
+    const friendly = friendlyAiFailureDetail(provider, detail)
+    if (friendly) detail = friendly
+    return [{ text: `AI suggestion unavailable: ${detail}`, source: 'ai', supportUrl: PENDO_SUPPORT.technicalSupport }]
   }
 }
 

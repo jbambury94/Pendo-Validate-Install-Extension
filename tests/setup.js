@@ -24,6 +24,7 @@ global.chrome = {
   runtime: {
     getURL: vi.fn((path) => `chrome-extension://test-ext/${path}`),
     onMessage: { addListener: vi.fn() },
+    sendMessage: vi.fn(),
   },
   action: {
     onClicked: { addListener: vi.fn() },

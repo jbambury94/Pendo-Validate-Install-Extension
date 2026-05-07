@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { requestAiAdvice, buildAiPrompt, PENDO_SUPPORT } from './helpers.js'
+import { requestAiAdvice, buildAiPrompt, PENDO_SUPPORT, friendlyAiFailureDetail } from './helpers.js'
 
 const baseContext = {
   pageUrl: 'https://example.com',
@@ -27,6 +27,12 @@ beforeEach(() => {
 describe('requestAiAdvice — no API key', () => {
   it('returns empty array when aiApiKey is not configured', async () => {
     mockStorage({ aiProvider: 'openai', aiEndpoint: '', aiApiKey: '', aiModel: '' })
+    expect(await requestAiAdvice(baseContext)).toEqual([])
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('returns empty array when aiApiKey is only whitespace', async () => {
+    mockStorage({ aiProvider: 'openai', aiEndpoint: '', aiApiKey: '  \n\t  ', aiModel: '' })
     expect(await requestAiAdvice(baseContext)).toEqual([])
     expect(fetch).not.toHaveBeenCalled()
   })
@@ -74,9 +80,11 @@ describe('requestAiAdvice — OpenAI provider', () => {
   })
 
   it('returns error advice item on non-OK HTTP response', async () => {
-    fetch.mockResolvedValue({ ok: false, status: 401 })
+    fetch.mockResolvedValue({ ok: false, status: 401, json: async () => ({ error: { message: 'invalid x-api-key' } }) })
     const result = await requestAiAdvice(baseContext)
     expect(result[0].text).toContain('AI suggestion unavailable')
+    expect(result[0].text).toContain('401')
+    expect(result[0].text).toContain('invalid x-api-key')
     expect(result[0].source).toBe('ai')
   })
 
@@ -90,6 +98,7 @@ describe('requestAiAdvice — OpenAI provider', () => {
     fetch.mockRejectedValue(new DOMException('Aborted', 'AbortError'))
     const result = await requestAiAdvice(baseContext)
     expect(result[0].text).toContain('AI suggestion unavailable')
+    expect(result[0].text).toContain('timed out')
   })
 
   it('uses a custom aiEndpoint when provided', async () => {
@@ -103,27 +112,66 @@ describe('requestAiAdvice — OpenAI provider', () => {
 describe('requestAiAdvice — Claude provider', () => {
   beforeEach(() => {
     mockStorage({ aiProvider: 'claude', aiEndpoint: '', aiApiKey: 'ant-test', aiModel: '' })
+    chrome.runtime.sendMessage.mockImplementation(async (msg) => {
+      if (msg.type !== 'pendo-validate-ai-fetch') return undefined
+      const res = await fetch(msg.endpoint, { method: 'POST', headers: msg.headers, body: msg.body })
+      const text = await res.text()
+      let json = null
+      try {
+        json = text ? JSON.parse(text) : null
+      } catch (_) {}
+      return { ok: res.ok, status: res.status, json }
+    })
   })
 
   it('calls the Anthropic messages endpoint', async () => {
-    fetch.mockResolvedValue({ ok: true, json: async () => ({ content: [{ text: '- Check key' }] }) })
+    const payload = { content: [{ text: '- Check key' }] }
+    fetch.mockResolvedValue({ ok: true, text: async () => JSON.stringify(payload) })
     await requestAiAdvice(baseContext)
     expect(fetch.mock.calls[0][0]).toContain('anthropic.com')
   })
 
-  it('sends x-api-key and anthropic-version headers', async () => {
-    fetch.mockResolvedValue({ ok: true, json: async () => ({ content: [{ text: '- tip' }] }) })
+  it('proxies Claude via sendMessage with Anthropic browser-access and API headers', async () => {
+    fetch.mockResolvedValue({ ok: true, json: async () => ({ content: [{ text: '- tip' }] }), text: async () => JSON.stringify({ content: [{ text: '- tip' }] }) })
     await requestAiAdvice(baseContext)
-    const [, opts] = fetch.mock.calls[0]
-    expect(opts.headers['x-api-key']).toBe('ant-test')
-    expect(opts.headers['anthropic-version']).toBe('2023-06-01')
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'pendo-validate-ai-fetch',
+        endpoint: expect.stringContaining('anthropic.com'),
+      }),
+    )
+    const msg = chrome.runtime.sendMessage.mock.calls[0][0]
+    expect(msg.headers['x-api-key']).toBe('ant-test')
+    expect(msg.headers['anthropic-version']).toBe('2023-06-01')
+    expect(msg.headers['anthropic-dangerous-direct-browser-access']).toBe('true')
+  })
+
+  it('uses aiClaudeEndpoint and omits browser-only header for non-anthropic URLs', async () => {
+    mockStorage({ aiProvider: 'claude', aiEndpoint: '', aiClaudeEndpoint: 'https://proxy.example/v1/messages', aiApiKey: 'ant-test', aiModel: '' })
+    fetch.mockResolvedValue({ ok: true, text: async () => JSON.stringify({ content: [{ text: '- ok' }] }) })
+    await requestAiAdvice(baseContext)
+    const msg = chrome.runtime.sendMessage.mock.calls[0][0]
+    expect(msg.endpoint).toBe('https://proxy.example/v1/messages')
+    expect(msg.headers['anthropic-dangerous-direct-browser-access']).toBeUndefined()
   })
 
   it('parses content[0].text from Claude response', async () => {
-    fetch.mockResolvedValue({ ok: true, json: async () => ({ content: [{ text: '- Fix snippet\n- Update CSP' }] }) })
+    const payload = { content: [{ text: '- Fix snippet\n- Update CSP' }] }
+    fetch.mockResolvedValue({ ok: true, text: async () => JSON.stringify(payload) })
     const result = await requestAiAdvice(baseContext)
     expect(result).toHaveLength(2)
     expect(result[0].text).toBe('Fix snippet')
+  })
+
+  it('surfaces org-policy guidance when Anthropic blocks client-side access', async () => {
+    chrome.runtime.sendMessage.mockResolvedValue({
+      ok: false,
+      status: 401,
+      json: { error: { message: 'CORS requests are not allowed for this Organization because of its settings.' } },
+    })
+    const result = await requestAiAdvice(baseContext)
+    expect(result[0].text).toContain('AI suggestion unavailable')
+    expect(result[0].text).toContain('organization policy')
   })
 })
 
@@ -144,6 +192,16 @@ describe('requestAiAdvice — Gemini provider', () => {
     const result = await requestAiAdvice(baseContext)
     expect(result[0].text).toBe('Update snippet')
     expect(result[1].text).toBe('Check CSP')
+  })
+})
+
+describe('friendlyAiFailureDetail', () => {
+  it('maps Anthropic org browser/CORS block to actionable guidance', () => {
+    const msg = friendlyAiFailureDetail('claude', 'CORS requests are not allowed for this Organization because of its settings.')
+    expect(msg).toContain('OpenAI')
+    expect(msg).toContain('Google Gemini')
+    expect(msg).toContain('aiClaudeEndpoint')
+    expect(friendlyAiFailureDetail('openai', 'CORS requests are not allowed for this Organization')).toBeNull()
   })
 })
 

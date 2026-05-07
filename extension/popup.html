@@ -95,6 +95,7 @@
         <div id="aiSettingsPanel" class="panel">
           <strong>AI Advice Configuration</strong>
           <p class="muted small">Choose a provider and paste your API key. Advice is requested automatically when validation failures are detected.</p>
+          <p class="muted small">Anthropic Claude: some orgs disable client-side API access, which includes this extension. If you see a policy error after validate, use OpenAI or Gemini here, ask an Anthropic admin to allow that access, or set the storage key aiClaudeEndpoint (in chrome.storage.local) to your own HTTPS proxy that forwards to Anthropic’s Messages API.</p>
           <div class="settings-field">
             <label for="aiProviderSelect" class="settings-label">Provider</label>
             <select id="aiProviderSelect" class="settings-select" data-action="ai-provider-select">
