@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.6.0
+- **Three-tab UI.** Status / Logs / Settings replaces the previous Output / Settings split. Status auto-activates after a validation run.
+  - Status tab: status hero with pass/warn/error states, quick-stats row (Errors / Warnings / Passing), Checks & recommendations card with grouped accordion items, Identity card, and Metadata card.
+  - Logs tab: log-level filter chips (Err / Warn / Info), text search input, Copy logs button.
+  - Settings tab: Page snapshot card + AI advice card.
+- **Resizable panel.** Corner resize handle (`#resizeHandle`) with `pendo-validate-resizestart`/`-resize`/`-resizeend` postMessage events handled by `content.js`; width and height clamped to min/max bounds.
+- **Action bar redesign.** Validate Pendo Install (primary CTA) · Debugger (ghost) · Export menu (ghost). Export offers Markdown report and Copy summary (Slack-ready plain text). JSON download removed from the UI; `buildJsonReport` remains in code.
+- **Docs refresh.** README.md fully rewritten as a marketing landing page; CLAUDE.md refreshed to match the three-tab UI, resize handle, Export menu, and current `popup.js` size.
+- New `docs/screenshots/` folder with a README and three stand-in mockup PNGs (to be replaced with real Chrome captures).
+
 ## 1.5.2
 - "Enable Pendo Debugger" promoted from Settings → Debug panel to the action row as a secondary CTA next to "Validate Pendo Install". `id` and `data-action` preserved for Pendo auto-tagging stability.
 - Debug panel removed from Settings tab (along with the "Docs" link and "Start VDS" button). `launchVisualDesignStudioInPage` function and `#launchVds` handler/tests deleted.
