@@ -8,118 +8,221 @@
     <script src="pendo-loader.js"></script>
   </head>
   <body>
-    <!-- ========== Hero: title and subtitle ========== -->
-    <div class="hero" id="hero">
-      <div class="hero__title">Pendo Validate Install assistant</div>
-      <!-- <div class="hero__subtitle"></div> -->
-      <button id="closeBtn" class="hero__close" aria-label="Close panel" style="display:none">&#x2715;</button>
-    </div>
-    <!-- ========== Main content ========== -->
-    <div class="content">
-      <!-- Primary action: run validation + status -->
-      <section class="action-block">
-        <div class="row">
-          <button id="run" data-action="validate">Validate Pendo Install</button>
-          <button id="launchDebugger" class="button--ghost" data-action="launch-debugger">Run Debugger</button>
-          <span id="status" class="badge">Idle</span>
+    <!-- IVA panel shell (drag/resize relayed to parent via postMessage in iframe mode) -->
+    <div class="iva" id="ivaPanel">
+      <!-- Header: drag handle + title + close -->
+      <div class="iva-header" id="ivaHeader" title="Drag to move">
+        <div class="iva-brand">
+          <div class="iva-mark" aria-hidden="true">
+            <svg viewBox="0 0 182.69 182.8" xmlns="http://www.w3.org/2000/svg">
+              <polygon fill="white" points="91.29 0 0 91.4 91.29 91.4 91.29 182.8 182.69 91.4 182.69 0 91.29 0"/>
+            </svg>
+          </div>
+          <div class="iva-title">Pendo Validate</div>
         </div>
-      </section>
-
-      <!-- Tab strip: Output (results) | Settings (page status, tools, AI config) -->
-      <div id="tabs" class="tabs" role="tablist">
-        <button id="tabOutputBtn" class="tabs__btn" data-action="tab-output" role="tab" aria-controls="tabOutputPanel" aria-selected="true">Output</button>
-        <button id="tabSettingsBtn" class="tabs__btn" data-action="tab-settings" role="tab" aria-controls="tabSettingsPanel" aria-selected="false">Settings</button>
+        <button id="closeBtn" class="iva-icon-btn" data-action="close-panel" aria-label="Close panel" title="Close" style="display:none">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
       </div>
 
-      <!-- Output tab: Advice + Captured Output + Tip -->
-      <div id="tabOutputPanel" class="tab-panel" role="tabpanel" aria-labelledby="tabOutputBtn">
-        <!-- Panel: checks passed and remediation notes (built-in + optional AI) -->
-        <div class="panel">
-          <div class="flex">
-            <strong>Checks and recommendations</strong>
-            <button id="copyAdvice" class="small button--ghost" data-action="copy-advice">Copy</button>
-          </div>
-          <ul id="advice" class="advice-list" aria-live="polite"></ul>
-        </div>
-
-        <!-- Panel: captured console output from validateInstall() run in the page -->
-        <div class="panel">
-          <div class="flex">
-            <strong>Captured Output</strong>
-            <button id="copyLogs" class="small button--ghost" data-action="copy-logs">Copy</button>
-          </div>
-          <div id="logs" class="logs-container"></div>
-        </div>
-
-        <!-- User tip about where to run validation -->
-        <p class="muted small tip">
-          Tip: run this on the target page where the Pendo agent should be present. If extensions or network filters are blocking requests, try Incognito with other extensions disabled.
-        </p>
+      <!-- Tabs strip: Status / Logs / Settings -->
+      <div class="iva-tabs" role="tablist">
+        <button id="tabStatusBtn"   class="iva-tab" role="tab" data-action="tab-status"   aria-controls="tabStatusPanel"   aria-selected="true">
+          Status
+          <span class="iva-tab__count" id="statusTabCount" hidden>0</span>
+        </button>
+        <button id="tabLogsBtn"     class="iva-tab" role="tab" data-action="tab-logs"     aria-controls="tabLogsPanel"     aria-selected="false">
+          Logs
+          <span class="iva-tab__count" id="logsTabCount" hidden>0</span>
+        </button>
+        <button id="tabSettingsBtn" class="iva-tab" role="tab" data-action="tab-settings" aria-controls="tabSettingsPanel" aria-selected="false">
+          Settings
+        </button>
       </div>
 
-      <!-- Settings tab: Page status + Tools + AI configuration -->
-      <div id="tabSettingsPanel" class="tab-panel" role="tabpanel" aria-labelledby="tabSettingsBtn" hidden>
-        <!-- Panel: key-value summary from last run (filled by popup.js) -->
-        <div id="summary" class="panel panel--summary small">
-          <div class="kv">
-            <div>Snippet on page:</div><div class="mono" id="kv_snippet">—</div>
-            <div>Pendo Launcher:</div><div class="mono" id="kv_launcher">—</div>
-            <div>Launcher data validated:</div><div class="mono" id="kv_launcher_validated">—</div>
-            <div>Validated in:</div><div class="mono" id="kv_validated_in">—</div>
-            <div>Pendo present:</div><div class="mono" id="kv_pendo">—</div>
-            <div>ValidateInstall present:</div><div class="mono" id="kv_validate">—</div>
-            <div>Agent version:</div><div class="mono" id="kv_version">—</div>
-            <div>API key found:</div><div class="mono" id="kv_keyfound">—</div>
-            <div>Detected API key:</div><div class="mono" id="kv_detected">—</div>
-            <div>VisitorId:</div><div class="mono" id="kv_visitor">—</div>
-            <div>AccountId:</div><div class="mono" id="kv_account">—</div>
-            <div>Visitor metadata:</div><div class="mono kv-json" id="kv_visitor_meta">—</div>
-            <div>Account metadata:</div><div class="mono kv-json" id="kv_account_meta">—</div>
-            <div>Resource hits:</div><div class="mono" id="kv_hits">—</div>
-            <div>Lines captured:</div><div class="mono" id="kv_lines">—</div>
+      <!-- Body: tab panels -->
+      <div class="iva-body">
+        <!-- Status panel -->
+        <div id="tabStatusPanel" class="tab-panel" role="tabpanel" aria-labelledby="tabStatusBtn">
+          <div class="status-hero" id="statusHero" data-state="idle">
+            <div class="status-hero__icon" id="statusHeroIcon" aria-hidden="true"></div>
+            <div class="status-hero__body">
+              <div class="status-hero__title" id="statusHeroTitle">Ready to validate</div>
+              <div class="status-hero__sub"   id="statusHeroSub">Click Validate Pendo Install to begin.</div>
+            </div>
+            <div class="status-hero__time" id="statusHeroTime">NEVER</div>
           </div>
-        </div>
 
-        <!-- Panel: download report as Markdown or raw JSON -->
-        <div class="panel">
-          <div class="flex">
-            <strong>Export</strong>
-          </div>
-          <div class="row">
-            <button id="exportMd" data-action="export-report">Download Report</button>
-            <button id="exportJson" class="button--ghost" data-action="export-json">Download raw JSON</button>
-          </div>
-        </div>
-
-        <!-- AI Settings panel -->
-        <div id="aiSettingsPanel" class="panel">
-          <strong>AI Advice Configuration</strong>
-          <p class="muted small">Choose a provider and paste your API key. Advice is requested automatically when validation failures are detected.</p>
-          <p class="muted small">Anthropic Claude: some orgs disable client-side API access, which includes this extension. If you see a policy error after validate, use OpenAI or Gemini here, ask an Anthropic admin to allow that access, or set the storage key aiClaudeEndpoint (in chrome.storage.local) to your own HTTPS proxy that forwards to Anthropic’s Messages API.</p>
-          <div class="settings-field">
-            <label for="aiProviderSelect" class="settings-label">Provider</label>
-            <select id="aiProviderSelect" class="settings-select" data-action="ai-provider-select">
-              <option value="openai">OpenAI (gpt-4o-mini)</option>
-              <option value="claude">Anthropic Claude (claude-haiku-4-5)</option>
-              <option value="gemini">Google Gemini (gemini-2.0-flash)</option>
-            </select>
-          </div>
-          <div class="settings-field">
-            <label for="aiApiKeyInput" class="settings-label">API Key</label>
-            <div class="settings-key-row">
-              <input type="password" id="aiApiKeyInput" class="settings-input" placeholder="Paste your API key" autocomplete="off" spellcheck="false" data-action="ai-api-key-input" />
-              <button id="aiKeyToggleVisibility" class="button--ghost small" type="button" data-action="toggle-key-visibility">Show</button>
+          <div class="quick-stats" id="quickStats" hidden>
+            <div class="qs qs--err"  id="qsErr">
+              <div class="qs__num" id="qsErrNum">0</div>
+              <div class="qs__label">Errors</div>
+            </div>
+            <div class="qs qs--warn" id="qsWarn">
+              <div class="qs__num" id="qsWarnNum">0</div>
+              <div class="qs__label">Warnings</div>
+            </div>
+            <div class="qs qs--ok"   id="qsOk">
+              <div class="qs__num" id="qsOkNum">0</div>
+              <div class="qs__label">Passing</div>
             </div>
           </div>
-          <div class="row">
-            <button id="aiSettingsSave" data-action="save-ai-settings">Save</button>
-            <span id="aiSettingsStatus" class="muted small"></span>
+
+          <div class="card" id="checksCard" hidden>
+            <div class="card__head">
+              <div class="card__title">Checks &amp; recommendations</div>
+              <button class="card__action" id="copyAdvice" data-action="copy-advice" title="Copy advice">Copy</button>
+            </div>
+            <div class="card__body card__body--flush" id="checkGroups"></div>
+          </div>
+
+          <div class="card" id="identityCard" hidden>
+            <div class="card__head">
+              <div class="card__title">Identity</div>
+            </div>
+            <div class="card__body" id="identityBody"></div>
+          </div>
+
+          <div class="card" id="metadataCard" hidden>
+            <div class="card__head">
+              <div class="card__title">Metadata</div>
+            </div>
+            <div class="card__body" id="metadataBody"></div>
+          </div>
+
+          <div class="empty" id="statusEmpty">
+            <div class="empty__icon" aria-hidden="true">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/>
+                <path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>
+              </svg>
+            </div>
+            <div class="empty__title">No validation run yet</div>
+            <div>Open the page where Pendo should be present, then press <strong>Validate</strong>.</div>
+          </div>
+
+          <div class="tip">
+            <strong>Tip:</strong> run this on the target page where the Pendo agent should be present. If extensions or network filters block requests, try Incognito with other extensions disabled.
+          </div>
+        </div>
+
+        <!-- Logs panel -->
+        <div id="tabLogsPanel" class="tab-panel" role="tabpanel" aria-labelledby="tabLogsBtn" hidden>
+          <div class="logs-tools">
+            <button class="chip chip--err"  id="logFilterErr"  data-action="toggle-log-filter" data-level="error" aria-pressed="true">
+              <span class="chip__dot"></span>Err <span id="logCountErr">0</span>
+            </button>
+            <button class="chip chip--warn" id="logFilterWarn" data-action="toggle-log-filter" data-level="warn"  aria-pressed="true">
+              <span class="chip__dot"></span>Warn <span id="logCountWarn">0</span>
+            </button>
+            <button class="chip chip--info" id="logFilterInfo" data-action="toggle-log-filter" data-level="info"  aria-pressed="true">
+              <span class="chip__dot"></span>Info <span id="logCountInfo">0</span>
+            </button>
+            <input id="logsSearch" class="logs-search" type="search" placeholder="Filter…" aria-label="Filter log lines" />
+            <button class="card__action" id="copyLogs" data-action="copy-logs" title="Copy all logs" style="margin-left:auto;">Copy</button>
+          </div>
+
+          <div class="card">
+            <div id="logsList" class="logs-list"></div>
+          </div>
+
+          <div class="card" id="pageFactsCard" hidden>
+            <div class="card__head"><div class="card__title">Page facts</div></div>
+            <div class="card__body" id="pageFactsBody"></div>
+          </div>
+        </div>
+
+        <!-- Settings panel -->
+        <div id="tabSettingsPanel" class="tab-panel" role="tabpanel" aria-labelledby="tabSettingsBtn" hidden>
+          <div class="card" id="pageSnapshotCard" hidden>
+            <div class="card__head"><div class="card__title">Page snapshot</div></div>
+            <div class="card__body" id="pageSnapshotBody"></div>
+          </div>
+
+          <div class="card">
+            <div class="card__head">
+              <div class="card__title">AI advice</div>
+              <span style="font-size:11px;color:var(--ink-3);">Optional</span>
+            </div>
+            <div class="card__body">
+              <div class="field">
+                <label class="field__label" for="aiProviderSelect">Provider</label>
+                <select id="aiProviderSelect" class="select" data-action="ai-provider-select">
+                  <option value="openai">OpenAI · gpt-4o-mini</option>
+                  <option value="claude">Anthropic Claude · claude-haiku-4-5</option>
+                  <option value="gemini">Google Gemini · gemini-2.0-flash</option>
+                </select>
+              </div>
+              <div class="field">
+                <label class="field__label" for="aiApiKeyInput">API key</label>
+                <div class="field-row">
+                  <input type="password" id="aiApiKeyInput" class="input input--mono" placeholder="sk-… / paste your key" autocomplete="off" spellcheck="false" data-action="ai-api-key-input" />
+                  <button type="button" class="btn btn--ghost" id="aiKeyToggleVisibility" data-action="toggle-key-visibility" style="padding:8px 10px;">Show</button>
+                </div>
+                <div class="field__hint">Stored locally in <code>chrome.storage.local</code>. Never sent unless validation surfaces a warning. Anthropic Claude: some orgs disable client-side API access; if Claude returns a policy error, use OpenAI/Gemini or configure <code>aiClaudeEndpoint</code> to a proxy.</div>
+              </div>
+              <div class="field">
+                <button id="aiSettingsSave" class="btn btn--ghost" data-action="save-ai-settings" style="align-self:flex-start;">Save AI settings</button>
+                <span id="aiSettingsStatus" class="field__status"></span>
+              </div>
+            </div>
           </div>
         </div>
       </div>
+
+      <!-- Action bar footer -->
+      <div class="action-bar">
+        <button id="run" class="btn btn--primary" data-action="validate">
+          <span class="btn__label">Validate Pendo Install</span>
+        </button>
+        <button id="launchDebugger" class="btn btn--ghost" data-action="launch-debugger" title="pendo.enableDebugging()">Debugger</button>
+        <div class="menu-wrap">
+          <button id="exportMenuBtn" class="btn btn--ghost" data-action="open-export-menu" aria-haspopup="menu" aria-expanded="false" disabled title="Run a validation first">
+            Export
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="9 18 15 12 9 6"/>
+            </svg>
+          </button>
+          <div id="exportMenu" class="menu" role="menu" hidden>
+            <button class="menu__item" id="exportMd" data-action="export-markdown" role="menuitem">
+              <span class="menu__item-icon" aria-hidden="true">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                  <polyline points="14 2 14 8 20 8"/>
+                </svg>
+              </span>
+              <span class="menu__item-body">
+                <span class="menu__item-title">Markdown report</span>
+                <span class="menu__item-sub">Human-readable, with support links.</span>
+              </span>
+            </button>
+            <button class="menu__item" id="exportCopy" data-action="export-copy-summary" role="menuitem">
+              <span class="menu__item-icon" aria-hidden="true">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="9" y="9" width="13" height="13" rx="2"/>
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                </svg>
+              </span>
+              <span class="menu__item-body">
+                <span class="menu__item-title">Copy summary</span>
+                <span class="menu__item-sub">Plain text — paste into Slack or a ticket.</span>
+              </span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Resize handle (bottom-right corner) -->
+      <div class="resize-handle" id="resizeHandle" data-action="resize-panel" role="separator" aria-label="Resize panel"></div>
     </div>
 
-    <!-- Popup logic: validation, advice, export, copy -->
+    <!-- Toast container -->
+    <div id="toast" class="toast" hidden aria-live="polite"></div>
+
+    <!-- Popup logic: validation, advice, export, copy, render, tabs, drag/resize -->
     <script src="popup.js"></script>
   </body>
   <!-- Pendo Validate extension popup - John Bambury -->

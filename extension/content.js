@@ -7,6 +7,13 @@ if (window.__pendoValidateInjected) {
 
   const IFRAME_ID = 'pendo-validate-overlay-iframe';
 
+  // Default panel size — matches the redesign tokens (also clamped by min/max below).
+  const DEFAULT_WIDTH = 440;
+  const DEFAULT_HEIGHT = 660;
+  const MIN_WIDTH = 360;
+  const MIN_HEIGHT = 480;
+  const MAX_RATIO = 0.92; // max 92vw × 92vh
+
   // ── Toggle handler (message from background.js) ────────────────────────────
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.type !== 'pendo-validate-toggle') return;
@@ -27,6 +34,12 @@ if (window.__pendoValidateInjected) {
       applyDrag(event.data, iframe);
     } else if (type === 'pendo-validate-dragend') {
       dragOrigin = null;
+    } else if (type === 'pendo-validate-resizestart') {
+      startResize(iframe);
+    } else if (type === 'pendo-validate-resize') {
+      applyResize(event.data, iframe);
+    } else if (type === 'pendo-validate-resizeend') {
+      resizeOrigin = null;
     }
   });
 
@@ -35,17 +48,17 @@ if (window.__pendoValidateInjected) {
     const iframe = document.createElement('iframe');
     iframe.id  = IFRAME_ID;
     iframe.src = chrome.runtime.getURL('popup.html');
-    const left = Math.max(0, window.innerWidth - 460 - 20);
+    const left = Math.max(0, window.innerWidth - DEFAULT_WIDTH - 20);
     iframe.style.cssText = [
       'position:fixed',
       `top:20px`,
       `left:${left}px`,
-      'width:460px',
-      'height:620px',
+      `width:${DEFAULT_WIDTH}px`,
+      `height:${DEFAULT_HEIGHT}px`,
       'border:none',
-      'border-radius:14px',
-      'background-color:#ffffff',
-      'box-shadow:0 8px 32px rgba(0,0,0,0.22),0 2px 8px rgba(0,0,0,0.12)',
+      'border-radius:16px',
+      'background-color:transparent',
+      'box-shadow:0 24px 60px rgba(0,0,0,0.22),0 4px 14px rgba(0,0,0,0.12)',
       `z-index:2147483647`,
       'overflow:hidden',
     ].join(';');
@@ -54,6 +67,7 @@ if (window.__pendoValidateInjected) {
 
   function removeOverlay() {
     dragOrigin = null;
+    resizeOrigin = null;
     const iframe = document.getElementById(IFRAME_ID);
     if (iframe) iframe.remove();
   }
@@ -78,5 +92,27 @@ if (window.__pendoValidateInjected) {
     const maxTop  = window.innerHeight - 60;
     iframe.style.left = Math.max(0, Math.min(newLeft, maxLeft)) + 'px';
     iframe.style.top  = Math.max(0, Math.min(newTop,  maxTop))  + 'px';
+  }
+
+  // ── Resize ───────────────────────────────────────────────────────────────
+  // Mirrors the drag protocol. Iframe sends {dw, dh} screen-coord deltas; we clamp
+  // to min 360×480 and max 92vw × 92vh before applying width/height.
+  let resizeOrigin = null;
+
+  function startResize(iframe) {
+    resizeOrigin = {
+      width: iframe.offsetWidth || DEFAULT_WIDTH,
+      height: iframe.offsetHeight || DEFAULT_HEIGHT,
+    };
+  }
+
+  function applyResize(data, iframe) {
+    if (!resizeOrigin) return;
+    const maxW = Math.floor(window.innerWidth * MAX_RATIO);
+    const maxH = Math.floor(window.innerHeight * MAX_RATIO);
+    const newW = Math.max(MIN_WIDTH, Math.min(resizeOrigin.width + (data.dw || 0), maxW));
+    const newH = Math.max(MIN_HEIGHT, Math.min(resizeOrigin.height + (data.dh || 0), maxH));
+    iframe.style.width = newW + 'px';
+    iframe.style.height = newH + 'px';
   }
 }

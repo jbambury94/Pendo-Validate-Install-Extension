@@ -1,6 +1,8 @@
 /**
  * Pendo Validate — popup script.
- * Runs validation in the active tab (or Pendo Launcher fallback), shows advice, and supports export/copy.
+ * Runs validation in the active tab (or Pendo Launcher fallback), shows status/advice/logs,
+ * and supports export/copy. Render layer is grouped (status hero, quick stats, check groups,
+ * identity/metadata cards, logs filter, page snapshot, export menu, toast).
  */
 
 // ========== Pendo visitor ID (persistent UUID in extension storage) ==========
@@ -67,11 +69,7 @@ function getOrCreateVisitorId() {
   }
 })();
 
-// ========== UI helpers ==========
-function setStatus(el, cls, text) {
-  el.className = `badge ${cls}`;
-  el.textContent = text;
-}
+// ========== Misc helpers ==========
 function toIso(dt=new Date()) { return dt.toISOString(); }
 
 // ========== Pendo support base URLs (for report links) ==========
@@ -88,18 +86,35 @@ const PENDO_SUPPORT = {
   technicalSupport: 'https://support.pendo.io/hc/en-us/articles/360034163971-Get-help-with-Pendo-from-Technical-Support'
 };
 
+/** Friendly labels for documentation links shown next to check items. */
+const SUPPORT_LABELS = {
+  installGuide: 'Install guide',
+  installComponents: 'Snippet components',
+  agentSettings: 'Pendo agent settings',
+  identifyVisitors: 'Identify visitors & metadata',
+  chooseIdsMetadata: 'Choose IDs & metadata',
+  csp: 'Content Security Policy',
+  spa: 'SPA install guide',
+  helpCenter: 'Pendo Help Center',
+  technicalSupport: 'Pendo Technical Support'
+};
+
+/** supportKeys that indicate an error-severity advice item (blocking install/snippet/agent issues). */
+const ERR_SUPPORT_KEYS = new Set(['installGuide', 'installComponents', 'agentSettings']);
+
 // ========== Advice normalization ==========
-/** Normalize advice items to { text, source, supportUrl } and filter empty. Resolves supportKey to supportUrl. */
+/** Normalize advice items to { text, source, supportUrl, supportKey } and filter empty. Resolves supportKey to supportUrl. */
 function normalizeAdviceList(advice = []) {
   return advice.map(a => {
-    let text, source, supportUrl;
-    if (typeof a === 'string') { text = a; source = 'builtin'; supportUrl = PENDO_SUPPORT.helpCenter; }
+    let text, source, supportUrl, supportKey;
+    if (typeof a === 'string') { text = a; source = 'builtin'; supportUrl = PENDO_SUPPORT.helpCenter; supportKey = null; }
     else if (a && typeof a === 'object') {
       text = a.text || '';
       source = a.source || 'builtin';
-      supportUrl = a.supportUrl || (a.supportKey && PENDO_SUPPORT[a.supportKey]) || (source === 'ai' ? PENDO_SUPPORT.technicalSupport : PENDO_SUPPORT.helpCenter);
-    } else { text = String(a); source = 'builtin'; supportUrl = PENDO_SUPPORT.helpCenter; }
-    return { text, source, supportUrl };
+      supportKey = a.supportKey || null;
+      supportUrl = a.supportUrl || (supportKey && PENDO_SUPPORT[supportKey]) || (source === 'ai' ? PENDO_SUPPORT.technicalSupport : PENDO_SUPPORT.helpCenter);
+    } else { text = String(a); source = 'builtin'; supportUrl = PENDO_SUPPORT.helpCenter; supportKey = null; }
+    return { text, source, supportUrl, supportKey };
   }).filter(a => a.text);
 }
 
@@ -198,8 +213,46 @@ function buildMarkdownReport(context) {
   lines.push("");
   return lines.join("\n");
 }
-/** Serialize full context as pretty-printed JSON. */
+/** Serialize full context as pretty-printed JSON (still used by some report flows). */
 function buildJsonReport(context) { return JSON.stringify(context, null, 2); }
+
+/** Build a plain-text summary suitable for clipboard (status + counts + advice + checks). */
+function buildPlainSummary(context) {
+  const { pageUrl, timestamp, status, captured, advice, checks, snippetOnPage, launcherPresent, launcherAttempted, launcherDataValidated, validatedIn } = context;
+  const errCount = (captured || []).filter(l => l.level === 'error').length;
+  const warnCount = (captured || []).filter(l => l.level === 'warn').length;
+  const okCount = (checks || []).length;
+  let statusLine = 'Looks healthy';
+  if (!snippetOnPage && launcherAttempted && launcherPresent === false) statusLine = 'Pendo not found (snippet and Launcher)';
+  else if (!snippetOnPage && launcherPresent === true && launcherDataValidated === false) statusLine = 'Launcher installed (no data on this tab)';
+  else if (!status.pendoPresent) statusLine = 'Pendo not found';
+  else if (!status.validatePresent) statusLine = 'No validateInstall()';
+  else if (errCount > 0) statusLine = 'Errors found';
+  else if (warnCount > 0) statusLine = 'Warnings found';
+
+  const lines = [];
+  lines.push(`Pendo Validate — ${statusLine}`);
+  lines.push(`Page: ${pageUrl || 'unknown'}`);
+  lines.push(`Timestamp: ${timestamp}`);
+  lines.push(`Validated in: ${validatedIn || 'page'}`);
+  lines.push(`Errors: ${errCount}   Warnings: ${warnCount}   Passing: ${okCount}`);
+  lines.push('');
+  if (checks && checks.length) {
+    lines.push('Passing:');
+    checks.forEach(c => lines.push(`  • ${c}`));
+    lines.push('');
+  }
+  const adviceList = normalizeAdviceList(advice || []);
+  if (adviceList.length) {
+    lines.push('Recommendations:');
+    adviceList.forEach(a => {
+      const prefix = a.source === 'ai' ? '[AI] ' : '';
+      lines.push(`  • ${prefix}${a.text}`);
+    });
+  }
+  return lines.join('\n');
+}
+
 /** Trigger browser download of a blob (report file). */
 function downloadBlob(filename, mime, text) {
   const blob = new Blob([text], {type: mime});
@@ -231,7 +284,6 @@ async function runInPage() {
   /** Runs in the page context (or Launcher). Phases: capture console → resolve agent/validate fn → run validateInstall → build status/advice/checks. */
   function captureAndInspect(variant = 'page') {
     const captured = [];
-    // Intercept console so we can capture validateInstall() output
     const original = { log: console.log, warn: console.warn, error: console.error, info: console.info };
     function push(level, args) {
       try {
@@ -251,7 +303,6 @@ async function runInPage() {
     console.error = (...a) => { push('error', a); original.error(...a); };
     console.info = (...a) => { push('info', a); original.info(...a); };
 
-    // Resolve Pendo agent; track which global was found for Launcher detection.
     // window.Pendo (capital P) is the Launcher-specific global; window.pendo is the standard snippet.
     const isLauncher = variant === 'launcher' || variant === 'launcher-beta';
     let agent, pendoGlobal;
@@ -278,7 +329,6 @@ async function runInPage() {
       resourceHits: []
     };
 
-    /** Try to extract API key from Pendo agent/static URL. */
     function extractKeyFromUrl(url) {
       try {
         const m = url.match(/agent\/(?:static|production|beta)\/([a-f0-9\-]{8,})/i);
@@ -287,7 +337,6 @@ async function runInPage() {
       return null;
     }
 
-    // Populate version, API key, visitorId, accountId from agent if present
     try {
       if (status.pendoPresent) {
         status.version = (agent.getVersion && agent.getVersion()) || agent.VERSION || null;
@@ -300,7 +349,6 @@ async function runInPage() {
         if (!status.visitorId && agent.getVisitorId) { try { status.visitorId = agent.getVisitorId(); } catch {} }
         if (!status.accountId && agent.getAccountId) { try { status.accountId = agent.getAccountId(); } catch {} }
 
-        /** Extract visitor/account metadata objects (per Pendo "Choose IDs and metadata" docs). */
         function safeCloneFields(src, maxKeys, maxLen) {
           if (!src || typeof src !== 'object') return null;
           try {
@@ -335,7 +383,6 @@ async function runInPage() {
       }
     } catch {}
 
-    // Collect Pendo-related resource requests from Performance API
     try {
       const res = performance.getEntriesByType('resource') || [];
       res.forEach(r => {
@@ -350,14 +397,12 @@ async function runInPage() {
       });
     } catch {}
 
-    // Read CSP from meta tags for advice
     let cspMeta = "";
     try {
       const metas = document.querySelectorAll('meta[http-equiv="Content-Security-Policy"]');
       cspMeta = Array.from(metas).map(m => m.getAttribute('content') || '').join(' | ');
     } catch {}
 
-    // Run validateInstall() (or Launcher equivalent) and capture output; restore console when done
     try {
       if (status.validatePresent) {
         try {
@@ -375,7 +420,6 @@ async function runInPage() {
       console.error = original.error; console.info = original.info;
     }
 
-    // Determine API key presence: from output text OR detected data
     const all = captured.map(m => m.text).join('\n');
     const keyRegex = /\b[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\b/i;
     const apiKeyFound = keyRegex.test(all) || !!status.detectedApiKey;
@@ -383,7 +427,6 @@ async function runInPage() {
     const hasError = captured.some(m => m.level === 'error' || /error|failed|not found|blocked/i.test(m.text));
     const hasWarn = captured.some(m => m.level === 'warn' || /warn|missing|no visitor|not initiali[sz]ed/i.test(m.text));
 
-    // Build built-in advice and checks from status and captured output
     const advice = [];
     const checks = [];
 
@@ -444,8 +487,6 @@ async function runInPage() {
   /**
    * Use the Chrome DevTools Protocol (chrome.debugger) to run captureAndInspect
    * inside the Pendo Launcher extension's content-script isolated world.
-   * This is the programmatic equivalent of switching the DevTools console context
-   * to "Pendo Launcher (Beta)" and running pendo.validateInstall().
    */
   async function runValidationInLauncherWorld(tabId, launcher) {
     const target = { tabId };
@@ -500,7 +541,6 @@ async function runInPage() {
     captured: [], advice: [], checks: [], cspMeta: '', apiKeyFound: false, hasError: true, hasWarn: false
   };
 
-  // Phase 1: Always run in the active tab (top window)
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab || !tab.id) throw new Error('No active tab found.');
   const [{ result: pageResult }] = await chrome.scripting.executeScript({
@@ -512,11 +552,7 @@ async function runInPage() {
   const snippetOnPage = !!(pageResult && pageResult.status && pageResult.status.pendoPresent);
   const basePageUrl = tab && tab.url ? tab.url : 'unknown';
 
-  // Phase 1.5: Always check for the Launcher in the same tab.
-  // Runs even when a snippet was found — Launcher and snippet can coexist on the same page.
-  // When no snippet was found: any pendo agent found here is from the Launcher.
-  // When a snippet was found: only window.Pendo (capital P) counts as Launcher — prevents
-  // the snippet's own window.pendo from being double-counted as a Launcher detection.
+  // Phase 1.5: Always check for the Launcher in the same tab. Launcher and snippet can coexist.
   let launcherInPageResult = null;
   try {
     const [{ result: p15result }] = await chrome.scripting.executeScript({
@@ -586,7 +622,6 @@ async function runInPage() {
       };
     }
 
-    // CDP didn't find agent — fall through to installed-but-no-data message
     const base = pageResult || EMPTY_RESULT;
     base.captured = (base.captured || []).concat([
       { level: 'warn', text: 'Pendo Launcher extension is installed but its agent is not active on this tab. Open the application where the Launcher is configured to inject Pendo, then re-run validation from that tab.' }
@@ -606,7 +641,6 @@ async function runInPage() {
     };
   }
 
-  // Phase 2: No snippet, no Launcher extension installed
   const base = pageResult || EMPTY_RESULT;
   base.captured = (base.captured || []).concat([
     { level: 'info', text: 'Pendo snippet not found and Pendo Launcher extension is not installed.' }
@@ -626,343 +660,907 @@ async function runInPage() {
 // ========== AI advice (optional) ==========
 /** Read AI config from chrome.storage.local: aiEndpoint, aiApiKey, aiModel. Used for optional ChatGPT-powered advice. */
 async function getAiConfig() {
-    return new Promise(resolve => {
+  return new Promise(resolve => {
+    try {
+      if (!chrome.storage || !chrome.storage.local) return resolve({});
+      chrome.storage.local.get({ aiProvider: 'openai', aiEndpoint: '', aiClaudeEndpoint: '', aiApiKey: '', aiModel: '' }, resolve);
+    } catch (e) {
+      console.error(e);
+      resolve({});
+    }
+  });
+}
+
+/** Build prompt for AI from validation context (URL, status, logs, CSP). */
+function buildAiPrompt(context) {
+  const lines = [];
+  lines.push('You are a Pendo installation assistant. Suggest concise, actionable remediation steps.');
+  lines.push('Base your guidance solely on official Pendo sources (pendo.io domains such as support.pendo.io, help.pendo.io, academy.pendo.io). If unsure, say so.');
+  lines.push(`Page URL: ${context.pageUrl}`);
+  lines.push(`Agent version: ${context.status.version || 'unknown'}`);
+  lines.push(`validateInstall available: ${context.status.validatePresent}`);
+  lines.push(`Pendo present: ${context.status.pendoPresent}`);
+  lines.push(`API key detected: ${context.status.detectedApiKey || 'unknown'}`);
+  lines.push(`API key found flag: ${context.apiKeyFound}`);
+  lines.push(`VisitorId: ${context.status.visitorId || 'not set'}`);
+  lines.push(`AccountId: ${context.status.accountId == null ? 'not set' : context.status.accountId}`);
+  lines.push(`CSP meta: ${context.cspMeta || 'none'}`);
+  lines.push('Captured logs (level:message):');
+  const trimmed = (context.captured || []).slice(0, 30);
+  trimmed.forEach(l => lines.push(`[${l.level}] ${l.text}`));
+  if ((context.captured || []).length > trimmed.length) lines.push('...truncated...');
+  lines.push('Respond with a short bullet list of concrete fixes.');
+  return lines.join('\n');
+}
+
+/** Rewrite known provider errors into clearer guidance (e.g. Anthropic org blocks browser API). */
+function friendlyAiFailureDetail(provider, rawDetail) {
+  const s = String(rawDetail || '');
+  if (provider === 'claude' && /cors requests are not allowed for this organization/i.test(s)) {
+    return 'Anthropic returned an organization policy error: client-side (browser) API access is disabled for your workspace, and Chrome extensions are treated as client-side. Use OpenAI or Google Gemini in Settings, use an API key from a workspace that allows browser access, ask an Anthropic org admin to update that policy, or set storage key aiClaudeEndpoint to an HTTPS URL of a proxy you run that forwards to Anthropic’s Messages API (same request/response shape as /v1/messages).';
+  }
+  return null;
+}
+
+/** Call configured AI API for remediation suggestions; returns array of { text, source: 'ai' }. */
+async function requestAiAdvice(context) {
+  const cfg = await getAiConfig();
+  const apiKey = String((cfg && cfg.aiApiKey) || '').trim();
+  if (!apiKey) return [];
+
+  const provider = cfg.aiProvider || 'openai';
+  const prompt = buildAiPrompt(context);
+  const systemMsg = 'You are a concise Pendo install troubleshooting assistant. Only rely on official Pendo documentation and avoid speculative advice.';
+
+  let endpoint, headers, body;
+
+  if (provider === 'claude') {
+    const model = cfg.aiModel || 'claude-haiku-4-5-20251001';
+    const claudeUrl = String((cfg && cfg.aiClaudeEndpoint) || '').trim();
+    endpoint = claudeUrl || 'https://api.anthropic.com/v1/messages';
+    const directAnthropic = /anthropic\.com/i.test(endpoint);
+    headers = {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+    };
+    if (directAnthropic) headers['anthropic-dangerous-direct-browser-access'] = 'true';
+    body = { model, max_tokens: 1024, system: systemMsg, messages: [{ role: 'user', content: prompt }] };
+  } else if (provider === 'gemini') {
+    const model = cfg.aiModel || 'gemini-2.0-flash';
+    endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+    headers = { 'Content-Type': 'application/json' };
+    body = { contents: [{ parts: [{ text: systemMsg + '\n\n' + prompt }] }], generationConfig: { temperature: 0.1 } };
+  } else {
+    const model = cfg.aiModel || 'gpt-4o-mini';
+    endpoint = cfg.aiEndpoint || 'https://api.openai.com/v1/chat/completions';
+    headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
+    body = { model, messages: [{ role: 'system', content: systemMsg }, { role: 'user', content: prompt }], temperature: 0.1 };
+  }
+
+  const controller = new AbortController();
+  const timeoutMs = cfg.timeoutMs || 8000;
+  const timer = setTimeout(() => controller.abort('timeout'), timeoutMs);
+  try {
+    let data;
+    if (provider === 'claude') {
+      clearTimeout(timer);
+      let bg;
       try {
-        if (!chrome.storage || !chrome.storage.local) return resolve({});
-        chrome.storage.local.get({ aiProvider: 'openai', aiEndpoint: '', aiClaudeEndpoint: '', aiApiKey: '', aiModel: '' }, resolve);
+        bg = await chrome.runtime.sendMessage({
+          type: 'pendo-validate-ai-fetch',
+          endpoint,
+          headers,
+          body: JSON.stringify(body),
+          timeoutMs,
+        });
       } catch (e) {
-        console.error(e);
-        resolve({});
+        throw new Error((e && e.message) || 'Background AI proxy failed');
       }
+      if (!bg || typeof bg.ok !== 'boolean') {
+        throw new Error('AI proxy unavailable: extension background did not respond.');
+      }
+      if (bg.error === 'timeout' || bg.error === 'network') {
+        throw new DOMException(bg.message || (bg.error === 'timeout' ? 'Aborted' : 'Network error'), bg.error === 'timeout' ? 'AbortError' : 'Error');
+      }
+      if (!bg.ok) {
+        const errBody = bg.json;
+        let apiErr = '';
+        const m = errBody && errBody.error && (errBody.error.message || errBody.error.type);
+        if (m) apiErr = String(m).slice(0, 200);
+        const parts = [`AI request failed with status ${bg.status}`];
+        if (apiErr) parts.push(apiErr);
+        if (bg.status === 401) parts.push('Use an API key from the same provider you selected (e.g. Anthropic console for Claude).');
+        throw new Error(parts.join('. '));
+      }
+      data = bg.json;
+    } else {
+      const res = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify(body), signal: controller.signal });
+      clearTimeout(timer);
+      if (!res.ok) {
+        let apiErr = '';
+        try {
+          const errBody = await res.json();
+          const m = errBody && errBody.error && (errBody.error.message || errBody.error.type);
+          if (m) apiErr = String(m).slice(0, 200);
+        } catch (_) {}
+        const parts = [`AI request failed with status ${res.status}`];
+        if (apiErr) parts.push(apiErr);
+        if (res.status === 401) parts.push('Use an API key from the same provider you selected (e.g. Anthropic console for Claude).');
+        throw new Error(parts.join('. '));
+      }
+      data = await res.json();
+    }
+    let content = '';
+    if (provider === 'claude') content = data?.content?.[0]?.text || '';
+    else if (provider === 'gemini') content = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    else content = data?.choices?.[0]?.message?.content || '';
+    if (!content) {
+      return [];
+    }
+    return content.split(/\n+/).map(t => t.replace(/^[-*]\s*/, '').trim()).filter(Boolean)
+      .map(text => ({ text, source: 'ai', supportUrl: PENDO_SUPPORT.technicalSupport }));
+  } catch (e) {
+    clearTimeout(timer);
+    console.error('AI request failed', e);
+    const isAbort = e && (e.name === 'AbortError' || (e.message && String(e.message).includes('aborted')));
+    let detail = isAbort
+      ? 'Request timed out. Check your network or increase timeoutMs in storage.'
+      : (e && e.message ? String(e.message) : String(e));
+    const friendly = friendlyAiFailureDetail(provider, detail);
+    if (friendly) detail = friendly;
+    return [{ text: `AI suggestion unavailable: ${detail}`, source: 'ai', supportUrl: PENDO_SUPPORT.technicalSupport }];
+  }
+}
+
+// ========== Tiny inline SVG helpers (no remote icon fonts) ==========
+const SVG_NS = 'http://www.w3.org/2000/svg';
+/** Build an inline SVG icon for the design's iconography (Lucide-styled). */
+function makeIcon(name, size = 16) {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('width', String(size));
+  svg.setAttribute('height', String(size));
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '1.75');
+  svg.setAttribute('stroke-linecap', 'round');
+  svg.setAttribute('stroke-linejoin', 'round');
+  svg.setAttribute('aria-hidden', 'true');
+  const append = (tag, attrs) => {
+    const el = document.createElementNS(SVG_NS, tag);
+    for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+    svg.appendChild(el);
+  };
+  switch (name) {
+    case 'check':
+      append('polyline', { points: '20 6 9 17 4 12' });
+      break;
+    case 'alert':
+      append('circle', { cx: '12', cy: '12', r: '10' });
+      append('line', { x1: '12', y1: '8', x2: '12', y2: '12' });
+      append('line', { x1: '12', y1: '16', x2: '12.01', y2: '16' });
+      break;
+    case 'x':
+      append('line', { x1: '18', y1: '6', x2: '6', y2: '18' });
+      append('line', { x1: '6', y1: '6', x2: '18', y2: '18' });
+      break;
+    case 'zap':
+      append('polygon', { points: '13 2 3 14 12 14 11 22 21 10 12 10 13 2' });
+      break;
+    case 'chevron':
+      append('polyline', { points: '9 18 15 12 9 6' });
+      break;
+    case 'copy':
+      append('rect', { x: '9', y: '9', width: '13', height: '13', rx: '2' });
+      append('path', { d: 'M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1' });
+      break;
+    case 'external':
+      append('path', { d: 'M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6' });
+      append('polyline', { points: '15 3 21 3 21 9' });
+      append('line', { x1: '10', y1: '14', x2: '21', y2: '3' });
+      break;
+    case 'code':
+      append('polyline', { points: '16 18 22 12 16 6' });
+      append('polyline', { points: '8 6 2 12 8 18' });
+      break;
+  }
+  return svg;
+}
+
+// ========== Popup UI: bind elements and event handlers ==========
+document.addEventListener('DOMContentLoaded', async () => {
+  // ── DOM refs ─────────────────────────────────────────────────────────────
+  const ivaHeader = document.getElementById('ivaHeader');
+  const resizeHandle = document.getElementById('resizeHandle');
+  const closeBtn = document.getElementById('closeBtn');
+
+  const tabStatusBtn = document.getElementById('tabStatusBtn');
+  const tabLogsBtn = document.getElementById('tabLogsBtn');
+  const tabSettingsBtn = document.getElementById('tabSettingsBtn');
+  const tabBtns = [tabStatusBtn, tabLogsBtn, tabSettingsBtn];
+  const tabPanels = Array.from(document.querySelectorAll('.tab-panel'));
+  const statusTabCount = document.getElementById('statusTabCount');
+  const logsTabCount = document.getElementById('logsTabCount');
+
+  const statusHero = document.getElementById('statusHero');
+  const statusHeroIcon = document.getElementById('statusHeroIcon');
+  const statusHeroTitle = document.getElementById('statusHeroTitle');
+  const statusHeroSub = document.getElementById('statusHeroSub');
+  const statusHeroTime = document.getElementById('statusHeroTime');
+
+  const quickStats = document.getElementById('quickStats');
+  const qsErrNum = document.getElementById('qsErrNum');
+  const qsWarnNum = document.getElementById('qsWarnNum');
+  const qsOkNum = document.getElementById('qsOkNum');
+
+  const checksCard = document.getElementById('checksCard');
+  const checkGroupsEl = document.getElementById('checkGroups');
+  const copyAdviceBtn = document.getElementById('copyAdvice');
+
+  const identityCard = document.getElementById('identityCard');
+  const identityBody = document.getElementById('identityBody');
+  const metadataCard = document.getElementById('metadataCard');
+  const metadataBody = document.getElementById('metadataBody');
+  const statusEmpty = document.getElementById('statusEmpty');
+
+  const logsListEl = document.getElementById('logsList');
+  const logsSearch = document.getElementById('logsSearch');
+  const logCountErr = document.getElementById('logCountErr');
+  const logCountWarn = document.getElementById('logCountWarn');
+  const logCountInfo = document.getElementById('logCountInfo');
+  const logFilterErr = document.getElementById('logFilterErr');
+  const logFilterWarn = document.getElementById('logFilterWarn');
+  const logFilterInfo = document.getElementById('logFilterInfo');
+  const copyLogsBtn = document.getElementById('copyLogs');
+  const pageFactsCard = document.getElementById('pageFactsCard');
+  const pageFactsBody = document.getElementById('pageFactsBody');
+
+  const pageSnapshotCard = document.getElementById('pageSnapshotCard');
+  const pageSnapshotBody = document.getElementById('pageSnapshotBody');
+
+  const runBtn = document.getElementById('run');
+  const runBtnLabel = runBtn.querySelector('.btn__label');
+  const launchDebuggerBtn = document.getElementById('launchDebugger');
+  const exportMenuBtn = document.getElementById('exportMenuBtn');
+  const exportMenu = document.getElementById('exportMenu');
+  const exportMdBtn = document.getElementById('exportMd');
+  const exportCopyBtn = document.getElementById('exportCopy');
+
+  const toastEl = document.getElementById('toast');
+
+  const aiProviderSelect = document.getElementById('aiProviderSelect');
+  const aiApiKeyInput = document.getElementById('aiApiKeyInput');
+  const aiKeyToggle = document.getElementById('aiKeyToggleVisibility');
+  const aiSaveBtn = document.getElementById('aiSettingsSave');
+  const aiSaveStatus = document.getElementById('aiSettingsStatus');
+
+  // ── State ───────────────────────────────────────────────────────────────
+  let lastContext = null;
+  let runState = 'idle'; // 'idle' | 'running' | 'done'
+  let logFilters = { error: true, warn: true, info: true };
+  let logQuery = '';
+  let toastTimer = null;
+
+  // Seed hero icon
+  setStatusHero({ state: 'idle', title: 'Ready to validate', sub: 'Click Validate Pendo Install to begin.' });
+  renderStatusHeroTime(null);
+
+  // ── Iframe / overlay wiring: close + drag + resize via postMessage ──────
+  const inIframe = window !== window.parent;
+  if (inIframe) {
+    if (closeBtn) {
+      closeBtn.style.display = '';
+      closeBtn.addEventListener('click', () => {
+        window.parent.postMessage({ type: 'pendo-validate-close' }, '*');
+      });
+    }
+    bindHeaderDrag(ivaHeader);
+    bindResizeHandle(resizeHandle);
+  }
+
+  /**
+   * Header drag: pointer capture in the iframe; parent (content.js) applies the deltas.
+   * screenX/screenY are stable even when the parent moves the iframe under the pointer.
+   */
+  function bindHeaderDrag(handle) {
+    if (!handle) return;
+    handle.addEventListener('pointerdown', (e) => {
+      if (e.target.closest('button')) return;
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      e.preventDefault();
+      const startScreenX = e.screenX;
+      const startScreenY = e.screenY;
+      try { handle.setPointerCapture(e.pointerId); } catch (_) {}
+      window.parent.postMessage({ type: 'pendo-validate-dragstart' }, '*');
+
+      function onMove(ev) {
+        const dx = ev.screenX - startScreenX;
+        const dy = ev.screenY - startScreenY;
+        window.parent.postMessage({ type: 'pendo-validate-drag', dx, dy }, '*');
+      }
+      function teardown(ev) {
+        try { handle.releasePointerCapture(ev.pointerId); } catch (_) {}
+        handle.removeEventListener('pointermove', onMove);
+        handle.removeEventListener('pointerup', teardown);
+        handle.removeEventListener('pointercancel', teardown);
+        window.parent.postMessage({ type: 'pendo-validate-dragend' }, '*');
+      }
+      handle.addEventListener('pointermove', onMove);
+      handle.addEventListener('pointerup', teardown);
+      handle.addEventListener('pointercancel', teardown);
     });
   }
 
-  /** Build prompt for AI from validation context (URL, status, logs, CSP). */
-  function buildAiPrompt(context) {
-    const lines = [];
-    lines.push('You are a Pendo installation assistant. Suggest concise, actionable remediation steps.');
-    lines.push('Base your guidance solely on official Pendo sources (pendo.io domains such as support.pendo.io, help.pendo.io, academy.pendo.io). If unsure, say so.');
-    lines.push(`Page URL: ${context.pageUrl}`);
-    lines.push(`Agent version: ${context.status.version || 'unknown'}`);
-    lines.push(`validateInstall available: ${context.status.validatePresent}`);
-    lines.push(`Pendo present: ${context.status.pendoPresent}`);
-    lines.push(`API key detected: ${context.status.detectedApiKey || 'unknown'}`);
-    lines.push(`API key found flag: ${context.apiKeyFound}`);
-    lines.push(`VisitorId: ${context.status.visitorId || 'not set'}`);
-    lines.push(`AccountId: ${context.status.accountId == null ? 'not set' : context.status.accountId}`);
-    lines.push(`CSP meta: ${context.cspMeta || 'none'}`);
-    lines.push('Captured logs (level:message):');
-    const trimmed = (context.captured || []).slice(0, 30);
-    trimmed.forEach(l => lines.push(`[${l.level}] ${l.text}`));
-    if ((context.captured || []).length > trimmed.length) lines.push('...truncated...');
-    lines.push('Respond with a short bullet list of concrete fixes.');
-    return lines.join('\n');
+  /** Corner resize: posts {dw, dh} deltas; content.js clamps and applies width/height. */
+  function bindResizeHandle(handle) {
+    if (!handle) return;
+    handle.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const startScreenX = e.screenX;
+      const startScreenY = e.screenY;
+      try { handle.setPointerCapture(e.pointerId); } catch (_) {}
+      window.parent.postMessage({ type: 'pendo-validate-resizestart' }, '*');
+
+      function onMove(ev) {
+        const dw = ev.screenX - startScreenX;
+        const dh = ev.screenY - startScreenY;
+        window.parent.postMessage({ type: 'pendo-validate-resize', dw, dh }, '*');
+      }
+      function teardown(ev) {
+        try { handle.releasePointerCapture(ev.pointerId); } catch (_) {}
+        handle.removeEventListener('pointermove', onMove);
+        handle.removeEventListener('pointerup', teardown);
+        handle.removeEventListener('pointercancel', teardown);
+        window.parent.postMessage({ type: 'pendo-validate-resizeend' }, '*');
+      }
+      handle.addEventListener('pointermove', onMove);
+      handle.addEventListener('pointerup', teardown);
+      handle.addEventListener('pointercancel', teardown);
+    });
   }
 
-  /** Rewrite known provider errors into clearer guidance (e.g. Anthropic org blocks browser API). */
-  function friendlyAiFailureDetail(provider, rawDetail) {
-    const s = String(rawDetail || '');
-    if (provider === 'claude' && /cors requests are not allowed for this organization/i.test(s)) {
-      return 'Anthropic returned an organization policy error: client-side (browser) API access is disabled for your workspace, and Chrome extensions are treated as client-side. Use OpenAI or Google Gemini in Settings, use an API key from a workspace that allows browser access, ask an Anthropic org admin to update that policy, or set storage key aiClaudeEndpoint to an HTTPS URL of a proxy you run that forwards to Anthropic’s Messages API (same request/response shape as /v1/messages).';
-    }
-    return null;
+  // ── Tab strip ────────────────────────────────────────────────────────────
+  /** Activate a tab by id ('status' | 'logs' | 'settings'). */
+  function activateTab(id) {
+    const targetPanelId = id === 'logs' ? 'tabLogsPanel'
+      : id === 'settings' ? 'tabSettingsPanel'
+      : 'tabStatusPanel';
+    const targetBtn = id === 'logs' ? tabLogsBtn : id === 'settings' ? tabSettingsBtn : tabStatusBtn;
+    tabBtns.forEach(b => b.setAttribute('aria-selected', b === targetBtn ? 'true' : 'false'));
+    tabPanels.forEach(p => { p.hidden = p.id !== targetPanelId; });
+  }
+  tabStatusBtn.addEventListener('click', () => activateTab('status'));
+  tabLogsBtn.addEventListener('click', () => activateTab('logs'));
+  tabSettingsBtn.addEventListener('click', () => activateTab('settings'));
+
+  // ── Render helpers ───────────────────────────────────────────────────────
+
+  /** Severity icon used in status hero / check group heads. Matches the design's 16px default. */
+  function severityIcon(state) {
+    if (state === 'ok') return makeIcon('check', 16);
+    if (state === 'warn') return makeIcon('alert', 16);
+    if (state === 'err') return makeIcon('x', 16);
+    return makeIcon('zap', 16);
   }
 
-  /** Call configured AI API for remediation suggestions; returns array of { text, source: 'ai' }. */
-  async function requestAiAdvice(context) {
-    const cfg = await getAiConfig();
-    const apiKey = String((cfg && cfg.aiApiKey) || '').trim();
-    if (!apiKey) return [];
+  /** Set the hero state, icon, title, sub. */
+  function setStatusHero({ state, title, sub }) {
+    statusHero.dataset.state = state;
+    statusHeroIcon.replaceChildren(severityIcon(state));
+    statusHeroTitle.textContent = title;
+    statusHeroSub.textContent = sub;
+  }
 
-    const provider = cfg.aiProvider || 'openai';
-    const prompt = buildAiPrompt(context);
-    const systemMsg = 'You are a concise Pendo install troubleshooting assistant. Only rely on official Pendo documentation and avoid speculative advice.';
+  /** Format last-run time relative to now. */
+  function formatRelative(date) {
+    if (!date) return 'NEVER';
+    const ms = Date.now() - date.getTime();
+    if (ms < 5_000) return 'JUST NOW';
+    if (ms < 60_000) return `${Math.floor(ms / 1000)}s AGO`;
+    if (ms < 60 * 60 * 1000) return `${Math.floor(ms / 60_000)}m AGO`;
+    return `${Math.floor(ms / 3_600_000)}h AGO`;
+  }
+  function renderStatusHeroTime(date) {
+    statusHeroTime.textContent = formatRelative(date);
+  }
 
-    let endpoint, headers, body;
+  /** Update the quick stats row and surface counts on the status/logs tab badges. */
+  function renderQuickStats({ errCount, warnCount, okCount, logCount }) {
+    qsErrNum.textContent = String(errCount);
+    qsWarnNum.textContent = String(warnCount);
+    qsOkNum.textContent = String(okCount);
+    quickStats.hidden = false;
 
-    if (provider === 'claude') {
-      const model = cfg.aiModel || 'claude-haiku-4-5-20251001';
-      const claudeUrl = String((cfg && cfg.aiClaudeEndpoint) || '').trim();
-      endpoint = claudeUrl || 'https://api.anthropic.com/v1/messages';
-      const directAnthropic = /anthropic\.com/i.test(endpoint);
-      headers = {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-      };
-      if (directAnthropic) headers['anthropic-dangerous-direct-browser-access'] = 'true';
-      body = { model, max_tokens: 1024, system: systemMsg, messages: [{ role: 'user', content: prompt }] };
-    } else if (provider === 'gemini') {
-      const model = cfg.aiModel || 'gemini-2.0-flash';
-      endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
-      headers = { 'Content-Type': 'application/json' };
-      body = { contents: [{ parts: [{ text: systemMsg + '\n\n' + prompt }] }], generationConfig: { temperature: 0.1 } };
+    const issueCount = errCount + warnCount;
+    if (issueCount > 0) {
+      statusTabCount.hidden = false;
+      statusTabCount.textContent = String(issueCount);
     } else {
-      const model = cfg.aiModel || 'gpt-4o-mini';
-      endpoint = cfg.aiEndpoint || 'https://api.openai.com/v1/chat/completions';
-      headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
-      body = { model, messages: [{ role: 'system', content: systemMsg }, { role: 'user', content: prompt }], temperature: 0.1 };
+      statusTabCount.hidden = true;
     }
-
-    const controller = new AbortController();
-    const timeoutMs = cfg.timeoutMs || 8000;
-    const timer = setTimeout(() => controller.abort('timeout'), timeoutMs);
-    try {
-      let data;
-      if (provider === 'claude') {
-        clearTimeout(timer);
-        let bg;
-        try {
-          bg = await chrome.runtime.sendMessage({
-            type: 'pendo-validate-ai-fetch',
-            endpoint,
-            headers,
-            body: JSON.stringify(body),
-            timeoutMs,
-          });
-        } catch (e) {
-          throw new Error((e && e.message) || 'Background AI proxy failed');
-        }
-        if (!bg || typeof bg.ok !== 'boolean') {
-          throw new Error('AI proxy unavailable: extension background did not respond.');
-        }
-        if (bg.error === 'timeout' || bg.error === 'network') {
-          throw new DOMException(bg.message || (bg.error === 'timeout' ? 'Aborted' : 'Network error'), bg.error === 'timeout' ? 'AbortError' : 'Error');
-        }
-        if (!bg.ok) {
-          const errBody = bg.json;
-          let apiErr = '';
-          const m = errBody && errBody.error && (errBody.error.message || errBody.error.type);
-          if (m) apiErr = String(m).slice(0, 200);
-          const parts = [`AI request failed with status ${bg.status}`];
-          if (apiErr) parts.push(apiErr);
-          if (bg.status === 401) parts.push('Use an API key from the same provider you selected (e.g. Anthropic console for Claude).');
-          throw new Error(parts.join('. '));
-        }
-        data = bg.json;
-      } else {
-        const res = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify(body), signal: controller.signal });
-        clearTimeout(timer);
-        if (!res.ok) {
-          let apiErr = '';
-          try {
-            const errBody = await res.json();
-            const m = errBody && errBody.error && (errBody.error.message || errBody.error.type);
-            if (m) apiErr = String(m).slice(0, 200);
-          } catch (_) {}
-          const parts = [`AI request failed with status ${res.status}`];
-          if (apiErr) parts.push(apiErr);
-          if (res.status === 401) parts.push('Use an API key from the same provider you selected (e.g. Anthropic console for Claude).');
-          throw new Error(parts.join('. '));
-        }
-        data = await res.json();
-      }
-      let content = '';
-      if (provider === 'claude') content = data?.content?.[0]?.text || '';
-      else if (provider === 'gemini') content = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-      else content = data?.choices?.[0]?.message?.content || '';
-      if (!content) {
-        return [];
-      }
-      return content.split(/\n+/).map(t => t.replace(/^[-*]\s*/, '').trim()).filter(Boolean)
-        .map(text => ({ text, source: 'ai', supportUrl: PENDO_SUPPORT.technicalSupport }));
-    } catch (e) {
-      clearTimeout(timer);
-      console.error('AI request failed', e);
-      const isAbort = e && (e.name === 'AbortError' || (e.message && String(e.message).includes('aborted')));
-      let detail = isAbort
-        ? 'Request timed out. Check your network or increase timeoutMs in storage.'
-        : (e && e.message ? String(e.message) : String(e));
-      const friendly = friendlyAiFailureDetail(provider, detail);
-      if (friendly) detail = friendly;
-      return [{ text: `AI suggestion unavailable: ${detail}`, source: 'ai', supportUrl: PENDO_SUPPORT.technicalSupport }];
+    if (logCount > 0) {
+      logsTabCount.hidden = false;
+      logsTabCount.textContent = String(logCount);
+    } else {
+      logsTabCount.hidden = true;
     }
   }
 
-// ========== Popup UI: bind elements and event handlers ==========
-  document.addEventListener('DOMContentLoaded', async () => {
-    const statusEl = document.getElementById('status');
-    const logsEl = document.getElementById('logs');
-    const adviceEl = document.getElementById('advice');
+  /**
+   * Bucket advice + captured + checks into err/warn/ok groups for the render layer.
+   * Severity is decided here, NOT in captureAndInspect, so its shape is unchanged.
+   */
+  function classifyAdvice(rawAdvice, captured, checks) {
+    const adviceList = normalizeAdviceList(rawAdvice || []);
+    const errItems = [];
+    const warnItems = [];
 
-    // ── Overlay mode: wire close button and hero drag handle ──────────────────
-    // When popup.html runs inside the content.js iframe (not as a Chrome popup),
-    // show the close button and relay drag/close events to the parent page via postMessage.
-    // The parent (content.js) listens for these messages and manages the iframe lifecycle.
-    const inIframe = window !== window.parent;
-    if (inIframe) {
-      const closeBtn = document.getElementById('closeBtn');
-      if (closeBtn) {
-        closeBtn.style.display = 'block';
-        closeBtn.addEventListener('click', () => {
-          // '*' is required — parent origin is an arbitrary host page
-          window.parent.postMessage({ type: 'pendo-validate-close' }, '*');
-        });
-      }
-      const heroEl = document.getElementById('hero');
-      if (heroEl) {
-        // Pointer capture keeps delivering pointermove/up to the hero even when the cursor
-        // leaves the iframe. We use screenX/screenY (absolute screen coords) for deltas
-        // because clientX/clientY shift when the parent moves the iframe under the pointer.
-        heroEl.addEventListener('pointerdown', (e) => {
-          if (e.target?.id === 'closeBtn') return;
-          if (e.pointerType === 'mouse' && e.button !== 0) return;
-          e.preventDefault();
-          const startScreenX = e.screenX;
-          const startScreenY = e.screenY;
-          try { heroEl.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
-          window.parent.postMessage({ type: 'pendo-validate-dragstart' }, '*');
+    const seenTexts = new Set();
+    adviceList.forEach(a => {
+      const item = {
+        text: a.text,
+        source: a.source,
+        supportKey: a.supportKey,
+        supportUrl: a.supportUrl
+      };
+      if (a.supportKey && ERR_SUPPORT_KEYS.has(a.supportKey)) errItems.push(item);
+      else warnItems.push(item);
+      seenTexts.add(a.text);
+    });
 
-          function onMove(ev) {
-            const dx = ev.screenX - startScreenX;
-            const dy = ev.screenY - startScreenY;
-            window.parent.postMessage({ type: 'pendo-validate-drag', dx, dy }, '*');
-          }
+    (captured || []).forEach(l => {
+      if (!l || !l.text) return;
+      if (seenTexts.has(l.text)) return;
+      if (l.level === 'error') errItems.push({ text: l.text, source: 'captured', supportKey: 'installGuide', supportUrl: PENDO_SUPPORT.installGuide });
+      else if (l.level === 'warn') warnItems.push({ text: l.text, source: 'captured', supportKey: null, supportUrl: PENDO_SUPPORT.helpCenter });
+    });
 
-          function teardown(ev) {
-            try { heroEl.releasePointerCapture(ev.pointerId); } catch (_) { /* ignore */ }
-            heroEl.removeEventListener('pointermove', onMove);
-            heroEl.removeEventListener('pointerup', teardown);
-            heroEl.removeEventListener('pointercancel', teardown);
-            window.parent.postMessage({ type: 'pendo-validate-dragend' }, '*');
-          }
+    const okItems = (checks || []).map(c => ({ text: String(c), source: 'builtin' }));
+    return { err: errItems, warn: warnItems, ok: okItems };
+  }
 
-          heroEl.addEventListener('pointermove', onMove);
-          heroEl.addEventListener('pointerup', teardown);
-          heroEl.addEventListener('pointercancel', teardown);
-        });
-      }
-    }
+  /** Render the collapsible check groups card. Returns the count of err+warn items. */
+  function renderCheckGroups(buckets) {
+    checkGroupsEl.replaceChildren();
+    const total = buckets.err.length + buckets.warn.length + buckets.ok.length;
+    if (total === 0) { checksCard.hidden = true; return; }
+    checksCard.hidden = false;
 
-    /** Render checks (passed) and advice items into the advice list. */
-    function renderAdvice(checks, adviceList) {
-      adviceEl.innerHTML = '';
-      (checks || []).forEach(c => {
-        const li = document.createElement('li');
-        li.className = 'advice-item advice-item--check';
-        const icon = document.createElement('span');
-        icon.className = 'advice-item__icon';
-        icon.setAttribute('aria-hidden', 'true');
-        icon.textContent = '✔';
-        const body = document.createElement('span');
-        body.textContent = c;
-        li.appendChild(icon);
-        li.appendChild(body);
-        adviceEl.appendChild(li);
+    const groups = [
+      { kind: 'err',  label: 'Errors',   items: buckets.err,  defaultOpen: true },
+      { kind: 'warn', label: 'Warnings', items: buckets.warn, defaultOpen: buckets.err.length === 0 },
+      { kind: 'ok',   label: 'Passing',  items: buckets.ok,   defaultOpen: false },
+    ];
+
+    for (const g of groups) {
+      if (!g.items.length) continue;
+      const wrap = document.createElement('div');
+      wrap.className = `check-group check-group--${g.kind}`;
+      wrap.dataset.open = g.defaultOpen ? 'true' : 'false';
+
+      const head = document.createElement('button');
+      head.type = 'button';
+      head.className = 'check-group__head';
+      head.dataset.action = 'toggle-check-group';
+      head.setAttribute('aria-expanded', g.defaultOpen ? 'true' : 'false');
+
+      const chev = document.createElement('span');
+      chev.className = 'check-group__chev';
+      chev.appendChild(makeIcon('chevron', 14));
+      head.appendChild(chev);
+
+      const iconWrap = document.createElement('span');
+      iconWrap.className = 'check-group__icon';
+      iconWrap.appendChild(severityIcon(g.kind));
+      head.appendChild(iconWrap);
+
+      const label = document.createElement('span');
+      label.className = 'check-group__label';
+      label.textContent = g.label;
+      head.appendChild(label);
+
+      const count = document.createElement('span');
+      count.className = 'check-group__count';
+      count.textContent = String(g.items.length);
+      head.appendChild(count);
+
+      head.addEventListener('click', () => {
+        const open = wrap.dataset.open === 'true';
+        wrap.dataset.open = open ? 'false' : 'true';
+        head.setAttribute('aria-expanded', open ? 'false' : 'true');
       });
-      normalizeAdviceList(adviceList).forEach(a => {
-        const li = document.createElement('li');
-        li.className = 'advice-item advice-item--note';
-        const icon = document.createElement('span');
-        icon.className = 'advice-item__icon';
-        icon.setAttribute('aria-hidden', 'true');
-        icon.textContent = '•';
-        const body = document.createElement('span');
-        if (a.source === 'ai') {
-          const strong = document.createElement('strong');
-          strong.textContent = 'AI suggestion: ';
-          body.appendChild(strong);
+      wrap.appendChild(head);
+
+      const items = document.createElement('div');
+      items.className = 'check-group__items';
+      for (const it of g.items) {
+        const cell = document.createElement('div');
+        cell.className = 'check-item';
+        if (it.source === 'ai') {
+          const tag = document.createElement('span');
+          tag.className = 'check-item__source';
+          tag.textContent = 'AI';
+          cell.appendChild(tag);
         }
-        body.appendChild(document.createTextNode(a.text));
-        li.appendChild(icon);
-        li.appendChild(body);
-        adviceEl.appendChild(li);
+        cell.appendChild(document.createTextNode(it.text));
+        if (it.supportUrl) {
+          const docWrap = document.createElement('div');
+          const a = document.createElement('a');
+          a.className = 'check-item__doc';
+          a.href = it.supportUrl;
+          a.target = '_blank';
+          a.rel = 'noopener noreferrer';
+          a.textContent = SUPPORT_LABELS[it.supportKey] || 'Read more';
+          a.appendChild(document.createTextNode(' '));
+          a.appendChild(makeIcon('external', 11));
+          docWrap.appendChild(a);
+          cell.appendChild(docWrap);
+        }
+        items.appendChild(cell);
+      }
+      wrap.appendChild(items);
+      checkGroupsEl.appendChild(wrap);
+    }
+  }
+
+  /** Build a `.kv-row` (label / value / copy button) and append to a container. */
+  function appendKvRow(container, { label, value, mono = true, wrap = false, top = false }) {
+    const row = document.createElement('div');
+    row.className = 'kv-row' + (top ? ' kv-row--top' : '');
+
+    const k = document.createElement('div');
+    k.className = 'kv-row__k';
+    k.textContent = label;
+    row.appendChild(k);
+
+    const v = document.createElement('div');
+    const empty = value == null || value === '' || value === '—';
+    v.className = 'kv-row__v'
+      + (empty ? ' kv-row__v--muted' : '')
+      + (!mono && !empty ? ' kv-row__v--sans' : '')
+      + (wrap ? ' kv-row__v--wrap' : '');
+    v.textContent = empty ? '—' : String(value);
+    row.appendChild(v);
+
+    if (!empty) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'kv-row__copy';
+      btn.dataset.action = 'copy-kv';
+      btn.title = `Copy ${label}`;
+      btn.setAttribute('aria-label', `Copy ${label}`);
+      btn.appendChild(makeIcon('copy', 13));
+      btn.addEventListener('click', () => {
+        copyTextToClipboard(String(value)).then(() => showToast(`${label} copied`)).catch(() => {});
       });
+      row.appendChild(btn);
+    } else {
+      const spacer = document.createElement('span');
+      spacer.className = 'kv-row__copy-spacer';
+      row.appendChild(spacer);
+    }
+    container.appendChild(row);
+    return row;
+  }
+
+  /** Render Identity card (visitor, account, API key). */
+  function renderIdentityCard({ visitorId, accountId, detectedApiKey }) {
+    identityBody.replaceChildren();
+    appendKvRow(identityBody, { label: 'VisitorId', value: visitorId || '—' });
+    appendKvRow(identityBody, { label: 'AccountId', value: accountId == null ? '—' : String(accountId) });
+    appendKvRow(identityBody, { label: 'API key', value: detectedApiKey || '—' });
+    identityCard.hidden = false;
+  }
+
+  /** Render the Metadata card (visitor + account JSON previews). */
+  function renderMetadataCard({ visitorMetadata, accountMetadata }) {
+    metadataBody.replaceChildren();
+    const fields = (meta) => meta && typeof meta === 'object' ? Object.keys(meta).length : 0;
+    const renderSection = (label, meta) => {
+      const count = fields(meta);
+      const row = document.createElement('div');
+      row.className = 'kv-row kv-row--top';
+      const k = document.createElement('div');
+      k.className = 'kv-row__k';
+      k.textContent = label;
+      row.appendChild(k);
+      const v = document.createElement('div');
+      v.className = 'kv-row__v kv-row__v--sans kv-row__v--wrap';
+      if (count === 0) {
+        v.classList.add('kv-row__v--muted');
+        v.textContent = 'none supplied';
+      } else {
+        v.textContent = `${count} field${count === 1 ? '' : 's'}`;
+      }
+      row.appendChild(v);
+      if (count > 0) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'kv-row__copy';
+        btn.dataset.action = 'copy-kv';
+        btn.title = `Copy ${label} metadata`;
+        btn.setAttribute('aria-label', `Copy ${label} metadata`);
+        btn.appendChild(makeIcon('copy', 13));
+        btn.addEventListener('click', () => {
+          copyTextToClipboard(JSON.stringify(meta, null, 2)).then(() => showToast(`${label} metadata copied`)).catch(() => {});
+        });
+        row.appendChild(btn);
+      } else {
+        const spacer = document.createElement('span');
+        spacer.className = 'kv-row__copy-spacer';
+        row.appendChild(spacer);
+      }
+      metadataBody.appendChild(row);
+
+      if (count > 0) {
+        const pre = document.createElement('pre');
+        pre.className = 'kv-json';
+        pre.textContent = JSON.stringify(meta, null, 2);
+        metadataBody.appendChild(pre);
+      }
+    };
+    renderSection('Visitor', visitorMetadata);
+    renderSection('Account', accountMetadata);
+    metadataCard.hidden = false;
+  }
+
+  /** Render the page-snapshot section in the Settings tab. */
+  function renderPageSnapshot(res) {
+    pageSnapshotBody.replaceChildren();
+    const { status, apiKeyFound, snippetOnPage, launcherPresent, launcherAttempted, launcherDataValidated, validatedIn } = res;
+    const yn = (v) => v === true ? 'Yes' : v === false ? 'No' : '—';
+    const launcherDisplay = !launcherAttempted ? 'Not checked' : launcherPresent === true ? 'Found' : 'Not found';
+    const validatedInDisplay = validatedIn === 'launcher' ? 'Pendo Launcher'
+      : validatedIn === 'launcher-beta' ? 'Pendo Launcher Beta'
+      : validatedIn === 'page' ? 'Page' : '—';
+
+    appendKvRow(pageSnapshotBody, { label: 'Pendo present', value: yn(status.pendoPresent), mono: false });
+    appendKvRow(pageSnapshotBody, { label: 'validateInstall', value: yn(status.validatePresent), mono: false });
+    appendKvRow(pageSnapshotBody, { label: 'Agent version', value: status.version || 'unknown' });
+    appendKvRow(pageSnapshotBody, { label: 'API key found', value: yn(apiKeyFound), mono: false });
+    appendKvRow(pageSnapshotBody, { label: 'Detected key', value: status.detectedApiKey || '—' });
+    appendKvRow(pageSnapshotBody, { label: 'Snippet on page', value: yn(snippetOnPage), mono: false });
+    appendKvRow(pageSnapshotBody, { label: 'Pendo Launcher', value: launcherDisplay, mono: false });
+    appendKvRow(pageSnapshotBody, { label: 'Launcher validated', value: yn(launcherDataValidated), mono: false });
+    appendKvRow(pageSnapshotBody, { label: 'Validated in', value: validatedInDisplay, mono: false });
+    appendKvRow(pageSnapshotBody, { label: 'Resource hits', value: String(status.resourceHits.length), mono: false });
+    pageSnapshotCard.hidden = false;
+  }
+
+  /** Render the optional Page facts card on the Logs tab. */
+  function renderPageFacts(res) {
+    pageFactsBody.replaceChildren();
+    const { snippetOnPage, validatedIn } = res;
+    const validatedInDisplay = validatedIn === 'launcher' ? 'Pendo Launcher'
+      : validatedIn === 'launcher-beta' ? 'Pendo Launcher Beta'
+      : validatedIn === 'page' ? 'Active tab' : '—';
+    appendKvRow(pageFactsBody, { label: 'Snippet', value: snippetOnPage ? 'Found' : 'Not found', mono: false });
+    appendKvRow(pageFactsBody, { label: 'Validated in', value: validatedInDisplay, mono: false });
+    appendKvRow(pageFactsBody, { label: 'Lines captured', value: String((res.captured || []).length) });
+    pageFactsCard.hidden = false;
+  }
+
+  /** Render the logs list using the current filter + query state. */
+  function renderLogs() {
+    const captured = (lastContext && lastContext.captured) || [];
+    const errCount = captured.filter(l => l.level === 'error').length;
+    const warnCount = captured.filter(l => l.level === 'warn').length;
+    const infoCount = captured.filter(l => l.level === 'info' || l.level === 'log').length;
+    logCountErr.textContent = String(errCount);
+    logCountWarn.textContent = String(warnCount);
+    logCountInfo.textContent = String(infoCount);
+
+    logFilterErr.setAttribute('aria-pressed', logFilters.error ? 'true' : 'false');
+    logFilterWarn.setAttribute('aria-pressed', logFilters.warn ? 'true' : 'false');
+    logFilterInfo.setAttribute('aria-pressed', logFilters.info ? 'true' : 'false');
+
+    const q = (logQuery || '').toLowerCase();
+    const visible = captured.filter(l => {
+      const lev = l.level === 'error' ? 'error' : l.level === 'warn' ? 'warn' : 'info';
+      if (lev === 'error' && !logFilters.error) return false;
+      if (lev === 'warn' && !logFilters.warn) return false;
+      if (lev === 'info' && !logFilters.info) return false;
+      if (q && !(l.text || '').toLowerCase().includes(q)) return false;
+      return true;
+    });
+
+    logsListEl.replaceChildren();
+    if (!captured.length) {
+      const empty = document.createElement('div');
+      empty.className = 'empty';
+      const ic = document.createElement('div');
+      ic.className = 'empty__icon';
+      ic.appendChild(makeIcon('code', 28));
+      empty.appendChild(ic);
+      const msg = document.createElement('div');
+      msg.textContent = 'No output captured. If you’re on a SPA, try a page where Pendo loads, or reload and run again.';
+      empty.appendChild(msg);
+      logsListEl.appendChild(empty);
+      return;
+    }
+    if (!visible.length) {
+      const empty = document.createElement('div');
+      empty.className = 'empty';
+      const ic = document.createElement('div');
+      ic.className = 'empty__icon';
+      ic.appendChild(makeIcon('code', 28));
+      empty.appendChild(ic);
+      const msg = document.createElement('div');
+      msg.textContent = 'No log lines match your filter.';
+      empty.appendChild(msg);
+      logsListEl.appendChild(empty);
+      return;
     }
 
-    /** Set text of a key-value cell by id; use "—" for null/empty. No-op if element is missing. */
-    function setKV(id, value) {
-      const el = document.getElementById(id);
-      if (el) el.textContent = value == null || value === "" ? "—" : String(value);
+    for (const l of visible) {
+      const div = document.createElement('div');
+      const lev = l.level === 'error' ? 'err' : l.level === 'warn' ? 'warn' : 'info';
+      div.className = `log-line log-line--${lev}`;
+      const lvl = document.createElement('span');
+      lvl.className = 'log-line__lvl';
+      lvl.textContent = lev === 'err' ? '✕' : lev === 'warn' ? '!' : '·';
+      div.appendChild(lvl);
+      const msg = document.createElement('span');
+      msg.className = 'log-line__msg';
+      msg.textContent = l.text;
+      div.appendChild(msg);
+      logsListEl.appendChild(div);
     }
+  }
 
-  let lastContext = null;
+  // ── Filters ──────────────────────────────────────────────────────────────
+  function toggleFilter(level) {
+    if (level === 'error') logFilters.error = !logFilters.error;
+    else if (level === 'warn') logFilters.warn = !logFilters.warn;
+    else if (level === 'info') logFilters.info = !logFilters.info;
+    renderLogs();
+  }
+  logFilterErr.addEventListener('click', () => toggleFilter('error'));
+  logFilterWarn.addEventListener('click', () => toggleFilter('warn'));
+  logFilterInfo.addEventListener('click', () => toggleFilter('info'));
+  logsSearch.addEventListener('input', (e) => { logQuery = e.target.value; renderLogs(); });
 
-  /** Run validation on current tab (or Launcher), update status/summary/advice/logs, optionally fetch AI advice. */
-  document.getElementById('run').addEventListener('click', async () => {
-    activateTab(document.getElementById('tabOutputBtn'));
-    setStatus(statusEl, '', 'Running…');
-    adviceEl.innerHTML = '';
-    logsEl.innerHTML = '';
+  // ── Toast ────────────────────────────────────────────────────────────────
+  function showToast(message) {
+    if (!message) return;
+    toastEl.textContent = message;
+    toastEl.hidden = false;
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { toastEl.hidden = true; }, 1800);
+  }
+
+  // ── Run validation ───────────────────────────────────────────────────────
+  /** Toggle the primary button between idle and running visuals. */
+  function setRunningVisual(running) {
+    if (running) {
+      runBtn.disabled = true;
+      runBtn.classList.add('btn--primary--running');
+      runBtnLabel.replaceChildren();
+      const dots = document.createElement('span');
+      dots.className = 'dots';
+      dots.appendChild(document.createElement('span'));
+      dots.appendChild(document.createElement('span'));
+      dots.appendChild(document.createElement('span'));
+      runBtnLabel.appendChild(dots);
+      runBtnLabel.appendChild(document.createTextNode(' Validating'));
+    } else {
+      runBtn.disabled = false;
+      runBtn.classList.remove('btn--primary--running');
+      runBtnLabel.textContent = 'Validate Pendo Install';
+    }
+  }
+
+  /** Build the hero state from a completed validation result. */
+  function deriveHeroState(res) {
+    const { status, captured, snippetOnPage, launcherPresent, launcherAttempted, launcherDataValidated, validatedIn } = res;
+    const originNote = validatedIn === 'launcher' ? ' (via Pendo Launcher)'
+      : validatedIn === 'launcher-beta' ? ' (via Pendo Launcher Beta)' : '';
+    if (!snippetOnPage && launcherAttempted && launcherPresent === false) {
+      return { state: 'err', title: 'Install not detected', sub: 'Snippet and Pendo Launcher are both missing on this page.' };
+    }
+    if (!snippetOnPage && launcherPresent === true && launcherDataValidated === false) {
+      return { state: 'warn', title: 'Launcher installed', sub: 'No agent data on this tab. Open the application where the Launcher injects Pendo.' };
+    }
+    if (!status.pendoPresent) {
+      return { state: 'err', title: 'Pendo not found', sub: 'window.pendo is missing' + originNote + '.' };
+    }
+    if (!status.validatePresent) {
+      return { state: 'warn', title: 'No validateInstall()', sub: 'Agent found but the validateInstall() helper is unavailable' + originNote + '.' };
+    }
+    const errCount = captured.filter(l => l.level === 'error').length;
+    const warnCount = captured.filter(l => l.level === 'warn').length;
+    if (errCount > 0) return { state: 'err', title: `${errCount} error${errCount === 1 ? '' : 's'}`, sub: 'validateInstall() reported errors' + originNote + '.' };
+    if (warnCount > 0) return { state: 'warn', title: `${warnCount} warning${warnCount === 1 ? '' : 's'}`, sub: 'Install works, but there are recommendations' + originNote + '.' };
+    return { state: 'ok', title: 'Install validated', sub: 'All checks passed' + originNote + '.' };
+  }
+
+  /** Reset Status tab UI before a new run. */
+  function resetStatusUi() {
+    quickStats.hidden = true;
+    checksCard.hidden = true;
+    identityCard.hidden = true;
+    metadataCard.hidden = true;
+    pageFactsCard.hidden = true;
+    pageSnapshotCard.hidden = true;
+    statusEmpty.hidden = true;
+    statusTabCount.hidden = true;
+    logsTabCount.hidden = true;
+    checkGroupsEl.replaceChildren();
+    identityBody.replaceChildren();
+    metadataBody.replaceChildren();
+    pageFactsBody.replaceChildren();
+    pageSnapshotBody.replaceChildren();
+    logsListEl.replaceChildren();
+  }
+
+  runBtn.addEventListener('click', async () => {
+    activateTab('status');
+    runState = 'running';
+    setRunningVisual(true);
+    resetStatusUi();
+    setStatusHero({ state: 'running', title: 'Validating…', sub: 'Running pendo.validateInstall() in the active tab.' });
+    renderStatusHeroTime(null);
 
     try {
       const res = await runInPage();
       if (!res || !res.status) {
-        setStatus(statusEl, 'err', 'Failed');
+        setStatusHero({ state: 'err', title: 'Failed', sub: 'Validation did not return a result.' });
         return;
       }
+
       const { status, captured, advice, checks, cspMeta, apiKeyFound, hasError, hasWarn, origin, pageUrl, snippetOnPage, launcherPresent, launcherAttempted, launcherDataValidated, validatedIn } = res;
 
-      const originNote = validatedIn === 'launcher' ? ' (via Pendo Launcher)' : validatedIn === 'launcher-beta' ? ' (via Pendo Launcher Beta)' : '';
+      const hero = deriveHeroState(res);
+      setStatusHero(hero);
+      const now = new Date();
+      renderStatusHeroTime(now);
 
-      // Status badge: explicit when snippet and Launcher both absent
-      if (!snippetOnPage && launcherAttempted && launcherPresent === false) {
-        setStatus(statusEl, 'err', 'Pendo not found (snippet and Launcher)');
-      } else if (!snippetOnPage && launcherPresent === true && launcherDataValidated === false) {
-        setStatus(statusEl, 'warn', 'Launcher installed (no data on this tab)');
-      } else if (!status.pendoPresent) {
-        setStatus(statusEl, 'err', 'Pendo not found' + originNote);
-      } else if (!status.validatePresent) setStatus(statusEl, 'warn', 'No validateInstall()' + originNote);
-      else if (captured.some(l => l.level === 'error')) setStatus(statusEl, 'err', 'Errors found' + originNote);
-      else if (captured.some(l => l.level === 'warn')) setStatus(statusEl, 'warn', 'Warnings found' + originNote);
-      else setStatus(statusEl, 'ok', 'Looks healthy' + originNote);
-
-      // Page status: snippet, Launcher, validated-in context
-      setKV('kv_snippet', snippetOnPage === true ? 'Yes' : snippetOnPage === false ? 'No' : '—');
-      const launcherDisplay = !launcherAttempted ? 'Not checked' : launcherPresent === true ? 'Found' : 'Not found';
-      setKV('kv_launcher', launcherDisplay);
-      setKV('kv_launcher_validated', launcherDataValidated === true ? 'Yes' : launcherAttempted ? 'No' : '—');
-      const validatedInDisplay = validatedIn === 'launcher' ? 'Pendo Launcher' : validatedIn === 'launcher-beta' ? 'Pendo Launcher Beta' : validatedIn === 'page' ? 'Page' : '—';
-      setKV('kv_validated_in', validatedInDisplay);
-      setKV('kv_pendo', status.pendoPresent);
-      setKV('kv_validate', status.validatePresent);
-      setKV('kv_version', status.version || 'unknown');
-      setKV('kv_keyfound', apiKeyFound);
-      setKV('kv_detected', status.detectedApiKey || 'unknown');
-      setKV('kv_visitor', status.visitorId || 'not set');
-      setKV('kv_account', (status.accountId==null?'not set':status.accountId));
-      setKV('kv_visitor_meta', status.visitorMetadata ? JSON.stringify(status.visitorMetadata, null, 1) : '—');
-      setKV('kv_account_meta', status.accountMetadata ? JSON.stringify(status.accountMetadata, null, 1) : '—');
-      setKV('kv_hits', status.resourceHits.length);
-      setKV('kv_lines', captured.length);
-
-      let adviceList = normalizeAdviceList(advice);
       let checksToRender = (checks || []).slice();
       if (validatedIn === 'launcher' || validatedIn === 'launcher-beta') {
         checksToRender.push('Pendo Launcher (browser extension) present and validated.');
       }
+      let adviceList = advice || [];
       if (snippetOnPage === false && launcherPresent === false && launcherAttempted) {
         adviceList = adviceList.concat([{ text: 'Ensure the snippet is installed on this page, or open the Pendo Launcher (or Beta) extension in a tab.', source: 'builtin', supportKey: 'installGuide' }]);
       }
-      renderAdvice(checksToRender, adviceList);
 
-      if (captured.length === 0) {
-        logsEl.innerHTML = `<div class="muted">No output captured. If you’re on a SPA, try a page where Pendo loads, or reload and run again.</div>`;
-      } else {
-        captured.forEach(({ level, text }) => {
-          const div = document.createElement('div');
-          const badgeClass = level === 'error' ? 'err' : level === 'warn' ? 'warn' : 'ok';
-          div.className = `log-line ${badgeClass}`;
-          const badge = document.createElement('span');
-          badge.className = `badge ${badgeClass}`;
-          badge.textContent = level;
-          const msg = document.createElement('span');
-          msg.className = 'log-text';
-          msg.textContent = text;
-          div.appendChild(badge);
-          div.appendChild(msg);
-          logsEl.appendChild(div);
-        });
-      }
+      const buckets = classifyAdvice(adviceList, captured, checksToRender);
+      renderCheckGroups(buckets);
 
-      // Build report context (include two-phase fields for export)
+      renderQuickStats({
+        errCount: buckets.err.length,
+        warnCount: buckets.warn.length,
+        okCount: buckets.ok.length,
+        logCount: captured.length
+      });
+
+      renderIdentityCard({
+        visitorId: status.visitorId,
+        accountId: status.accountId,
+        detectedApiKey: status.detectedApiKey
+      });
+      renderMetadataCard({
+        visitorMetadata: status.visitorMetadata,
+        accountMetadata: status.accountMetadata
+      });
+
+      renderPageSnapshot(res);
+      renderPageFacts(res);
+      renderLogs();
+
       lastContext = {
         pageUrl: pageUrl || 'unknown',
-        timestamp: toIso(new Date()),
+        timestamp: toIso(now),
         status, captured, advice: adviceList, checks: checksToRender, cspMeta: cspMeta || '', apiKeyFound, origin: validatedIn || origin || 'page',
         hasError: !!hasError, hasWarn: !!hasWarn,
         snippetOnPage, launcherPresent, launcherAttempted, launcherDataValidated: !!launcherDataValidated, validatedIn: validatedIn || 'page', launcherUrl: res.launcherUrl
       };
+
+      exportMenuBtn.disabled = false;
+      exportMenuBtn.title = 'Export results';
 
       const failureDetected = !status.validatePresent || hasError || hasWarn;
       if (failureDetected) {
@@ -970,12 +1568,22 @@ async function getAiConfig() {
         if (aiAdvice && aiAdvice.length) {
           adviceList = adviceList.concat(aiAdvice);
           lastContext.advice = adviceList;
-          renderAdvice(checksToRender, adviceList);
+          const newBuckets = classifyAdvice(adviceList, captured, checksToRender);
+          renderCheckGroups(newBuckets);
+          renderQuickStats({
+            errCount: newBuckets.err.length,
+            warnCount: newBuckets.warn.length,
+            okCount: newBuckets.ok.length,
+            logCount: captured.length
+          });
         }
       }
     } catch (e) {
-      setStatus(statusEl, 'err', 'Failed');
       console.error(e);
+      setStatusHero({ state: 'err', title: 'Validation failed', sub: (e && e.message) || 'Unknown error.' });
+    } finally {
+      runState = 'done';
+      setRunningVisual(false);
     }
   });
 
@@ -991,38 +1599,54 @@ async function getAiConfig() {
     }
   }
 
-  /** Enable Pendo Debugger: calls pendo.enableDebugging() in the page. See https://web-sdk.pendo.io/public/debugging/ */
-  document.getElementById('launchDebugger').addEventListener('click', async () => {
-    const statusEl = document.getElementById('status');
-    setStatus(statusEl, '', '…');
+  /** Enable Pendo Debugger: calls pendo.enableDebugging() in the page. */
+  launchDebuggerBtn.addEventListener('click', async () => {
     const res = await runInActiveTab(enableDebuggingInPage);
-    if (res.ok) setStatus(statusEl, 'ok', 'Debugger enabled');
-    else setStatus(statusEl, 'err', res.message || 'Failed');
+    if (res.ok) showToast('Debugger enabled');
+    else showToast(res.message || 'Debugger failed');
   });
 
+  // ── Export menu ──────────────────────────────────────────────────────────
+  /** Toggle the export dropdown, only when a validation result exists. */
+  function setExportMenuOpen(open) {
+    exportMenu.hidden = !open;
+    exportMenuBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+  exportMenuBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (exportMenuBtn.disabled) return;
+    setExportMenuOpen(exportMenu.hidden);
+  });
+  document.addEventListener('click', (e) => {
+    if (exportMenu.hidden) return;
+    if (e.target.closest('#exportMenu') || e.target.closest('#exportMenuBtn')) return;
+    setExportMenuOpen(false);
+  });
 
-  /** Export last run as Markdown report file. */
-  document.getElementById('exportMd').addEventListener('click', async () => {
+  exportMdBtn.addEventListener('click', () => {
+    setExportMenuOpen(false);
     if (!lastContext) return;
     try {
       const md = buildMarkdownReport(lastContext);
-      const host = (()=>{ try { return (new URL(lastContext.pageUrl)).host; } catch { return 'page'; } })().replace(/[^a-z0-9\.-]/gi,'_');
+      const host = (() => { try { return (new URL(lastContext.pageUrl)).host; } catch { return 'page'; } })().replace(/[^a-z0-9\.-]/gi, '_');
       const fname = `pendo-validate-report_${host}_${Date.now()}.md`;
       downloadBlob(fname, 'text/markdown', md);
-    } catch (e) { console.error(e); }
-  });
-  /** Export last run as raw JSON file. */
-  document.getElementById('exportJson').addEventListener('click', async () => {
-    if (!lastContext) return;
-    try {
-      const j = buildJsonReport(lastContext);
-      const host = (()=>{ try { return (new URL(lastContext.pageUrl)).host; } catch { return 'page'; } })().replace(/[^a-z0-9\.-]/gi,'_');
-      const fname = `pendo-validate-report_${host}_${Date.now()}.json`;
-      downloadBlob(fname, 'application/json', j);
-    } catch (e) { console.error(e); }
+      showToast('Markdown report downloaded');
+    } catch (e) { console.error(e); showToast('Export failed'); }
   });
 
-  /** Clipboard API is blocked by Permissions Policy in some extension contexts (see crbug.com/414348233); execCommand fallback works with user gesture. */
+  exportCopyBtn.addEventListener('click', async () => {
+    setExportMenuOpen(false);
+    if (!lastContext) return;
+    try {
+      const text = buildPlainSummary(lastContext);
+      await copyTextToClipboard(text);
+      showToast('Summary copied');
+    } catch (e) { console.error(e); showToast('Copy failed'); }
+  });
+
+  // ── Clipboard ────────────────────────────────────────────────────────────
+  /** Clipboard API is blocked by Permissions Policy in some extension contexts; execCommand fallback works with user gesture. */
   async function copyTextToClipboard(text) {
     const payload = text ?? '';
     try {
@@ -1030,9 +1654,7 @@ async function getAiConfig() {
         await navigator.clipboard.writeText(payload);
         return 'clipboard-api';
       }
-    } catch (_) {
-      // Fall through to execCommand fallback
-    }
+    } catch (_) { /* fall through to execCommand */ }
     const ta = document.createElement('textarea');
     ta.value = payload;
     ta.setAttribute('readonly', '');
@@ -1053,55 +1675,32 @@ async function getAiConfig() {
     }
   }
 
-  /** Copy advice list text to clipboard (prefer structured data; DOM li.textContent can merge icon + body). */
-  document.getElementById('copyAdvice').onclick = () => {
+  copyAdviceBtn.addEventListener('click', () => {
     let items = '';
     if (lastContext) {
       const lines = [];
-      (lastContext.checks || []).forEach((c) => lines.push(`${c}`));
-      normalizeAdviceList(lastContext.advice || []).forEach((a) => lines.push(a.text));
+      (lastContext.checks || []).forEach(c => lines.push(`${c}`));
+      normalizeAdviceList(lastContext.advice || []).forEach(a => lines.push(a.text));
       items = lines.join('\n');
     } else {
-      items = Array.from(adviceEl.querySelectorAll('li')).map((li) => li.innerText.trim()).join('\n\n');
+      items = Array.from(checkGroupsEl.querySelectorAll('.check-item')).map(el => el.innerText.trim()).join('\n');
     }
-    copyTextToClipboard(items || 'No advice.').catch((err) => console.warn('Copy advice failed:', err));
-  };
-  /** Copy captured log lines to clipboard (explicit [level] lines — parent textContent merges badge+body into "infoMessage"). */
-  document.getElementById('copyLogs').onclick = () => {
-    let all = '';
-    if (lastContext && Array.isArray(lastContext.captured) && lastContext.captured.length) {
-      all = lastContext.captured.map(({ level, text }) => `[${level}] ${text}`).join('\n');
-    } else {
-      all = Array.from(document.querySelectorAll('#logs .log-line')).map((div) => {
-        const levEl = div.querySelector(':scope > .badge');
-        const msgEl = div.querySelector(':scope > .log-text');
-        const level = levEl ? levEl.textContent.trim() : 'log';
-        const text = msgEl ? msgEl.textContent.trim() : div.textContent.trim();
-        return `[${level}] ${text}`;
-      }).join('\n');
-    }
-    copyTextToClipboard(all || 'No logs captured.').catch((err) => console.warn('Copy logs failed:', err));
-  };
+    copyTextToClipboard(items || 'No advice.')
+      .then(() => showToast('Advice copied'))
+      .catch(err => { console.warn('Copy advice failed:', err); showToast('Copy failed'); });
+  });
 
-  // --- Tab strip controller ---
-  const tabBtns = Array.from(document.querySelectorAll('.tabs__btn'));
-  const tabPanels = Array.from(document.querySelectorAll('.tab-panel'));
-  function activateTab(btn) {
-    if (!btn) return;
-    const targetId = btn.getAttribute('aria-controls');
-    tabBtns.forEach(b => b.setAttribute('aria-selected', b === btn ? 'true' : 'false'));
-    tabPanels.forEach(p => { p.hidden = p.id !== targetId; });
-  }
-  tabBtns.forEach(btn => btn.addEventListener('click', () => activateTab(btn)));
+  copyLogsBtn.addEventListener('click', () => {
+    const captured = (lastContext && lastContext.captured) || [];
+    const text = captured.length
+      ? captured.map(({ level, text }) => `[${level}] ${text}`).join('\n')
+      : 'No logs captured.';
+    copyTextToClipboard(text)
+      .then(() => showToast('Logs copied'))
+      .catch(err => { console.warn('Copy logs failed:', err); showToast('Copy failed'); });
+  });
 
-  // --- AI Settings panel ---
-  const aiPanel = document.getElementById('aiSettingsPanel');
-  const aiProviderSelect = document.getElementById('aiProviderSelect');
-  const aiApiKeyInput = document.getElementById('aiApiKeyInput');
-  const aiKeyToggle = document.getElementById('aiKeyToggleVisibility');
-  const aiSaveBtn = document.getElementById('aiSettingsSave');
-  const aiSaveStatus = document.getElementById('aiSettingsStatus');
-
+  // ── AI Settings panel ────────────────────────────────────────────────────
   getAiConfig().then(cfg => {
     if (cfg.aiProvider) aiProviderSelect.value = cfg.aiProvider;
     if (cfg.aiApiKey) aiApiKeyInput.value = cfg.aiApiKey;
@@ -1118,7 +1717,11 @@ async function getAiConfig() {
     const apiKey = aiApiKeyInput.value.trim();
     chrome.storage.local.set({ aiProvider: provider, aiApiKey: apiKey }, () => {
       aiSaveStatus.textContent = 'Saved.';
+      showToast('AI settings saved');
       setTimeout(() => { aiSaveStatus.textContent = ''; }, 2000);
     });
   });
+
+  // Show the empty state on the Status tab until a run completes.
+  if (runState === 'idle') statusEmpty.hidden = false;
 });
