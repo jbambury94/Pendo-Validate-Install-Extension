@@ -125,18 +125,25 @@ const SUPPORT_LABELS = {
 const ERR_SUPPORT_KEYS = new Set(['installGuide', 'installComponents', 'agentSettings']);
 
 // ========== Advice normalization ==========
-/** Normalize advice items to { text, source, supportUrl, supportKey } and filter empty. Resolves supportKey to supportUrl. */
+/** Normalize advice items to { text, source, supportUrl, supportKey, relatedSupportUrls } and filter empty. Resolves supportKey (and optional supportKeys array) to URLs. */
 function normalizeAdviceList(advice = []) {
   return advice.map(a => {
-    let text, source, supportUrl, supportKey;
+    let text, source, supportUrl, supportKey, relatedSupportUrls = [];
     if (typeof a === 'string') { text = a; source = 'builtin'; supportUrl = PENDO_SUPPORT.helpCenter; supportKey = null; }
     else if (a && typeof a === 'object') {
       text = a.text || '';
       source = a.source || 'builtin';
       supportKey = a.supportKey || null;
       supportUrl = a.supportUrl || (supportKey && PENDO_SUPPORT[supportKey]) || (source === 'ai' ? PENDO_SUPPORT.technicalSupport : PENDO_SUPPORT.helpCenter);
+      if (Array.isArray(a.supportKeys)) {
+        for (const k of a.supportKeys) {
+          if (k === supportKey) continue;
+          const url = PENDO_SUPPORT[k];
+          if (url) relatedSupportUrls.push({ url, label: SUPPORT_LABELS[k] || k });
+        }
+      }
     } else { text = String(a); source = 'builtin'; supportUrl = PENDO_SUPPORT.helpCenter; supportKey = null; }
-    return { text, source, supportUrl, supportKey };
+    return { text, source, supportUrl, supportKey, relatedSupportUrls };
   }).filter(a => a.text);
 }
 

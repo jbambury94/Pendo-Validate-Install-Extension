@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { normalizeAdviceList, PENDO_SUPPORT } from './helpers.js'
+import { normalizeAdviceList, PENDO_SUPPORT, SUPPORT_LABELS } from './helpers.js'
 
 describe('normalizeAdviceList', () => {
   it('returns empty array for empty input', () => {
@@ -18,6 +18,7 @@ describe('normalizeAdviceList', () => {
       source: 'builtin',
       supportUrl: PENDO_SUPPORT.helpCenter,
       supportKey: null,
+      relatedSupportUrls: [],
     })
   })
 
@@ -81,5 +82,57 @@ describe('normalizeAdviceList', () => {
   it('returns supportKey as null for plain string input', () => {
     const result = normalizeAdviceList(['plain text'])
     expect(result[0].supportKey).toBeNull()
+  })
+
+  it('always includes relatedSupportUrls array (empty by default)', () => {
+    const result = normalizeAdviceList([{ text: 'tip', supportKey: 'csp' }])
+    expect(Array.isArray(result[0].relatedSupportUrls)).toBe(true)
+    expect(result[0].relatedSupportUrls).toHaveLength(0)
+  })
+
+  it('populates relatedSupportUrls from supportKeys array', () => {
+    const result = normalizeAdviceList([{
+      text: 'SPA with GTM',
+      supportKey: 'spa',
+      supportKeys: ['spa', 'gtm', 'csp'],
+    }])
+    expect(result[0].supportUrl).toBe(PENDO_SUPPORT.spa)
+    expect(result[0].relatedSupportUrls).toEqual([
+      { url: PENDO_SUPPORT.gtm, label: SUPPORT_LABELS.gtm },
+      { url: PENDO_SUPPORT.csp, label: SUPPORT_LABELS.csp },
+    ])
+  })
+
+  it('skips unknown keys in supportKeys array', () => {
+    const result = normalizeAdviceList([{
+      text: 'test',
+      supportKey: 'csp',
+      supportKeys: ['csp', 'nonExistentKey', 'gtm'],
+    }])
+    expect(result[0].relatedSupportUrls).toEqual([
+      { url: PENDO_SUPPORT.gtm, label: SUPPORT_LABELS.gtm },
+    ])
+  })
+
+  it('does not duplicate primary supportKey in relatedSupportUrls', () => {
+    const result = normalizeAdviceList([{
+      text: 'test',
+      supportKey: 'gtm',
+      supportKeys: ['gtm', 'iframe'],
+    }])
+    const relatedKeys = result[0].relatedSupportUrls.map(r => r.url)
+    expect(relatedKeys).not.toContain(PENDO_SUPPORT.gtm)
+    expect(relatedKeys).toContain(PENDO_SUPPORT.iframe)
+  })
+
+  it('legacy single-key form still works identically with empty relatedSupportUrls', () => {
+    const result = normalizeAdviceList([{ text: 'Fix CSP', supportKey: 'csp' }])
+    expect(result[0]).toEqual({
+      text: 'Fix CSP',
+      source: 'builtin',
+      supportUrl: PENDO_SUPPORT.csp,
+      supportKey: 'csp',
+      relatedSupportUrls: [],
+    })
   })
 })

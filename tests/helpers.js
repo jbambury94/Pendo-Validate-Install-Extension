@@ -55,7 +55,7 @@ export const ERR_SUPPORT_KEYS = new Set(['installGuide', 'installComponents', 'a
 
 export function normalizeAdviceList(advice = []) {
   return advice.map(a => {
-    let text, source, supportUrl, supportKey
+    let text, source, supportUrl, supportKey, relatedSupportUrls = []
     if (typeof a === 'string') {
       text = a; source = 'builtin'; supportUrl = PENDO_SUPPORT.helpCenter; supportKey = null
     } else if (a && typeof a === 'object') {
@@ -65,10 +65,17 @@ export function normalizeAdviceList(advice = []) {
       supportUrl = a.supportUrl
         || (a.supportKey && PENDO_SUPPORT[a.supportKey])
         || (source === 'ai' ? PENDO_SUPPORT.technicalSupport : PENDO_SUPPORT.helpCenter)
+      if (Array.isArray(a.supportKeys)) {
+        for (const k of a.supportKeys) {
+          if (k === supportKey) continue
+          const url = PENDO_SUPPORT[k]
+          if (url) relatedSupportUrls.push({ url, label: SUPPORT_LABELS[k] || k })
+        }
+      }
     } else {
       text = String(a); source = 'builtin'; supportUrl = PENDO_SUPPORT.helpCenter; supportKey = null
     }
-    return { text, source, supportUrl, supportKey }
+    return { text, source, supportUrl, supportKey, relatedSupportUrls }
   }).filter(a => a.text)
 }
 
