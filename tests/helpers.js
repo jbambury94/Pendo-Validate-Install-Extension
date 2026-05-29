@@ -15,27 +15,147 @@ export const PENDO_SUPPORT = {
   spa:              'https://support.pendo.io/hc/en-us/articles/360031862272-Install-Pendo-on-a-single-page-web-application',
   helpCenter:       'https://support.pendo.io/hc/en-us',
   technicalSupport: 'https://support.pendo.io/hc/en-us/articles/360034163971-Get-help-with-Pendo-from-Technical-Support',
+  gtm:              'https://support.pendo.io/hc/en-us/articles/360032201711',
+  segment:          'https://support.pendo.io/hc/en-us/articles/360031870352',
+  iframe:           'https://support.pendo.io/hc/en-us/articles/17606930575387',
+  multiDomain:      'https://support.pendo.io/hc/en-us/articles/14090652290587',
+  sandbox:          'https://support.pendo.io/hc/en-us/articles/360031862352',
+  agentDebug:       'https://support.pendo.io/hc/en-us/articles/360034229512',
+  configureMetadata:'https://support.pendo.io/hc/en-us/articles/360031832072',
+  signedMetadata:   'https://support.pendo.io/hc/en-us/articles/360039616892',
+  hostnameAllowlist:'https://support.pendo.io/hc/en-us/articles/16101373319707',
+  launcherPlan:     'https://support.pendo.io/hc/en-us/articles/21163862516507',
+  troubleshooting:  'https://support.pendo.io/hc/en-us/articles/10033806003483',
+}
+
+export const SUPPORT_LABELS = {
+  installGuide: 'Install guide',
+  installComponents: 'Snippet components',
+  agentSettings: 'Pendo agent settings',
+  identifyVisitors: 'Identify visitors & metadata',
+  chooseIdsMetadata: 'Choose IDs & metadata',
+  csp: 'Content Security Policy',
+  spa: 'SPA install guide',
+  helpCenter: 'Pendo Help Center',
+  technicalSupport: 'Pendo Technical Support',
+  gtm: 'Google Tag Manager install',
+  segment: 'Twilio Segment install',
+  iframe: 'Iframe install options',
+  multiDomain: 'Multi-domain install',
+  sandbox: 'Dev & testing environments',
+  agentDebug: 'Web SDK debugger',
+  configureMetadata: 'Configure metadata',
+  signedMetadata: 'Signed metadata (JWT)',
+  hostnameAllowlist: 'Hostname allowlist',
+  launcherPlan: 'Launcher planning guide',
+  troubleshooting: 'Pendo not displaying',
+}
+
+export const ERR_SUPPORT_KEYS = new Set(['installGuide', 'installComponents', 'agentSettings'])
+
+export function stripEmbeddedHelpUrl(text) {
+  if (!text) return text
+  return String(text)
+    .replace(/\s*(?:[A-Z][a-z]+\s+more[^.:]*?:\s*)?https?:\/\/help\.pendo\.io\/\S+/gi, '')
+    .replace(/\s+$/, '')
+}
+
+export function inferSupportKeyFromText(text) {
+  if (!text) return null
+  const s = String(text)
+  const rules = [
+    { re: /no\s+matching\s+api\s+key/i,                                               key: 'installComponents' },
+    { re: /api\s+key/i,                                                               key: 'installComponents' },
+    { re: /VISITOR[-\s_]?UNIQUE[-\s_]?ID|treated as "?anonymous"?|not identified/i,    key: 'chooseIdsMetadata' },
+    { re: /not associated with an account|account(?:Id)? (?:is )?(?:not set|missing|not found)/i, key: 'chooseIdsMetadata' },
+    { re: /no\s+account\s+metadata/i,                                                 key: 'configureMetadata' },
+    { re: /no\s+visitor\s+metadata|visitor metadata fields|metadata field/i,          key: 'chooseIdsMetadata' },
+    { re: /jwt|signed metadata/i,                                                     key: 'signedMetadata' },
+    { re: /content\s*security\s*policy|\bcsp\b|refused to connect.*pendo|blocked by csp/i, key: 'csp' },
+    { re: /iframe|frame-src|child frame/i,                                            key: 'iframe' },
+    { re: /single[-\s]?page|spa|route change|router/i,                                key: 'spa' },
+    { re: /google tag manager|\bgtm\b/i,                                              key: 'gtm' },
+    { re: /\bsegment\b|twilio/i,                                                      key: 'segment' },
+    { re: /staging|sandbox|dev environment|test environment|exclude list/i,           key: 'sandbox' },
+    { re: /pendo\.enableDebugging|sdk debugger|debug(?:ger|ging)/i,                   key: 'agentDebug' },
+    { re: /pendo is not defined|pendo\.validateInstall is not a function|isn['’]t displaying/i, key: 'troubleshooting' },
+    { re: /pendo\.initialize|initialize\(\) (?:was )?not called|initialize is not called/i, key: 'installGuide' },
+    { re: /agent version|outdated agent|update.*agent/i,                              key: 'agentSettings' },
+    { re: /launcher/i,                                                                key: 'launcherPlan' },
+    { re: /firewall|allow ?list|whitelist|hostname/i,                                 key: 'hostnameAllowlist' },
+    { re: /multi[-\s]?domain|subdomain/i,                                             key: 'multiDomain' },
+  ]
+  for (const r of rules) {
+    if (r.re.test(s)) return r.key
+  }
+  return null
 }
 
 export function normalizeAdviceList(advice = []) {
   return advice.map(a => {
-    let text, source, supportUrl
+    let text, source, supportUrl, supportKey, relatedSupportUrls = []
     if (typeof a === 'string') {
-      text = a; source = 'builtin'; supportUrl = PENDO_SUPPORT.helpCenter
+      text = a; source = 'builtin'; supportUrl = PENDO_SUPPORT.helpCenter; supportKey = null
     } else if (a && typeof a === 'object') {
       text = a.text || ''
       source = a.source || 'builtin'
-      supportUrl = a.supportUrl
-        || (a.supportKey && PENDO_SUPPORT[a.supportKey])
-        || (source === 'ai' ? PENDO_SUPPORT.technicalSupport : PENDO_SUPPORT.helpCenter)
+      supportKey = a.supportKey || null
+      const resolvedFromKey = supportKey && PENDO_SUPPORT[supportKey]
+      if (a.supportUrl && !(source === 'ai' && a.supportUrl === PENDO_SUPPORT.technicalSupport)) {
+        supportUrl = a.supportUrl
+      } else if (resolvedFromKey) {
+        supportUrl = resolvedFromKey
+      } else {
+        const inferred = inferSupportKeyFromText(text)
+        if (inferred && PENDO_SUPPORT[inferred]) {
+          supportKey = inferred
+          supportUrl = PENDO_SUPPORT[inferred]
+        } else if (source === 'ai') {
+          supportUrl = PENDO_SUPPORT.technicalSupport
+        } else {
+          supportUrl = PENDO_SUPPORT.troubleshooting
+        }
+      }
+      if (Array.isArray(a.supportKeys)) {
+        for (const k of a.supportKeys) {
+          if (k === supportKey) continue
+          const url = PENDO_SUPPORT[k]
+          if (url) relatedSupportUrls.push({ url, label: SUPPORT_LABELS[k] || k })
+        }
+      }
     } else {
-      text = String(a); source = 'builtin'; supportUrl = PENDO_SUPPORT.helpCenter
+      text = String(a); source = 'builtin'; supportUrl = PENDO_SUPPORT.helpCenter; supportKey = null
     }
-    return { text, source, supportUrl }
+    return { text, source, supportUrl, supportKey, relatedSupportUrls }
   }).filter(a => a.text)
 }
 
-export function buildMarkdownReport(context) {
+export function selectRelatedReading(signals, max, findKbByTopicsFn) {
+  if (typeof findKbByTopicsFn !== 'function') return []
+  if (!signals) return []
+  if (max === undefined || max === null) max = 6
+  const topics = []
+  if (!signals.pendoPresent)                       topics.push('install', 'snippet', 'troubleshooting')
+  if (signals.pendoPresent && !signals.validatePresent) topics.push('agent', 'troubleshooting')
+  if (!signals.visitorId)                          topics.push('identity')
+  if (signals.accountId == null)                   topics.push('identity', 'account')
+  if (!signals.hasVisitorMeta)                     topics.push('metadata')
+  if (!signals.hasAccountMeta && signals.hasVisitorMeta) topics.push('metadata', 'account')
+  if (signals.cspIssue)                            topics.push('csp', 'security', 'network')
+  if (signals.noResourceHits && signals.pendoPresent)  topics.push('network', 'csp')
+  if (signals.isSpa)                               topics.push('spa')
+  if (signals.frameworkHint)                        topics.push('spa', 'framework-' + signals.frameworkHint)
+  if (signals.isIframe)                            topics.push('iframe')
+  if (signals.hasGtm)                              topics.push('gtm', 'tag-manager')
+  if (signals.hasSegment)                          topics.push('segment', 'tag-manager')
+  if (signals.isSandbox)                           topics.push('sandbox', 'testing')
+  if (signals.launcherPresent)                     topics.push('launcher')
+  if (signals.agentVersionOld)                     topics.push('agent', 'configuration')
+  if (signals.apiKeyMissing)                       topics.push('api-key', 'install')
+  return findKbByTopicsFn(topics, max)
+}
+
+export function buildMarkdownReport(context, selectRelatedReadingFn) {
   const { pageUrl, timestamp, status, captured, advice, checks, cspMeta, apiKeyFound, origin, snippetOnPage, launcherPresent, launcherAttempted, launcherDataValidated, validatedIn, launcherUrl } = context
   const adviceList = normalizeAdviceList(advice || [])
   const errors = (captured || []).filter(l => l.level === 'error')
@@ -101,7 +221,7 @@ export function buildMarkdownReport(context) {
       lines.push(`- ${l.text} — [Pendo Help: Installation & troubleshooting](${PENDO_SUPPORT.installGuide})`)
     })
     if (errors.length === 0 && hasError) {
-      lines.push(`- Validation reported issues. See Advice and Captured Output below. — [Pendo Help Center](${PENDO_SUPPORT.helpCenter})`)
+      lines.push(`- Validation reported issues. See Advice and Captured Output below. — [Pendo isn't displaying — troubleshooting](${PENDO_SUPPORT.troubleshooting})`)
     }
   }
   lines.push("")
@@ -122,6 +242,24 @@ export function buildMarkdownReport(context) {
   if (!adviceList.length && (!checks || !checks.length)) lines.push(`No advice items.`)
   lines.push("")
 
+  if (typeof selectRelatedReadingFn === 'function') {
+    const signals = {
+      pendoPresent: status.pendoPresent,
+      validatePresent: status.validatePresent,
+      visitorId: status.visitorId,
+      accountId: status.accountId,
+      cspIssue: adviceList.some(a => a.supportKey === 'csp'),
+      noResourceHits: status.resourceHits && status.resourceHits.length === 0,
+      apiKeyMissing: !apiKeyFound,
+    }
+    const reading = selectRelatedReadingFn(signals, 6)
+    if (reading && reading.length) {
+      lines.push(`## Related reading`)
+      reading.forEach(r => lines.push(`- [${r.title}](${r.url})`))
+      lines.push("")
+    }
+  }
+
   lines.push(`## Captured Output`)
   if (!captured || !captured.length) lines.push(`No output captured.`)
   else captured.forEach(l => lines.push(`- [${l.level}] ${l.text}`))
@@ -133,7 +271,126 @@ export function buildJsonReport(context) {
   return JSON.stringify(context, null, 2)
 }
 
-export function buildAiPrompt(context) {
+export function buildPlainSummary(context) {
+  const { pageUrl, timestamp, status, captured, advice, checks, snippetOnPage, launcherPresent, launcherAttempted, launcherDataValidated, validatedIn } = context
+  const errCount = (captured || []).filter(l => l.level === 'error').length
+  const warnCount = (captured || []).filter(l => l.level === 'warn').length
+  const okCount = (checks || []).length
+  let statusLine = 'Looks healthy'
+  if (!snippetOnPage && launcherAttempted && launcherPresent === false) statusLine = 'Pendo not found (snippet and Launcher)'
+  else if (!snippetOnPage && launcherPresent === true && launcherDataValidated === false) statusLine = 'Launcher installed (no data on this tab)'
+  else if (!status.pendoPresent) statusLine = 'Pendo not found'
+  else if (!status.validatePresent) statusLine = 'No validateInstall()'
+  else if (errCount > 0) statusLine = 'Errors found'
+  else if (warnCount > 0) statusLine = 'Warnings found'
+
+  const lines = []
+  lines.push(`Pendo Validate — ${statusLine}`)
+  lines.push(`Page: ${pageUrl || 'unknown'}`)
+  lines.push(`Timestamp: ${timestamp}`)
+  lines.push(`Validated in: ${validatedIn || 'page'}`)
+  lines.push(`Errors: ${errCount}   Warnings: ${warnCount}   Passing: ${okCount}`)
+  lines.push('')
+  if (checks && checks.length) {
+    lines.push('Passing:')
+    checks.forEach(c => lines.push(`  • ${c}`))
+    lines.push('')
+  }
+  const adviceList = normalizeAdviceList(advice || [])
+  if (adviceList.length) {
+    lines.push('Recommendations:')
+    adviceList.forEach(a => {
+      const prefix = a.source === 'ai' ? '[AI] ' : ''
+      lines.push(`  • ${prefix}${a.text}`)
+    })
+  }
+  return lines.join('\n')
+}
+
+export function classifyAdvice(rawAdvice, captured, checks) {
+  const adviceList = normalizeAdviceList(rawAdvice || [])
+  const errItems = []
+  const warnItems = []
+
+  const seenTexts = new Set()
+  adviceList.forEach(a => {
+    const item = {
+      text: a.text,
+      source: a.source,
+      supportKey: a.supportKey,
+      supportUrl: a.supportUrl,
+    }
+    if (a.supportKey && ERR_SUPPORT_KEYS.has(a.supportKey)) errItems.push(item)
+    else warnItems.push(item)
+    seenTexts.add(a.text)
+  })
+
+  ;(captured || []).forEach(l => {
+    if (!l || !l.text) return
+    if (seenTexts.has(l.text)) return
+    const displayText = stripEmbeddedHelpUrl(l.text)
+    if (l.level === 'error') {
+      const inferred = inferSupportKeyFromText(l.text)
+      const supportKey = inferred || 'installGuide'
+      const supportUrl = PENDO_SUPPORT[supportKey] || PENDO_SUPPORT.installGuide
+      errItems.push({ text: displayText, source: 'captured', supportKey, supportUrl })
+    } else if (l.level === 'warn') {
+      const inferred = inferSupportKeyFromText(l.text)
+      const supportKey = inferred || 'troubleshooting'
+      const supportUrl = PENDO_SUPPORT[supportKey] || PENDO_SUPPORT.troubleshooting
+      warnItems.push({ text: displayText, source: 'captured', supportKey, supportUrl })
+    }
+  })
+
+  const okItems = (checks || []).map(c => ({ text: String(c), source: 'builtin' }))
+  return { err: errItems, warn: warnItems, ok: okItems }
+}
+
+export function deriveHeroState(res) {
+  const { status, captured, snippetOnPage, launcherPresent, launcherAttempted, launcherDataValidated, validatedIn } = res
+  const originNote = validatedIn === 'launcher' ? ' (via Pendo Launcher)'
+    : validatedIn === 'launcher-beta' ? ' (via Pendo Launcher Beta)' : ''
+  if (!snippetOnPage && launcherAttempted && launcherPresent === false) {
+    return { state: 'err', title: 'Install not detected', sub: 'Snippet and Pendo Launcher are both missing on this page.' }
+  }
+  if (!snippetOnPage && launcherPresent === true && launcherDataValidated === false) {
+    return { state: 'warn', title: 'Launcher installed', sub: 'No agent data on this tab. Open the application where the Launcher injects Pendo.' }
+  }
+  if (!status.pendoPresent) {
+    return { state: 'err', title: 'Pendo not found', sub: 'window.pendo is missing' + originNote + '.' }
+  }
+  if (!status.validatePresent) {
+    return { state: 'warn', title: 'No validateInstall()', sub: 'Agent found but the validateInstall() helper is unavailable' + originNote + '.' }
+  }
+  const errCount = captured.filter(l => l.level === 'error').length
+  const warnCount = captured.filter(l => l.level === 'warn').length
+  if (errCount > 0) return { state: 'err', title: `${errCount} error${errCount === 1 ? '' : 's'}`, sub: 'validateInstall() reported errors' + originNote + '.' }
+  if (warnCount > 0) return { state: 'warn', title: `${warnCount} warning${warnCount === 1 ? '' : 's'}`, sub: 'Install works, but there are recommendations' + originNote + '.' }
+  return { state: 'ok', title: 'Install validated', sub: 'All checks passed' + originNote + '.' }
+}
+
+export function formatRelative(date) {
+  if (!date) return 'NEVER'
+  const ms = Date.now() - date.getTime()
+  if (ms < 5_000) return 'JUST NOW'
+  if (ms < 60_000) return `${Math.floor(ms / 1000)}s AGO`
+  if (ms < 60 * 60 * 1000) return `${Math.floor(ms / 60_000)}m AGO`
+  return `${Math.floor(ms / 3_600_000)}h AGO`
+}
+
+export function clampResizeSize({ originWidth, originHeight, dw, dh, innerWidth, innerHeight }) {
+  const MAX_RATIO = 0.92
+  const MIN_WIDTH = 360
+  const MIN_HEIGHT = 480
+  const maxW = Math.floor(innerWidth * MAX_RATIO)
+  const maxH = Math.floor(innerHeight * MAX_RATIO)
+  return {
+    width: Math.max(MIN_WIDTH, Math.min(originWidth + (dw || 0), maxW)),
+    height: Math.max(MIN_HEIGHT, Math.min(originHeight + (dh || 0), maxH)),
+  }
+}
+
+export function buildAiPrompt(context, selectRelatedReadingFn) {
   const lines = []
   lines.push('You are a Pendo installation assistant. Suggest concise, actionable remediation steps.')
   lines.push('Base your guidance solely on official Pendo sources (pendo.io domains such as support.pendo.io, help.pendo.io, academy.pendo.io). If unsure, say so.')
@@ -150,6 +407,31 @@ export function buildAiPrompt(context) {
   const trimmed = (context.captured || []).slice(0, 30)
   trimmed.forEach(l => lines.push(`[${l.level}] ${l.text}`))
   if ((context.captured || []).length > trimmed.length) lines.push('...truncated...')
+
+  if (typeof selectRelatedReadingFn === 'function') {
+    const signals = {
+      pendoPresent: context.status.pendoPresent,
+      validatePresent: context.status.validatePresent,
+      visitorId: context.status.visitorId,
+      accountId: context.status.accountId,
+      cspIssue: !!(context.cspMeta || '').length || (context.captured || []).some(l => /csp|content.security/i.test(l.text)),
+      noResourceHits: context.status.resourceHits && context.status.resourceHits.length === 0,
+      apiKeyMissing: !context.apiKeyFound,
+    }
+    const kbEntries = selectRelatedReadingFn(signals, 6)
+    if (kbEntries && kbEntries.length) {
+      lines.push('')
+      lines.push('Reference excerpts from official Pendo documentation (cite these where applicable; do not invent URLs):')
+      let charBudget = 800
+      for (const entry of kbEntries) {
+        if (charBudget <= 0) break
+        const block = `- ${entry.title} (${entry.url}): ${entry.bullets.slice(0, 3).join('; ')}`
+        lines.push(block)
+        charBudget -= block.length
+      }
+    }
+  }
+
   lines.push('Respond with a short bullet list of concrete fixes.')
   return lines.join('\n')
 }
@@ -312,7 +594,7 @@ export async function requestAiAdvice(context) {
       : (e && e.message ? String(e.message) : String(e))
     const friendly = friendlyAiFailureDetail(provider, detail)
     if (friendly) detail = friendly
-    return [{ text: `AI suggestion unavailable: ${detail}`, source: 'ai', supportUrl: PENDO_SUPPORT.technicalSupport }]
+    return [{ text: `AI suggestion unavailable: ${detail}`, source: 'ai', supportKey: 'technicalSupport', supportUrl: PENDO_SUPPORT.technicalSupport }]
   }
 }
 
@@ -457,9 +739,9 @@ export function captureAndInspect(variant = 'page') {
   else advice.push({ text: "No API key detected. Verify the correct agent is loading and that the snippet references your subscription key.", source: 'builtin', supportKey: 'installComponents' })
 
   if (status.pendoPresent) {
-    if (!status.visitorId) advice.push({ text: "Visitor identity is not set. Call pendo.initialize with a visitorId after authentication.", source: 'builtin', supportKey: 'identifyVisitors' })
+    if (!status.visitorId) advice.push({ text: "Visitor identity is not set. Call pendo.initialize with a visitorId after authentication.", source: 'builtin', supportKey: 'chooseIdsMetadata' })
     else checks.push("visitorId present.")
-    if (status.accountId == null) advice.push({ text: "accountId not found. If you use accounts, provide accountId in pendo.initialize.", source: 'builtin', supportKey: 'identifyVisitors' })
+    if (status.accountId == null) advice.push({ text: "accountId not found. If you use accounts, provide accountId in pendo.initialize.", source: 'builtin', supportKey: 'chooseIdsMetadata' })
     else checks.push("accountId present.")
     if (status.visitorMetadata) checks.push("Visitor metadata fields detected.")
     if (status.accountMetadata) checks.push("Account metadata fields detected.")
@@ -510,4 +792,39 @@ export function clampDragPosition({ clientX, clientY, offsetX, offsetY, innerWid
     left: Math.max(0, Math.min(newLeft, maxLeft)),
     top:  Math.max(0, Math.min(newTop,  maxTop)),
   }
+}
+
+// ========== Theme preference helpers (mirrored from popup.js) ==========
+
+export const PENDO_THEME_KEY = 'pendoValidateTheme'
+export const THEME_STORAGE_KEY = 'themePreference'
+
+export function applyTheme(pref, root = document.documentElement) {
+  if (pref === 'light' || pref === 'dark') root.dataset.theme = pref
+  else delete root.dataset.theme
+}
+
+export function loadThemePreference() {
+  return new Promise((resolve) => {
+    try {
+      if (!chrome.storage || !chrome.storage.local) return resolve('system')
+      chrome.storage.local.get({ [THEME_STORAGE_KEY]: 'system' }, (result) => {
+        const v = result && result[THEME_STORAGE_KEY]
+        resolve(v === 'light' || v === 'dark' ? v : 'system')
+      })
+    } catch (_) { resolve('system') }
+  })
+}
+
+export function saveThemePreference(pref) {
+  return new Promise((resolve) => {
+    try {
+      if (pref === 'system') localStorage.removeItem(PENDO_THEME_KEY)
+      else if (pref === 'light' || pref === 'dark') localStorage.setItem(PENDO_THEME_KEY, pref)
+    } catch (_) {}
+    try {
+      if (!chrome.storage || !chrome.storage.local) return resolve()
+      chrome.storage.local.set({ [THEME_STORAGE_KEY]: pref }, () => resolve())
+    } catch (_) { resolve() }
+  })
 }

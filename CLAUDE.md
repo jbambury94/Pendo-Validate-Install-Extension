@@ -24,7 +24,8 @@ To apply code changes: click the refresh icon on the extension card in `chrome:/
 - **`extension/manifest.json`** — MV3 manifest. No `default_popup`; the icon click is handled by the background service worker. Declares `background.service_worker`, `content_scripts`, and `web_accessible_resources` so `popup.html` can be loaded as a `chrome-extension://` iframe on any host page.
 - **`extension/background.js`** — Service worker. Listens for `chrome.action.onClicked`, ensures `content.js` is injected into pre-existing tabs (new navigations get it automatically), then sends a `pendo-validate-toggle` message.
 - **`extension/content.js`** — Content script. Owns the overlay lifecycle: creates/destroys an iframe (`#pendo-validate-overlay-iframe`) pointing at `popup.html`, and tracks drag + resize state via `postMessage` from the iframe (`pendo-validate-dragstart` / `-drag` / `-dragend` for dragging; `pendo-validate-resizestart` / `-resize` / `-resizeend` for resizing). Width and height are clamped to configurable min/max bounds. Guards against double-injection via `window.__pendoValidateInjected`.
-- **`extension/popup.html`** — Panel UI loaded inside the iframe. Three-tab strip: *Status* (status hero, quick stats, checks & recommendations, identity, metadata), *Logs* (filtered console output with level chips + text search), and *Settings* (page snapshot, AI advice configuration). The panel is user-resizable via a corner drag handle. References `pendo-loader.js` (runs first) and `popup.js`.
+- **`extension/popup.html`** — Panel UI loaded inside the iframe. Three-tab strip: *Status* (status hero, quick stats, checks & recommendations, related reading, identity, metadata), *Logs* (filtered console output with level chips + text search), and *Settings* (theme preference, page snapshot, AI advice configuration). A synchronous `<head>` script reads `localStorage('pendoValidateTheme')` to apply a forced light/dark theme before first paint (FOUC prevention). The panel is user-resizable via a corner drag handle. References `pendo-kb.js`, `pendo-loader.js` (runs first), and `popup.js`.
+- **`extension/pendo-kb.js`** — Bundled knowledge base: 24 curated support.pendo.io install articles as a flat `PENDO_KB` array (each with `slug`, `title`, `url`, `topics[]`, `summary`, `bullets[]`). Exposes `findKbByTopics(topics, max)` which returns deduped entries ordered by topic-match count. Also defines `PENDO_KB_MIN_AGENT_VERSION` used by the agent-version detection signal. Loaded via `<script>` before `popup.js` and exposed in `web_accessible_resources`.
 - **`extension/pendo-loader.js`** — Immediately queues Pendo API calls, then defers loading `vendor/pendo.js` via `requestIdleCallback`/`setTimeout` to avoid blocking panel responsiveness.
 - **`extension/popup.js`** — All validation, advice, export, debug, AI, and tab-switching logic (~1,727 lines). Runs in the iframe's own context (not injected into the host page); detects iframe context via `window !== window.parent` and wires the close button, hero drag handle, and resize handle to relay events to `content.js`.
 
@@ -53,26 +54,31 @@ Results flow back to the panel context → `renderAdvice()` + `renderLogs()` pop
 
 | Subsystem | What it does |
 |---|---|
-| `captureAndInspect()` | Injected into page; captures all validation data + reports `pendoGlobal` |
+| `captureAndInspect()` | Injected into page; captures all validation data + reports `pendoGlobal`. Extended with detection signals for iframe, sandbox, GTM, SPA framework, agent version, `data.pendo.io` connectivity, and account metadata gaps. |
 | `runInPage()` | Orchestrates Phase 1 → Phase 1.5 → Phase 2 |
 | `findLauncherTab()` | Searches windows/tabs for Pendo Launcher; filters non-web origins |
 | `renderAdvice()` | Renders key-value summary + advice list |
 | `renderLogs()` | Renders color-coded captured console output |
-| `buildAiPrompt()` / `requestAiAdvice()` | Build provider-specific request body, call OpenAI / Claude / Gemini, parse response |
+| `buildAiPrompt()` / `requestAiAdvice()` | Build provider-specific request body, call OpenAI / Claude / Gemini, parse response. Prompt enriched with up to 6 KB excerpts from `selectRelatedReading`. |
 | `getAiConfig()` | Reads `aiProvider`, `aiApiKey`, `aiEndpoint`, `aiModel`, `timeoutMs` from `chrome.storage.local` |
-| `buildMarkdownReport()` / `buildJsonReport()` | Generates downloadable/copyable reports |
+| `buildMarkdownReport()` / `buildJsonReport()` | Generates downloadable/copyable reports. Markdown report includes a `## Related reading` section with contextually relevant KB links. |
 | `setExportMenuOpen()` | Toggles the Export fly-out menu (Markdown report + Copy summary) |
 | `getOrCreateVisitorId()` | Persistent UUID in `chrome.storage.local` for self-instrumentation |
+| `applyTheme()` | Sets or removes `data-theme` on `<html>` to force light/dark mode. Preference stored as `themePreference` in `chrome.storage.local` and mirrored to `localStorage('pendoValidateTheme')` for synchronous FOUC-free load. |
 | `activateTab()` | Switches the *Status* / *Logs* / *Settings* tabs |
 | `bindResizeHandle()` | Wires the corner resize handle; relays `pendo-validate-resizestart` / `-resize` / `-resizeend` to `content.js` |
 | Iframe wiring | When `window !== window.parent`, shows the close button and relays `pendo-validate-close` / `-dragstart` / `-drag` / `-dragend` / `-resizestart` / `-resize` / `-resizeend` messages |
 | Debug button | Calls `pendo.enableDebugging()` via injection |
+| `PENDO_KB` / `findKbByTopics()` | Bundled in `extension/pendo-kb.js`; 24 curated support.pendo.io install articles with topic tags, summaries, and bullets. `findKbByTopics(topics, max)` returns deduped entries ordered by topic match count. |
+| `selectRelatedReading()` | Maps validation signals (pendoPresent, cspIssue, isSpa, etc.) to KB topics and returns relevant entries via `findKbByTopics`. Consumed by the Related reading card, AI prompt, and Markdown report. |
+| `renderRelatedReading()` | Populates the `#relatedReadingCard` on the Status panel with up to 6 deduped article links from `selectRelatedReading`. |
+| `normalizeAdviceList()` | Normalizes advice items; extended to accept `supportKeys: string[]` producing `relatedSupportUrls` on output. |
 
 ### MV3 CSP Compliance
 
 Chrome's Manifest V3 prohibits remotely-hosted scripts. The Pendo Web SDK (`vendor/pendo.js`, ~540KB, v2.314.1) is bundled locally. The manifest's `content_security_policy` allows `script-src 'self'` only. `pendo-loader.js` loads the agent via `chrome.runtime.getURL('vendor/pendo.js')`.
 
-`web_accessible_resources` exposes `popup.html`, `popup.css`, `popup.js`, `pendo-loader.js`, `vendor/pendo.js`, and the fonts/icons folders so the iframe can load them on any host origin.
+`web_accessible_resources` exposes `popup.html`, `popup.css`, `popup.js`, `pendo-kb.js`, `pendo-loader.js`, `vendor/pendo.js`, and the fonts/icons folders so the iframe can load them on any host origin.
 
 ### Optional Multi-provider AI
 
@@ -109,7 +115,7 @@ Vitest + jsdom test suite at the repo root. Pure functions are extracted into `t
 - `npm run test:watch` — watch mode
 - `npm run test:coverage` — v8 coverage
 
-Suites: `normalizeAdviceList`, `buildMarkdownReport`/`buildJsonReport`, `captureAndInspect`, `getOrCreateVisitorId`, `requestAiAdvice` (all three providers + timeout/error paths), `content.js` drag-clamping, and `content.test.js` resize-clamping. ~127 tests.
+Suites: `normalizeAdviceList`, `buildMarkdownReport`/`buildJsonReport`, `captureAndInspect`, `getOrCreateVisitorId`, `requestAiAdvice` (all three providers + timeout/error paths + buildAiPrompt KB enrichment), `content.js` drag-clamping, `content.test.js` resize-clamping, `pendoKb` (findKbByTopics + selectRelatedReading), `classifyAdvice`, `deriveHeroState`, `buildPlainSummary`, `formatRelative`, and `theme` (applyTheme + loadThemePreference + saveThemePreference). ~240 tests.
 
 ## Updating the Bundled Pendo Agent
 

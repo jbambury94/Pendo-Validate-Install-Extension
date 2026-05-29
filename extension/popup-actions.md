@@ -17,6 +17,7 @@
 | Export — Markdown report | `export-markdown` | `exportMd` |
 | Export — Copy summary | `export-copy-summary` | `exportCopy` |
 | Resize panel (corner handle) | `resize-panel` | `resizeHandle` |
+| Theme preference select | `theme-select` | `themeSelect` |
 | AI provider select | `ai-provider-select` | `aiProviderSelect` |
 | AI API key input | `ai-api-key-input` | `aiApiKeyInput` |
 | Show / hide API key | `toggle-key-visibility` | `aiKeyToggleVisibility` |

@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.6.1
+- **Theme preference.** New theme selector in the Settings panel lets users choose System default / Light / Dark. Preference persists in `chrome.storage.local` (`themePreference`) and is mirrored to `localStorage('pendoValidateTheme')` so a synchronous `<head>` script can apply the theme before first paint, preventing flash of unstyled content (FOUC).
+- **Smarter advice classification.** `classifyAdvice` / `normalizeAdviceList` now infer relevant `supportKeys` from captured log messages, improving the Related reading links and AI prompt context for advice items that didn't carry explicit topic tags.
+- Added `tests/theme.test.js` covering `applyTheme`, `loadThemePreference`, and `saveThemePreference`; extended `classifyAdvice`, `normalizeAdviceList`, and `requestAiAdvice` suites for the new support-key inference. Test count is now 252 across 12 suites.
+
 ## 1.6.0
 - **Three-tab UI.** Status / Logs / Settings replaces the previous Output / Settings split. Status auto-activates after a validation run.
   - Status tab: status hero with pass/warn/error states, quick-stats row (Errors / Warnings / Passing), Checks & recommendations card with grouped accordion items, Identity card, and Metadata card.

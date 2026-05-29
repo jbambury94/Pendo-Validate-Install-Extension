@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { normalizeAdviceList, PENDO_SUPPORT } from './helpers.js'
+import { normalizeAdviceList, PENDO_SUPPORT, SUPPORT_LABELS } from './helpers.js'
 
 describe('normalizeAdviceList', () => {
   it('returns empty array for empty input', () => {
@@ -17,6 +17,8 @@ describe('normalizeAdviceList', () => {
       text: 'Check your snippet',
       source: 'builtin',
       supportUrl: PENDO_SUPPORT.helpCenter,
+      supportKey: null,
+      relatedSupportUrls: [],
     })
   })
 
@@ -40,9 +42,20 @@ describe('normalizeAdviceList', () => {
     expect(result[0].supportUrl).toBe(PENDO_SUPPORT.technicalSupport)
   })
 
-  it('falls back to helpCenter when supportKey does not exist in PENDO_SUPPORT', () => {
+  it('falls back to troubleshooting when supportKey does not exist in PENDO_SUPPORT and text has no matchable pattern', () => {
     const result = normalizeAdviceList([{ text: 'tip', supportKey: 'nonExistentKey' }])
-    expect(result[0].supportUrl).toBe(PENDO_SUPPORT.helpCenter)
+    expect(result[0].supportUrl).toBe(PENDO_SUPPORT.troubleshooting)
+  })
+
+  it('infers a relevant supportKey from AI bullet text instead of the generic technicalSupport link', () => {
+    const result = normalizeAdviceList([{ text: 'Add data.pendo.io to your Content Security Policy connect-src directive.', source: 'ai' }])
+    expect(result[0].supportKey).toBe('csp')
+    expect(result[0].supportUrl).toBe(PENDO_SUPPORT.csp)
+  })
+
+  it('still uses technicalSupport URL for AI bullets that do not match any pattern', () => {
+    const result = normalizeAdviceList([{ text: 'Generic suggestion with nothing recognisable.', source: 'ai' }])
+    expect(result[0].supportUrl).toBe(PENDO_SUPPORT.technicalSupport)
   })
 
   it('filters out items with empty text', () => {
@@ -70,5 +83,67 @@ describe('normalizeAdviceList', () => {
       { text: 'Third', source: 'ai' },
     ])
     expect(result.map(a => a.text)).toEqual(['First', 'Second', 'Third'])
+  })
+
+  it('returns supportKey from object input', () => {
+    const result = normalizeAdviceList([{ text: 'Fix CSP', supportKey: 'csp' }])
+    expect(result[0].supportKey).toBe('csp')
+  })
+
+  it('returns supportKey as null for plain string input', () => {
+    const result = normalizeAdviceList(['plain text'])
+    expect(result[0].supportKey).toBeNull()
+  })
+
+  it('always includes relatedSupportUrls array (empty by default)', () => {
+    const result = normalizeAdviceList([{ text: 'tip', supportKey: 'csp' }])
+    expect(Array.isArray(result[0].relatedSupportUrls)).toBe(true)
+    expect(result[0].relatedSupportUrls).toHaveLength(0)
+  })
+
+  it('populates relatedSupportUrls from supportKeys array', () => {
+    const result = normalizeAdviceList([{
+      text: 'SPA with GTM',
+      supportKey: 'spa',
+      supportKeys: ['spa', 'gtm', 'csp'],
+    }])
+    expect(result[0].supportUrl).toBe(PENDO_SUPPORT.spa)
+    expect(result[0].relatedSupportUrls).toEqual([
+      { url: PENDO_SUPPORT.gtm, label: SUPPORT_LABELS.gtm },
+      { url: PENDO_SUPPORT.csp, label: SUPPORT_LABELS.csp },
+    ])
+  })
+
+  it('skips unknown keys in supportKeys array', () => {
+    const result = normalizeAdviceList([{
+      text: 'test',
+      supportKey: 'csp',
+      supportKeys: ['csp', 'nonExistentKey', 'gtm'],
+    }])
+    expect(result[0].relatedSupportUrls).toEqual([
+      { url: PENDO_SUPPORT.gtm, label: SUPPORT_LABELS.gtm },
+    ])
+  })
+
+  it('does not duplicate primary supportKey in relatedSupportUrls', () => {
+    const result = normalizeAdviceList([{
+      text: 'test',
+      supportKey: 'gtm',
+      supportKeys: ['gtm', 'iframe'],
+    }])
+    const relatedKeys = result[0].relatedSupportUrls.map(r => r.url)
+    expect(relatedKeys).not.toContain(PENDO_SUPPORT.gtm)
+    expect(relatedKeys).toContain(PENDO_SUPPORT.iframe)
+  })
+
+  it('legacy single-key form still works identically with empty relatedSupportUrls', () => {
+    const result = normalizeAdviceList([{ text: 'Fix CSP', supportKey: 'csp' }])
+    expect(result[0]).toEqual({
+      text: 'Fix CSP',
+      source: 'builtin',
+      supportUrl: PENDO_SUPPORT.csp,
+      supportKey: 'csp',
+      relatedSupportUrls: [],
+    })
   })
 })

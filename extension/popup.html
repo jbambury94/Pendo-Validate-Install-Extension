@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <title>Pendo Validate Install assistant</title>
     <!-- Local fonts only: remote Google Fonts added network + render delay on every popup open -->
+    <script>try{var t=localStorage.getItem('pendoValidateTheme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}</script>
     <link rel="stylesheet" href="popup.css">
     <script src="pendo-loader.js"></script>
   </head>
@@ -79,6 +80,13 @@
             <div class="card__body card__body--flush" id="checkGroups"></div>
           </div>
 
+          <div class="card" id="relatedReadingCard" hidden>
+            <div class="card__head">
+              <div class="card__title">Related reading</div>
+            </div>
+            <div class="card__body" id="relatedReadingBody"></div>
+          </div>
+
           <div class="card" id="identityCard" hidden>
             <div class="card__head">
               <div class="card__title">Identity</div>
@@ -137,6 +145,21 @@
 
         <!-- Settings panel -->
         <div id="tabSettingsPanel" class="tab-panel" role="tabpanel" aria-labelledby="tabSettingsBtn" hidden>
+          <div class="card">
+            <div class="card__head"><div class="card__title">Appearance</div></div>
+            <div class="card__body">
+              <div class="field">
+                <label class="field__label" for="themeSelect">Theme</label>
+                <select id="themeSelect" class="select" data-action="theme-select">
+                  <option value="system">System default</option>
+                  <option value="light">Light</option>
+                  <option value="dark">Dark</option>
+                </select>
+                <div class="field__hint">Choose Light or Dark to override your system preference.</div>
+              </div>
+            </div>
+          </div>
+
           <div class="card" id="pageSnapshotCard" hidden>
             <div class="card__head"><div class="card__title">Page snapshot</div></div>
             <div class="card__body" id="pageSnapshotBody"></div>
@@ -222,6 +245,8 @@
     <!-- Toast container -->
     <div id="toast" class="toast" hidden aria-live="polite"></div>
 
+    <!-- Pendo support knowledge base (topics, summaries, article links) -->
+    <script src="pendo-kb.js"></script>
     <!-- Popup logic: validation, advice, export, copy, render, tabs, drag/resize -->
     <script src="popup.js"></script>
   </body>
