@@ -1010,6 +1010,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   const checkGroupsEl = document.getElementById('checkGroups');
   const copyAdviceBtn = document.getElementById('copyAdvice');
 
+  const relatedReadingCard = document.getElementById('relatedReadingCard');
+  const relatedReadingBody = document.getElementById('relatedReadingBody');
   const identityCard = document.getElementById('identityCard');
   const identityBody = document.getElementById('identityBody');
   const metadataCard = document.getElementById('metadataCard');
@@ -1315,6 +1317,38 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
       wrap.appendChild(items);
       checkGroupsEl.appendChild(wrap);
+    }
+  }
+
+  /** Render the Related reading card with KB articles selected by validation signals. */
+  function renderRelatedReading(signals) {
+    if (!relatedReadingBody) return;
+    relatedReadingBody.replaceChildren();
+    const entries = selectRelatedReading(signals);
+    if (!entries || entries.length === 0) {
+      relatedReadingCard.hidden = true;
+      return;
+    }
+    relatedReadingCard.hidden = false;
+    for (const entry of entries) {
+      const row = document.createElement('div');
+      row.className = 'kv-row';
+      const a = document.createElement('a');
+      a.href = entry.url;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.className = 'check-item__doc';
+      a.textContent = entry.title;
+      a.appendChild(document.createTextNode(' '));
+      a.appendChild(makeIcon('external', 11));
+      row.appendChild(a);
+      const sub = document.createElement('div');
+      sub.className = 'kv-row__v kv-row__v--sans kv-row__v--wrap';
+      sub.style.fontSize = '11px';
+      sub.style.color = 'var(--ink-3)';
+      sub.textContent = entry.summary;
+      row.appendChild(sub);
+      relatedReadingBody.appendChild(row);
     }
   }
 
@@ -1641,6 +1675,27 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       const buckets = classifyAdvice(adviceList, captured, checksToRender);
       renderCheckGroups(buckets);
+
+      const hasVFields = status.visitorMetadata && typeof status.visitorMetadata === 'object' && Object.keys(status.visitorMetadata).some(k => k !== 'id');
+      const hasAFields = status.accountMetadata && typeof status.accountMetadata === 'object' && Object.keys(status.accountMetadata).some(k => k !== 'id');
+      const readingSignals = {
+        pendoPresent: status.pendoPresent,
+        validatePresent: status.validatePresent,
+        visitorId: status.visitorId,
+        accountId: status.accountId,
+        hasVisitorMeta: !!hasVFields,
+        hasAccountMeta: !!hasAFields,
+        cspIssue: adviceList.some(a => a.supportKey === 'csp'),
+        noResourceHits: status.resourceHits && status.resourceHits.length === 0,
+        isSpa: false,
+        isIframe: false,
+        hasGtm: false,
+        isSandbox: false,
+        launcherPresent: !!launcherPresent,
+        agentVersionOld: false,
+        apiKeyMissing: !apiKeyFound,
+      };
+      renderRelatedReading(readingSignals);
 
       renderQuickStats({
         errCount: buckets.err.length,
