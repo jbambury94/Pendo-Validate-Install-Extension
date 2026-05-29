@@ -33,6 +33,7 @@
         "popup.html",
         "popup.css",
         "popup.js",
+        "pendo-kb.js",
         "pendo-loader.js",
         "vendor/pendo.js",
         "fonts/*.woff2",
