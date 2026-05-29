@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { JSDOM } from 'jsdom';
+import { selectRelatedReading } from './helpers.js';
 
 let PENDO_KB, findKbByTopics, PENDO_KB_MIN_AGENT_VERSION;
 
@@ -108,5 +109,71 @@ describe('findKbByTopics', () => {
     expect(results.length).toBeGreaterThan(0);
     const slugs = results.map(r => r.slug);
     expect(slugs).toContain('spa-install');
+  });
+});
+
+describe('selectRelatedReading', () => {
+  it('returns empty when no signals provided', () => {
+    expect(selectRelatedReading(null, 6, findKbByTopics)).toEqual([]);
+    expect(selectRelatedReading(undefined, 6, findKbByTopics)).toEqual([]);
+  });
+
+  it('returns empty when findKbByTopics is not a function', () => {
+    expect(selectRelatedReading({}, 6, null)).toEqual([]);
+    expect(selectRelatedReading({}, 6, 'not a fn')).toEqual([]);
+  });
+
+  it('returns install/troubleshooting articles when pendoPresent is false', () => {
+    const results = selectRelatedReading({ pendoPresent: false }, 10, findKbByTopics);
+    expect(results.length).toBeGreaterThan(0);
+    const allTopics = results.flatMap(r => r.topics);
+    expect(allTopics.some(t => t === 'install' || t === 'snippet' || t === 'troubleshooting')).toBe(true);
+  });
+
+  it('returns CSP articles when cspIssue is true', () => {
+    const results = selectRelatedReading({ pendoPresent: true, cspIssue: true }, 10, findKbByTopics);
+    expect(results.length).toBeGreaterThan(0);
+    const slugs = results.map(r => r.slug);
+    expect(slugs).toContain('csp');
+  });
+
+  it('returns SPA + framework articles for frameworkHint react', () => {
+    const results = selectRelatedReading({ pendoPresent: true, isSpa: true, frameworkHint: 'react' }, 10, findKbByTopics);
+    expect(results.length).toBeGreaterThan(0);
+    const slugs = results.map(r => r.slug);
+    expect(slugs).toContain('spa-install');
+  });
+
+  it('returns GTM articles when hasGtm is true', () => {
+    const results = selectRelatedReading({ pendoPresent: true, hasGtm: true }, 10, findKbByTopics);
+    expect(results.length).toBeGreaterThan(0);
+    const slugs = results.map(r => r.slug);
+    expect(slugs).toContain('gtm-install');
+  });
+
+  it('returns sandbox articles when isSandbox is true', () => {
+    const results = selectRelatedReading({ pendoPresent: true, isSandbox: true }, 10, findKbByTopics);
+    expect(results.length).toBeGreaterThan(0);
+    const allTopics = results.flatMap(r => r.topics);
+    expect(allTopics).toContain('sandbox');
+  });
+
+  it('returns identity/metadata articles when visitorId missing', () => {
+    const results = selectRelatedReading({ pendoPresent: true, visitorId: null }, 10, findKbByTopics);
+    expect(results.length).toBeGreaterThan(0);
+    const allTopics = results.flatMap(r => r.topics);
+    expect(allTopics).toContain('identity');
+  });
+
+  it('respects max parameter', () => {
+    const results = selectRelatedReading({ pendoPresent: false, cspIssue: true, isSpa: true }, 2, findKbByTopics);
+    expect(results.length).toBeLessThanOrEqual(2);
+  });
+
+  it('returns iframe articles when isIframe is true', () => {
+    const results = selectRelatedReading({ pendoPresent: true, isIframe: true }, 10, findKbByTopics);
+    expect(results.length).toBeGreaterThan(0);
+    const allTopics = results.flatMap(r => r.topics);
+    expect(allTopics).toContain('iframe');
   });
 });

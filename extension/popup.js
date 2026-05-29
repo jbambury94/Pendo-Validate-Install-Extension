@@ -147,6 +147,39 @@ function normalizeAdviceList(advice = []) {
   }).filter(a => a.text);
 }
 
+// ========== Related reading selection ==========
+/**
+ * Map validation signals to KB topics, then return the most relevant
+ * knowledge-base entries via findKbByTopics (from pendo-kb.js).
+ * @param {object} signals - validation result fields used for topic inference
+ * @param {number} [max=6]
+ * @returns {Array} KB entries (empty when pendo-kb.js is not loaded)
+ */
+function selectRelatedReading(signals, max) {
+  if (typeof findKbByTopics !== 'function') return [];
+  if (!signals) return [];
+  if (max === undefined || max === null) max = 6;
+  const topics = [];
+  if (!signals.pendoPresent)                       topics.push('install', 'snippet', 'troubleshooting');
+  if (signals.pendoPresent && !signals.validatePresent) topics.push('agent', 'troubleshooting');
+  if (!signals.visitorId)                          topics.push('identity');
+  if (signals.accountId == null)                   topics.push('identity', 'account');
+  if (!signals.hasVisitorMeta)                     topics.push('metadata');
+  if (!signals.hasAccountMeta && signals.hasVisitorMeta) topics.push('metadata', 'account');
+  if (signals.cspIssue)                            topics.push('csp', 'security', 'network');
+  if (signals.noResourceHits && signals.pendoPresent)  topics.push('network', 'csp');
+  if (signals.isSpa)                               topics.push('spa');
+  if (signals.frameworkHint)                        topics.push('spa', 'framework-' + signals.frameworkHint);
+  if (signals.isIframe)                            topics.push('iframe');
+  if (signals.hasGtm)                              topics.push('gtm', 'tag-manager');
+  if (signals.hasSegment)                          topics.push('segment', 'tag-manager');
+  if (signals.isSandbox)                           topics.push('sandbox', 'testing');
+  if (signals.launcherPresent)                     topics.push('launcher');
+  if (signals.agentVersionOld)                     topics.push('agent', 'configuration');
+  if (signals.apiKeyMissing)                       topics.push('api-key', 'install');
+  return findKbByTopics(topics, max);
+}
+
 // ========== Report building and download ==========
 /** Build a single human-readable Markdown report: overview, metadata, errors (with support links), advice (with support links), captured output. */
 function buildMarkdownReport(context) {
