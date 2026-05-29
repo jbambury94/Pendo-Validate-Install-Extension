@@ -10,7 +10,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Chrome%20Extension-MV3-blue" alt="Chrome Extension MV3" />
-  <img src="https://img.shields.io/badge/version-1.6.0-FF4876" alt="Version 1.6.0" />
+  <img src="https://img.shields.io/badge/version-1.6.1-FF4876" alt="Version 1.6.1" />
   <img src="https://img.shields.io/badge/Pendo%20Agent-v2.314.1%20bundled-0b2239" alt="Pendo Agent v2.314.1 bundled" />
   <img src="https://img.shields.io/badge/tests-Vitest%20%2B%20jsdom-0f9d58" alt="Tests: Vitest + jsdom" />
   <img src="https://img.shields.io/badge/AI-OpenAI%20%7C%20Claude%20%7C%20Gemini-lightgrey" alt="AI: OpenAI | Claude | Gemini" />
@@ -32,8 +32,11 @@ Debugging a Pendo installation today means juggling browser DevTools, running `p
 - **One click, three-phase detection** — finds the Pendo agent whether it comes from a snippet on the page, the Pendo Launcher injecting into the same tab, or a Launcher running in a separate tab.
 - **Identity and metadata at a glance** — reads `visitorId`, `accountId`, and visitor/account metadata fields directly from the agent state.
 - **CSP and API key checks** — flags missing Pendo domains in `Content-Security-Policy` meta tags and confirms whether an API key is present.
-- **Shareable results** — export a Markdown report with support links, or copy a Slack-ready summary to your clipboard.
-- **Optional AI remediation** — get fix-it suggestions from OpenAI, Anthropic Claude, or Google Gemini when validation surfaces warnings or errors.
+- **Curated support links** — every validation surfaces a *Related reading* card with hand-picked entries from a built-in knowledge base of 24 Pendo support articles.
+- **Extended page signals** — detects iframe / sandbox embedding, Google Tag Manager, common SPA frameworks (React / Vue / Angular / Next / Nuxt) and the bundled Pendo agent version.
+- **Light / Dark / System theme.** Theme selector in Settings persists locally and applies before first paint, so there's no flash of unstyled content.
+- **Shareable results** — export a Markdown report with support links and related reading, or copy a Slack-ready summary to your clipboard.
+- **Optional AI remediation** — get fix-it suggestions from OpenAI, Anthropic Claude, or Google Gemini. Prompts are enriched with up to 6 KB excerpts so the advice is grounded in official Pendo guidance.
 
 ---
 
@@ -68,9 +71,9 @@ The panel has three tabs:
 
 | Tab | What you'll find |
 |-----|-----------------|
-| **Status** | Pass/warn/error hero, quick stats (Errors / Warnings / Passing), prioritised checks & recommendations, identity, and metadata cards. |
-| **Logs** | Colour-coded captured console output with level filter chips (Err / Warn / Info), text search, and one-click copy. |
-| **Settings** | Page snapshot summary and AI advice configuration (provider picker, API key, save). |
+| **Status** | Pass/warn/error hero, quick stats (Errors / Warnings / Passing), prioritised checks & recommendations, *Related reading* (curated Pendo KB links), identity, and metadata cards. |
+| **Logs** | Colour-coded captured console output with level filter chips (Err / Warn / Info), text search, one-click copy, and a Page facts panel. |
+| **Settings** | Appearance (System / Light / Dark theme), page snapshot summary, and AI advice configuration (provider picker, API key with show/hide toggle, save). |
 
 The action bar at the bottom gives you **Validate Pendo Install**, **Debugger** (`pendo.enableDebugging()`), and **Export** (Markdown report or Copy summary).
 
@@ -79,10 +82,12 @@ The action bar at the bottom gives you **Validate Pendo Install**, **Debugger** 
 ## Optional: AI advice
 
 1. Open **Settings** and pick a provider — OpenAI (`gpt-4o-mini`), Anthropic Claude (`claude-haiku-4-5`), or Google Gemini (`gemini-2.0-flash`).
-2. Paste your API key and click **Save**.
-3. Re-run validation — when warnings or errors are found, the extension requests AI-powered remediation advice grounded in official Pendo sources.
+2. Paste your API key (use the **Show / Hide** toggle to confirm it) and click **Save**.
+3. Re-run validation — when warnings or errors are found, the extension requests AI-powered remediation advice grounded in official Pendo sources, with up to 6 curated KB excerpts injected into the prompt for context.
 
 Your key is stored locally in `chrome.storage.local` and is only sent when validation surfaces an issue.
+
+> **Claude behind a corporate policy?** Some orgs disable client-side Anthropic API access. If Claude returns a policy error, switch to OpenAI / Gemini, or point `aiClaudeEndpoint` (in `chrome.storage.local`) at your own HTTPS proxy that forwards to `https://api.anthropic.com/v1/messages`.
 
 ---
 
@@ -98,11 +103,11 @@ Your key is stored locally in `chrome.storage.local` and is only sent when valid
 
 - Architecture, validation phases, and AI internals — see [CLAUDE.md](CLAUDE.md).
 - Release notes — see [CHANGELOG.md](CHANGELOG.md).
-- Run the test suite: `npm install && npm test` (Vitest + jsdom, ~127 tests).
+- Run the test suite: `npm install && npm test` (Vitest + jsdom, 252 tests across 12 suites).
 - UI element / `data-action` reference — see [extension/popup-actions.md](extension/popup-actions.md).
 
 ---
 
 <p align="center">
-  <sub>v1.6.0 &middot; Manifest V3 &middot; Built with the Pendo Web SDK</sub>
+  <sub>v1.6.1 &middot; Manifest V3 &middot; Built with the Pendo Web SDK</sub>
 </p>
