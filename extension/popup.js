@@ -550,12 +550,6 @@ async function runInPage() {
 
     // --- Extended detection signals (additive) ---
     try {
-      if (status.pendoPresent && status.resourceHits.length > 0) {
-        const hitNames = status.resourceHits.map(r => (r.name || '').toLowerCase());
-        if (!hitNames.some(n => n.includes('data.pendo.io'))) {
-          advice.push({ text: "No requests to data.pendo.io observed. Analytics data may not be reaching Pendo. Check CSP connect-src and network filters.", source: 'builtin', supportKey: 'csp', supportKeys: ['csp', 'hostnameAllowlist'] });
-        }
-      }
       const isIframe = (typeof window !== 'undefined') && window.top !== window;
       if (isIframe) {
         advice.push({ text: "Page is running inside an iframe. Ensure the Pendo snippet is installed in this frame with matching API key and IDs.", source: 'builtin', supportKey: 'iframe' });
