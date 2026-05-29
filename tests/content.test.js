@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { clampDragPosition } from './helpers.js'
-import { enableDebuggingInPage } from './helpers.js'
+import { clampDragPosition, clampResizeSize, enableDebuggingInPage } from './helpers.js'
 
 // ── Drag clamping ─────────────────────────────────────────────────────────────
 
@@ -51,6 +50,56 @@ describe('clampDragPosition', () => {
   it('accounts for offsetY correctly', () => {
     const pos = clampDragPosition({ clientX: 100, clientY: 200, offsetX: 0, offsetY: 25, ...viewport })
     expect(pos.top).toBe(175)
+  })
+})
+
+// ── Resize clamping ──────────────────────────────────────────────────────────
+
+describe('clampResizeSize', () => {
+  const viewport = { innerWidth: 1024, innerHeight: 768 }
+
+  it('returns unclamped size when within bounds', () => {
+    const size = clampResizeSize({ originWidth: 440, originHeight: 660, dw: 50, dh: 30, ...viewport })
+    expect(size.width).toBe(490)
+    expect(size.height).toBe(690)
+  })
+
+  it('clamps width to MIN_WIDTH (360) when shrinking past minimum', () => {
+    const size = clampResizeSize({ originWidth: 440, originHeight: 660, dw: -200, dh: 0, ...viewport })
+    expect(size.width).toBe(360)
+  })
+
+  it('clamps height to MIN_HEIGHT (480) when shrinking past minimum', () => {
+    const size = clampResizeSize({ originWidth: 440, originHeight: 660, dw: 0, dh: -300, ...viewport })
+    expect(size.height).toBe(480)
+  })
+
+  it('clamps width to floor(innerWidth * 0.92) when expanding past max', () => {
+    const size = clampResizeSize({ originWidth: 440, originHeight: 660, dw: 900, dh: 0, ...viewport })
+    expect(size.width).toBe(Math.floor(1024 * 0.92))
+  })
+
+  it('clamps height to floor(innerHeight * 0.92) when expanding past max', () => {
+    const size = clampResizeSize({ originWidth: 440, originHeight: 660, dw: 0, dh: 900, ...viewport })
+    expect(size.height).toBe(Math.floor(768 * 0.92))
+  })
+
+  it('returns origin dimensions when dw and dh are 0', () => {
+    const size = clampResizeSize({ originWidth: 500, originHeight: 600, dw: 0, dh: 0, ...viewport })
+    expect(size.width).toBe(500)
+    expect(size.height).toBe(600)
+  })
+
+  it('handles negative deltas that stay above minimum', () => {
+    const size = clampResizeSize({ originWidth: 500, originHeight: 600, dw: -50, dh: -50, ...viewport })
+    expect(size.width).toBe(450)
+    expect(size.height).toBe(550)
+  })
+
+  it('clamps both axes simultaneously', () => {
+    const size = clampResizeSize({ originWidth: 440, originHeight: 660, dw: -500, dh: 500, ...viewport })
+    expect(size.width).toBe(360)
+    expect(size.height).toBe(Math.floor(768 * 0.92))
   })
 })
 

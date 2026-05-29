@@ -17,6 +17,7 @@ describe('normalizeAdviceList', () => {
       text: 'Check your snippet',
       source: 'builtin',
       supportUrl: PENDO_SUPPORT.helpCenter,
+      supportKey: null,
     })
   })
 
@@ -70,5 +71,15 @@ describe('normalizeAdviceList', () => {
       { text: 'Third', source: 'ai' },
     ])
     expect(result.map(a => a.text)).toEqual(['First', 'Second', 'Third'])
+  })
+
+  it('returns supportKey from object input', () => {
+    const result = normalizeAdviceList([{ text: 'Fix CSP', supportKey: 'csp' }])
+    expect(result[0].supportKey).toBe('csp')
+  })
+
+  it('returns supportKey as null for plain string input', () => {
+    const result = normalizeAdviceList(['plain text'])
+    expect(result[0].supportKey).toBeNull()
   })
 })

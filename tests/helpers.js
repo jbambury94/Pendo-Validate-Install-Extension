@@ -17,21 +17,36 @@ export const PENDO_SUPPORT = {
   technicalSupport: 'https://support.pendo.io/hc/en-us/articles/360034163971-Get-help-with-Pendo-from-Technical-Support',
 }
 
+export const SUPPORT_LABELS = {
+  installGuide: 'Install guide',
+  installComponents: 'Snippet components',
+  agentSettings: 'Pendo agent settings',
+  identifyVisitors: 'Identify visitors & metadata',
+  chooseIdsMetadata: 'Choose IDs & metadata',
+  csp: 'Content Security Policy',
+  spa: 'SPA install guide',
+  helpCenter: 'Pendo Help Center',
+  technicalSupport: 'Pendo Technical Support',
+}
+
+export const ERR_SUPPORT_KEYS = new Set(['installGuide', 'installComponents', 'agentSettings'])
+
 export function normalizeAdviceList(advice = []) {
   return advice.map(a => {
-    let text, source, supportUrl
+    let text, source, supportUrl, supportKey
     if (typeof a === 'string') {
-      text = a; source = 'builtin'; supportUrl = PENDO_SUPPORT.helpCenter
+      text = a; source = 'builtin'; supportUrl = PENDO_SUPPORT.helpCenter; supportKey = null
     } else if (a && typeof a === 'object') {
       text = a.text || ''
       source = a.source || 'builtin'
+      supportKey = a.supportKey || null
       supportUrl = a.supportUrl
         || (a.supportKey && PENDO_SUPPORT[a.supportKey])
         || (source === 'ai' ? PENDO_SUPPORT.technicalSupport : PENDO_SUPPORT.helpCenter)
     } else {
-      text = String(a); source = 'builtin'; supportUrl = PENDO_SUPPORT.helpCenter
+      text = String(a); source = 'builtin'; supportUrl = PENDO_SUPPORT.helpCenter; supportKey = null
     }
-    return { text, source, supportUrl }
+    return { text, source, supportUrl, supportKey }
   }).filter(a => a.text)
 }
 
@@ -131,6 +146,115 @@ export function buildMarkdownReport(context) {
 
 export function buildJsonReport(context) {
   return JSON.stringify(context, null, 2)
+}
+
+export function buildPlainSummary(context) {
+  const { pageUrl, timestamp, status, captured, advice, checks, snippetOnPage, launcherPresent, launcherAttempted, launcherDataValidated, validatedIn } = context
+  const errCount = (captured || []).filter(l => l.level === 'error').length
+  const warnCount = (captured || []).filter(l => l.level === 'warn').length
+  const okCount = (checks || []).length
+  let statusLine = 'Looks healthy'
+  if (!snippetOnPage && launcherAttempted && launcherPresent === false) statusLine = 'Pendo not found (snippet and Launcher)'
+  else if (!snippetOnPage && launcherPresent === true && launcherDataValidated === false) statusLine = 'Launcher installed (no data on this tab)'
+  else if (!status.pendoPresent) statusLine = 'Pendo not found'
+  else if (!status.validatePresent) statusLine = 'No validateInstall()'
+  else if (errCount > 0) statusLine = 'Errors found'
+  else if (warnCount > 0) statusLine = 'Warnings found'
+
+  const lines = []
+  lines.push(`Pendo Validate — ${statusLine}`)
+  lines.push(`Page: ${pageUrl || 'unknown'}`)
+  lines.push(`Timestamp: ${timestamp}`)
+  lines.push(`Validated in: ${validatedIn || 'page'}`)
+  lines.push(`Errors: ${errCount}   Warnings: ${warnCount}   Passing: ${okCount}`)
+  lines.push('')
+  if (checks && checks.length) {
+    lines.push('Passing:')
+    checks.forEach(c => lines.push(`  • ${c}`))
+    lines.push('')
+  }
+  const adviceList = normalizeAdviceList(advice || [])
+  if (adviceList.length) {
+    lines.push('Recommendations:')
+    adviceList.forEach(a => {
+      const prefix = a.source === 'ai' ? '[AI] ' : ''
+      lines.push(`  • ${prefix}${a.text}`)
+    })
+  }
+  return lines.join('\n')
+}
+
+export function classifyAdvice(rawAdvice, captured, checks) {
+  const adviceList = normalizeAdviceList(rawAdvice || [])
+  const errItems = []
+  const warnItems = []
+
+  const seenTexts = new Set()
+  adviceList.forEach(a => {
+    const item = {
+      text: a.text,
+      source: a.source,
+      supportKey: a.supportKey,
+      supportUrl: a.supportUrl,
+    }
+    if (a.supportKey && ERR_SUPPORT_KEYS.has(a.supportKey)) errItems.push(item)
+    else warnItems.push(item)
+    seenTexts.add(a.text)
+  })
+
+  ;(captured || []).forEach(l => {
+    if (!l || !l.text) return
+    if (seenTexts.has(l.text)) return
+    if (l.level === 'error') errItems.push({ text: l.text, source: 'captured', supportKey: 'installGuide', supportUrl: PENDO_SUPPORT.installGuide })
+    else if (l.level === 'warn') warnItems.push({ text: l.text, source: 'captured', supportKey: null, supportUrl: PENDO_SUPPORT.helpCenter })
+  })
+
+  const okItems = (checks || []).map(c => ({ text: String(c), source: 'builtin' }))
+  return { err: errItems, warn: warnItems, ok: okItems }
+}
+
+export function deriveHeroState(res) {
+  const { status, captured, snippetOnPage, launcherPresent, launcherAttempted, launcherDataValidated, validatedIn } = res
+  const originNote = validatedIn === 'launcher' ? ' (via Pendo Launcher)'
+    : validatedIn === 'launcher-beta' ? ' (via Pendo Launcher Beta)' : ''
+  if (!snippetOnPage && launcherAttempted && launcherPresent === false) {
+    return { state: 'err', title: 'Install not detected', sub: 'Snippet and Pendo Launcher are both missing on this page.' }
+  }
+  if (!snippetOnPage && launcherPresent === true && launcherDataValidated === false) {
+    return { state: 'warn', title: 'Launcher installed', sub: 'No agent data on this tab. Open the application where the Launcher injects Pendo.' }
+  }
+  if (!status.pendoPresent) {
+    return { state: 'err', title: 'Pendo not found', sub: 'window.pendo is missing' + originNote + '.' }
+  }
+  if (!status.validatePresent) {
+    return { state: 'warn', title: 'No validateInstall()', sub: 'Agent found but the validateInstall() helper is unavailable' + originNote + '.' }
+  }
+  const errCount = captured.filter(l => l.level === 'error').length
+  const warnCount = captured.filter(l => l.level === 'warn').length
+  if (errCount > 0) return { state: 'err', title: `${errCount} error${errCount === 1 ? '' : 's'}`, sub: 'validateInstall() reported errors' + originNote + '.' }
+  if (warnCount > 0) return { state: 'warn', title: `${warnCount} warning${warnCount === 1 ? '' : 's'}`, sub: 'Install works, but there are recommendations' + originNote + '.' }
+  return { state: 'ok', title: 'Install validated', sub: 'All checks passed' + originNote + '.' }
+}
+
+export function formatRelative(date) {
+  if (!date) return 'NEVER'
+  const ms = Date.now() - date.getTime()
+  if (ms < 5_000) return 'JUST NOW'
+  if (ms < 60_000) return `${Math.floor(ms / 1000)}s AGO`
+  if (ms < 60 * 60 * 1000) return `${Math.floor(ms / 60_000)}m AGO`
+  return `${Math.floor(ms / 3_600_000)}h AGO`
+}
+
+export function clampResizeSize({ originWidth, originHeight, dw, dh, innerWidth, innerHeight }) {
+  const MAX_RATIO = 0.92
+  const MIN_WIDTH = 360
+  const MIN_HEIGHT = 480
+  const maxW = Math.floor(innerWidth * MAX_RATIO)
+  const maxH = Math.floor(innerHeight * MAX_RATIO)
+  return {
+    width: Math.max(MIN_WIDTH, Math.min(originWidth + (dw || 0), maxW)),
+    height: Math.max(MIN_HEIGHT, Math.min(originHeight + (dh || 0), maxH)),
+  }
 }
 
 export function buildAiPrompt(context) {
