@@ -15,6 +15,17 @@ export const PENDO_SUPPORT = {
   spa:              'https://support.pendo.io/hc/en-us/articles/360031862272-Install-Pendo-on-a-single-page-web-application',
   helpCenter:       'https://support.pendo.io/hc/en-us',
   technicalSupport: 'https://support.pendo.io/hc/en-us/articles/360034163971-Get-help-with-Pendo-from-Technical-Support',
+  gtm:              'https://support.pendo.io/hc/en-us/articles/360032201711',
+  segment:          'https://support.pendo.io/hc/en-us/articles/360031870352',
+  iframe:           'https://support.pendo.io/hc/en-us/articles/17606930575387',
+  multiDomain:      'https://support.pendo.io/hc/en-us/articles/14090652290587',
+  sandbox:          'https://support.pendo.io/hc/en-us/articles/360031862352',
+  agentDebug:       'https://support.pendo.io/hc/en-us/articles/360034229512',
+  configureMetadata:'https://support.pendo.io/hc/en-us/articles/360031832072',
+  signedMetadata:   'https://support.pendo.io/hc/en-us/articles/360039616892',
+  hostnameAllowlist:'https://support.pendo.io/hc/en-us/articles/16101373319707',
+  launcherPlan:     'https://support.pendo.io/hc/en-us/articles/21163862516507',
+  troubleshooting:  'https://support.pendo.io/hc/en-us/articles/10033806003483',
 }
 
 export const SUPPORT_LABELS = {
@@ -27,6 +38,17 @@ export const SUPPORT_LABELS = {
   spa: 'SPA install guide',
   helpCenter: 'Pendo Help Center',
   technicalSupport: 'Pendo Technical Support',
+  gtm: 'Google Tag Manager install',
+  segment: 'Twilio Segment install',
+  iframe: 'Iframe install options',
+  multiDomain: 'Multi-domain install',
+  sandbox: 'Dev & testing environments',
+  agentDebug: 'Web SDK debugger',
+  configureMetadata: 'Configure metadata',
+  signedMetadata: 'Signed metadata (JWT)',
+  hostnameAllowlist: 'Hostname allowlist',
+  launcherPlan: 'Launcher planning guide',
+  troubleshooting: 'Pendo not displaying',
 }
 
 export const ERR_SUPPORT_KEYS = new Set(['installGuide', 'installComponents', 'agentSettings'])
