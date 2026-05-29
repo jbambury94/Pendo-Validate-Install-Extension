@@ -104,7 +104,7 @@ export function selectRelatedReading(signals, max, findKbByTopicsFn) {
   return findKbByTopicsFn(topics, max)
 }
 
-export function buildMarkdownReport(context) {
+export function buildMarkdownReport(context, selectRelatedReadingFn) {
   const { pageUrl, timestamp, status, captured, advice, checks, cspMeta, apiKeyFound, origin, snippetOnPage, launcherPresent, launcherAttempted, launcherDataValidated, validatedIn, launcherUrl } = context
   const adviceList = normalizeAdviceList(advice || [])
   const errors = (captured || []).filter(l => l.level === 'error')
@@ -190,6 +190,24 @@ export function buildMarkdownReport(context) {
   }
   if (!adviceList.length && (!checks || !checks.length)) lines.push(`No advice items.`)
   lines.push("")
+
+  if (typeof selectRelatedReadingFn === 'function') {
+    const signals = {
+      pendoPresent: status.pendoPresent,
+      validatePresent: status.validatePresent,
+      visitorId: status.visitorId,
+      accountId: status.accountId,
+      cspIssue: adviceList.some(a => a.supportKey === 'csp'),
+      noResourceHits: status.resourceHits && status.resourceHits.length === 0,
+      apiKeyMissing: !apiKeyFound,
+    }
+    const reading = selectRelatedReadingFn(signals, 6)
+    if (reading && reading.length) {
+      lines.push(`## Related reading`)
+      reading.forEach(r => lines.push(`- [${r.title}](${r.url})`))
+      lines.push("")
+    }
+  }
 
   lines.push(`## Captured Output`)
   if (!captured || !captured.length) lines.push(`No output captured.`)

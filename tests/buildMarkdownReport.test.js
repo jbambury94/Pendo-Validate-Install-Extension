@@ -1,5 +1,8 @@
-import { describe, it, expect } from 'vitest'
-import { buildMarkdownReport, buildJsonReport, PENDO_SUPPORT } from './helpers.js'
+import { describe, it, expect, beforeAll } from 'vitest'
+import { buildMarkdownReport, buildJsonReport, PENDO_SUPPORT, selectRelatedReading } from './helpers.js'
+import { readFileSync } from 'fs'
+import { join } from 'path'
+import { JSDOM } from 'jsdom'
 
 const baseContext = {
   pageUrl: 'https://example.com/app',
@@ -181,5 +184,65 @@ describe('buildJsonReport', () => {
     const parsed = JSON.parse(buildJsonReport(baseContext))
     expect(parsed.pageUrl).toBe(baseContext.pageUrl)
     expect(parsed.status.pendoPresent).toBe(true)
+  })
+})
+
+describe('buildMarkdownReport — Related reading section', () => {
+  let findKbByTopicsFn
+
+  beforeAll(() => {
+    const src = readFileSync(join(__dirname, '..', 'extension', 'pendo-kb.js'), 'utf8')
+    const dom = new JSDOM('<!doctype html>', { runScripts: 'dangerously' })
+    const result = dom.window.eval(`(function() { ${src}; return { findKbByTopics }; })()`)
+    findKbByTopicsFn = result.findKbByTopics
+  })
+
+  function srrFn(signals, max) {
+    return selectRelatedReading(signals, max, findKbByTopicsFn)
+  }
+
+  it('includes Related reading section when signals trigger KB entries', () => {
+    const ctx = { ...baseContext, status: { ...baseContext.status, pendoPresent: false }, apiKeyFound: false }
+    const md = buildMarkdownReport(ctx, srrFn)
+    expect(md).toContain('## Related reading')
+    expect(md).toContain('support.pendo.io')
+  })
+
+  it('does not include Related reading when no KB entries match', () => {
+    const md = buildMarkdownReport(baseContext, () => [])
+    expect(md).not.toContain('## Related reading')
+  })
+
+  it('does not include Related reading when no selectRelatedReadingFn is provided', () => {
+    const md = buildMarkdownReport(baseContext)
+    expect(md).not.toContain('## Related reading')
+  })
+
+  it('preserves existing sections alongside Related reading', () => {
+    const ctx = {
+      ...baseContext,
+      status: { ...baseContext.status, pendoPresent: false },
+      apiKeyFound: false,
+      advice: [{ text: 'Install snippet', supportKey: 'installGuide' }],
+      checks: ['API key found'],
+      captured: [{ level: 'log', text: 'test output' }],
+    }
+    const md = buildMarkdownReport(ctx, srrFn)
+    expect(md).toContain('## Errors')
+    expect(md).toContain('## Advice')
+    expect(md).toContain('## Related reading')
+    expect(md).toContain('## Captured Output')
+    expect(md).toContain('test output')
+    expect(md).toContain('API key found')
+  })
+
+  it('Related reading section appears between Advice and Captured Output', () => {
+    const ctx = { ...baseContext, status: { ...baseContext.status, pendoPresent: false }, apiKeyFound: false }
+    const md = buildMarkdownReport(ctx, srrFn)
+    const adviceIdx = md.indexOf('## Advice')
+    const readingIdx = md.indexOf('## Related reading')
+    const capturedIdx = md.indexOf('## Captured Output')
+    expect(adviceIdx).toBeLessThan(readingIdx)
+    expect(readingIdx).toBeLessThan(capturedIdx)
   })
 })

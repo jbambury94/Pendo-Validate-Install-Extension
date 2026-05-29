@@ -269,6 +269,24 @@ function buildMarkdownReport(context) {
   if (!adviceList.length && (!checks || !checks.length)) lines.push(`No advice items.`);
   lines.push("");
 
+  if (typeof selectRelatedReading === 'function') {
+    const signals = {
+      pendoPresent: status.pendoPresent,
+      validatePresent: status.validatePresent,
+      visitorId: status.visitorId,
+      accountId: status.accountId,
+      cspIssue: adviceList.some(a => a.supportKey === 'csp'),
+      noResourceHits: status.resourceHits && status.resourceHits.length === 0,
+      apiKeyMissing: !apiKeyFound,
+    };
+    const reading = selectRelatedReading(signals, 6);
+    if (reading && reading.length) {
+      lines.push(`## Related reading`);
+      reading.forEach(r => lines.push(`- [${r.title}](${r.url})`));
+      lines.push("");
+    }
+  }
+
   lines.push(`## Captured Output`);
   if (!captured || !captured.length) lines.push(`No output captured.`);
   else captured.forEach(l => lines.push(`- [${l.level}] ${l.text}`));
