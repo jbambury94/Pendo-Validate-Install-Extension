@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { requestAiAdvice, buildAiPrompt, PENDO_SUPPORT, friendlyAiFailureDetail } from './helpers.js'
+import { requestAiAdvice, buildAiPrompt, PENDO_SUPPORT, friendlyAiFailureDetail, selectRelatedReading } from './helpers.js'
+import { readFileSync } from 'fs'
+import { join } from 'path'
+import { JSDOM } from 'jsdom'
 
 const baseContext = {
   pageUrl: 'https://example.com',
@@ -237,5 +240,52 @@ describe('buildAiPrompt', () => {
   it('shows "not set" for null accountId', () => {
     const ctx = { ...baseContext, status: { ...baseContext.status, accountId: null } }
     expect(buildAiPrompt(ctx)).toContain('AccountId: not set')
+  })
+
+  it('works without selectRelatedReadingFn (backward-compatible)', () => {
+    const prompt = buildAiPrompt(baseContext)
+    expect(prompt).not.toContain('Reference excerpts')
+    expect(prompt).toContain('Respond with a short bullet list')
+  })
+})
+
+describe('buildAiPrompt — KB excerpt enrichment', () => {
+  let findKbByTopicsFn
+
+  beforeEach(() => {
+    const src = readFileSync(join(__dirname, '..', 'extension', 'pendo-kb.js'), 'utf8')
+    const dom = new JSDOM('<!doctype html>', { runScripts: 'dangerously' })
+    const result = dom.window.eval(`(function() { ${src}; return { findKbByTopics }; })()`)
+    findKbByTopicsFn = result.findKbByTopics
+  })
+
+  function makeSrr(signals, max) {
+    return selectRelatedReading(signals, max, findKbByTopicsFn)
+  }
+
+  it('includes KB excerpts when selectRelatedReadingFn is provided and context triggers topics', () => {
+    const ctx = { ...baseContext, status: { ...baseContext.status, pendoPresent: false }, apiKeyFound: false }
+    const prompt = buildAiPrompt(ctx, (signals, max) => makeSrr(signals, max))
+    expect(prompt).toContain('Reference excerpts from official Pendo documentation')
+    expect(prompt).toContain('support.pendo.io')
+  })
+
+  it('includes at most 6 KB entries', () => {
+    const ctx = { ...baseContext, status: { ...baseContext.status, pendoPresent: false }, apiKeyFound: false, cspMeta: 'script-src self' }
+    const prompt = buildAiPrompt(ctx, (signals, max) => makeSrr(signals, max))
+    const entryLines = prompt.split('\n').filter(l => l.startsWith('- ') && l.includes('support.pendo.io'))
+    expect(entryLines.length).toBeLessThanOrEqual(6)
+    expect(entryLines.length).toBeGreaterThan(0)
+  })
+
+  it('does not include excerpt block when no topics match', () => {
+    const prompt = buildAiPrompt(baseContext, () => [])
+    expect(prompt).not.toContain('Reference excerpts')
+  })
+
+  it('includes citation instruction in the excerpt header', () => {
+    const ctx = { ...baseContext, status: { ...baseContext.status, pendoPresent: false } }
+    const prompt = buildAiPrompt(ctx, (signals, max) => makeSrr(signals, max))
+    expect(prompt).toContain('do not invent URLs')
   })
 })

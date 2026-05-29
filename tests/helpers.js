@@ -311,7 +311,7 @@ export function clampResizeSize({ originWidth, originHeight, dw, dh, innerWidth,
   }
 }
 
-export function buildAiPrompt(context) {
+export function buildAiPrompt(context, selectRelatedReadingFn) {
   const lines = []
   lines.push('You are a Pendo installation assistant. Suggest concise, actionable remediation steps.')
   lines.push('Base your guidance solely on official Pendo sources (pendo.io domains such as support.pendo.io, help.pendo.io, academy.pendo.io). If unsure, say so.')
@@ -328,6 +328,31 @@ export function buildAiPrompt(context) {
   const trimmed = (context.captured || []).slice(0, 30)
   trimmed.forEach(l => lines.push(`[${l.level}] ${l.text}`))
   if ((context.captured || []).length > trimmed.length) lines.push('...truncated...')
+
+  if (typeof selectRelatedReadingFn === 'function') {
+    const signals = {
+      pendoPresent: context.status.pendoPresent,
+      validatePresent: context.status.validatePresent,
+      visitorId: context.status.visitorId,
+      accountId: context.status.accountId,
+      cspIssue: !!(context.cspMeta || '').length || (context.captured || []).some(l => /csp|content.security/i.test(l.text)),
+      noResourceHits: context.status.resourceHits && context.status.resourceHits.length === 0,
+      apiKeyMissing: !context.apiKeyFound,
+    }
+    const kbEntries = selectRelatedReadingFn(signals, 6)
+    if (kbEntries && kbEntries.length) {
+      lines.push('')
+      lines.push('Reference excerpts from official Pendo documentation (cite these where applicable; do not invent URLs):')
+      let charBudget = 800
+      for (const entry of kbEntries) {
+        if (charBudget <= 0) break
+        const block = `- ${entry.title} (${entry.url}): ${entry.bullets.slice(0, 3).join('; ')}`
+        lines.push(block)
+        charBudget -= block.length
+      }
+    }
+  }
+
   lines.push('Respond with a short bullet list of concrete fixes.')
   return lines.join('\n')
 }
