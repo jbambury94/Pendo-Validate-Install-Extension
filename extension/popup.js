@@ -530,6 +530,56 @@ async function runInPage() {
       advice.push({ text: "No Pendo network resources observed. If using a deferred or self-hosted setup, ensure agent requests are not blocked.", source: 'builtin', supportKey: 'spa' });
     }
 
+    // --- Extended detection signals (additive) ---
+    try {
+      if (status.pendoPresent && status.resourceHits.length > 0) {
+        const hitNames = status.resourceHits.map(r => (r.name || '').toLowerCase());
+        if (!hitNames.some(n => n.includes('data.pendo.io'))) {
+          advice.push({ text: "No requests to data.pendo.io observed. Analytics data may not be reaching Pendo. Check CSP connect-src and network filters.", source: 'builtin', supportKey: 'csp', supportKeys: ['csp', 'hostnameAllowlist'] });
+        }
+      }
+      const isIframe = (typeof window !== 'undefined') && window.top !== window;
+      if (isIframe) {
+        advice.push({ text: "Page is running inside an iframe. Ensure the Pendo snippet is installed in this frame with matching API key and IDs.", source: 'builtin', supportKey: 'iframe' });
+      }
+      const pageHref = (typeof location !== 'undefined' && location.href) || '';
+      if (/\b(staging|preview|dev\.|qa\.)/i.test(pageHref)) {
+        advice.push({ text: "This appears to be a staging or development environment. Use unique Visitor/Account ID prefixes and configure an Exclude List to keep test data separate.", source: 'builtin', supportKey: 'sandbox' });
+      }
+      if (typeof window !== 'undefined' && window.google_tag_manager) {
+        checks.push("Google Tag Manager detected.");
+        if (!status.pendoPresent) {
+          advice.push({ text: "Google Tag Manager is present but Pendo was not found. If installing Pendo via GTM, check your Custom HTML tag fires on all pages.", source: 'builtin', supportKey: 'gtm' });
+        }
+      }
+      if (typeof window !== 'undefined' && window.utag) {
+        checks.push("Tealium iQ (utag) detected.");
+      }
+      const spaGlobals = typeof window !== 'undefined'
+        ? { react: !!window.React || !!window.__REACT_DEVTOOLS_GLOBAL_HOOK__, vue: !!window.Vue || !!window.__VUE__, angular: !!window.angular || !!window.ng, next: !!window.next || !!window.__NEXT_DATA__, nuxt: !!window.__NUXT__ }
+        : {};
+      const detectedFramework = spaGlobals.react ? 'react' : spaGlobals.vue ? 'vue' : spaGlobals.angular ? 'angular' : spaGlobals.next ? 'next' : spaGlobals.nuxt ? 'nuxt' : null;
+      if (detectedFramework) {
+        checks.push(`SPA framework detected: ${detectedFramework}.`);
+      }
+      if (status.pendoPresent && status.version) {
+        const minVersion = (typeof PENDO_KB_MIN_AGENT_VERSION !== 'undefined') ? PENDO_KB_MIN_AGENT_VERSION : '2.17.0';
+        const curr = String(status.version).split('.').map(Number);
+        const min = String(minVersion).split('.').map(Number);
+        const outdated = (curr[0] < min[0]) || (curr[0] === min[0] && curr[1] < min[1]) || (curr[0] === min[0] && curr[1] === min[1] && (curr[2] || 0) < (min[2] || 0));
+        if (outdated) {
+          advice.push({ text: `Agent version ${status.version} is older than the recommended minimum (${minVersion}). Consider updating to access recent fixes and features.`, source: 'builtin', supportKey: 'agentSettings', supportKeys: ['agentSettings', 'agentDebug'] });
+        }
+      }
+      if (status.pendoPresent && status.visitorId) {
+        const hasVFields = status.visitorMetadata && typeof status.visitorMetadata === 'object' && Object.keys(status.visitorMetadata).some(k => k !== 'id');
+        const hasAFields = status.accountMetadata && typeof status.accountMetadata === 'object' && Object.keys(status.accountMetadata).some(k => k !== 'id');
+        if (hasVFields && !hasAFields && status.accountId != null) {
+          advice.push({ text: "Visitor metadata is populated but account metadata is empty. Consider passing account-level fields (name, plan, industry) for richer segmentation.", source: 'builtin', supportKey: 'configureMetadata', supportKeys: ['configureMetadata', 'chooseIdsMetadata'] });
+        }
+      }
+    } catch {}
+
     if (status.validatePresent && !hasError && !hasWarn && captured.length > 0) {
       checks.push("validateInstall() produced no warnings or errors.");
     }

@@ -92,4 +92,46 @@ describe('classifyAdvice', () => {
     expect(result.err).toHaveLength(0)
     expect(result.warn).toHaveLength(0)
   })
+
+  it('routes new gtm supportKey to warn bucket (not err)', () => {
+    const advice = [{ text: 'GTM present, Pendo missing', supportKey: 'gtm' }]
+    const result = classifyAdvice(advice, [], [])
+    expect(result.warn).toHaveLength(1)
+    expect(result.err).toHaveLength(0)
+  })
+
+  it('routes new iframe supportKey to warn bucket', () => {
+    const advice = [{ text: 'Running in iframe', supportKey: 'iframe' }]
+    const result = classifyAdvice(advice, [], [])
+    expect(result.warn).toHaveLength(1)
+    expect(result.err).toHaveLength(0)
+  })
+
+  it('routes new sandbox supportKey to warn bucket', () => {
+    const advice = [{ text: 'Staging environment', supportKey: 'sandbox' }]
+    const result = classifyAdvice(advice, [], [])
+    expect(result.warn).toHaveLength(1)
+    expect(result.err).toHaveLength(0)
+  })
+
+  it('routes new configureMetadata supportKey to warn bucket', () => {
+    const advice = [{ text: 'Account metadata empty', supportKey: 'configureMetadata' }]
+    const result = classifyAdvice(advice, [], [])
+    expect(result.warn).toHaveLength(1)
+    expect(result.err).toHaveLength(0)
+  })
+
+  it('routes new hostnameAllowlist supportKey to warn bucket', () => {
+    const advice = [{ text: 'Missing data.pendo.io', supportKey: 'csp', supportKeys: ['csp', 'hostnameAllowlist'] }]
+    const result = classifyAdvice(advice, [], [])
+    expect(result.warn).toHaveLength(1)
+    expect(result.err).toHaveLength(0)
+  })
+
+  it('routes new troubleshooting supportKey to warn bucket', () => {
+    const advice = [{ text: 'Pendo not displaying', supportKey: 'troubleshooting' }]
+    const result = classifyAdvice(advice, [], [])
+    expect(result.warn).toHaveLength(1)
+    expect(result.err).toHaveLength(0)
+  })
 })
