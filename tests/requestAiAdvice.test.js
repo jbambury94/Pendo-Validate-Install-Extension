@@ -176,6 +176,21 @@ describe('requestAiAdvice — Claude provider', () => {
     expect(result[0].text).toContain('AI suggestion unavailable')
     expect(result[0].text).toContain('organization policy')
   })
+
+  it('tags AI-failure items with a non-error supportKey so they render as warnings', async () => {
+    // Regression: the Anthropic org-policy failure message contains the phrase "API key",
+    // which inferSupportKeyFromText maps to installComponents (an ERR-bucket key). The
+    // failure item must carry an explicit supportKey ('technicalSupport') so it never
+    // falls through to inference and never lands in the error bucket.
+    chrome.runtime.sendMessage.mockResolvedValue({
+      ok: false,
+      status: 401,
+      json: { error: { message: 'CORS requests are not allowed for this Organization because of its settings.' } },
+    })
+    const result = await requestAiAdvice(baseContext)
+    expect(result[0].supportKey).toBe('technicalSupport')
+    expect(result[0].supportUrl).toBe(PENDO_SUPPORT.technicalSupport)
+  })
 })
 
 describe('requestAiAdvice — Gemini provider', () => {

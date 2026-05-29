@@ -141,9 +141,9 @@
   --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
-/* -------- Auto dark mode — follows OS preference; no toggle. -------- */
+/* -------- Dark mode — auto (OS) unless overridden by data-theme on <html>. -------- */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #000000;
     --panel: #1A1A1A;
     --panel-soft: #252525;
@@ -161,6 +161,24 @@
     --shadow-md: 0 12px 32px rgba(0,0,0,.55), 0 2px 8px rgba(0,0,0,.45);
     --shadow-lg: 0 24px 60px rgba(0,0,0,.65), 0 4px 14px rgba(0,0,0,.45);
   }
+}
+:root[data-theme="dark"] {
+  --bg: #000000;
+  --panel: #1A1A1A;
+  --panel-soft: #252525;
+  --ink: #F6F6F1;
+  --ink-2: #C7C8C2;
+  --ink-3: #A1A29E;
+  --line: #303030;
+  --line-soft: #262626;
+
+  --ok-tint: rgba(31,138,91,.16);
+  --warn-tint: rgba(176,118,4,.18);
+  --err-tint: rgba(229,59,80,.16);
+  --pank-tint: rgba(255,72,118,.14);
+
+  --shadow-md: 0 12px 32px rgba(0,0,0,.55), 0 2px 8px rgba(0,0,0,.45);
+  --shadow-lg: 0 24px 60px rgba(0,0,0,.65), 0 4px 14px rgba(0,0,0,.45);
 }
 
 * { box-sizing: border-box; }
@@ -283,8 +301,9 @@ body {
   color: var(--pank-press);
 }
 @media (prefers-color-scheme: dark) {
-  .iva-tab[aria-selected="true"] .iva-tab__count { color: var(--pank); }
+  :root:not([data-theme="light"]) .iva-tab[aria-selected="true"] .iva-tab__count { color: var(--pank); }
 }
+:root[data-theme="dark"] .iva-tab[aria-selected="true"] .iva-tab__count { color: var(--pank); }
 
 /* Body (scroll area) */
 .iva-body {
@@ -608,8 +627,9 @@ body {
 .chip:hover { border-color: var(--ink-3); color: var(--ink); }
 .chip[aria-pressed="true"] { background: var(--ink); color: var(--panel); border-color: var(--ink); }
 @media (prefers-color-scheme: dark) {
-  .chip[aria-pressed="true"] { background: var(--panel-soft); color: var(--ink); border-color: var(--ink-2); }
+  :root:not([data-theme="light"]) .chip[aria-pressed="true"] { background: var(--panel-soft); color: var(--ink); border-color: var(--ink-2); }
 }
+:root[data-theme="dark"] .chip[aria-pressed="true"] { background: var(--panel-soft); color: var(--ink); border-color: var(--ink-2); }
 .chip__dot {
   width: 6px; height: 6px; border-radius: 999px;
   background: var(--ink-3);
@@ -657,8 +677,9 @@ body {
 .log-line--err .log-line__msg { color: var(--err); }
 .log-line--warn .log-line__msg { color: #8C5C00; }
 @media (prefers-color-scheme: dark) {
-  .log-line--warn .log-line__msg { color: #E2B554; }
+  :root:not([data-theme="light"]) .log-line--warn .log-line__msg { color: #E2B554; }
 }
+:root[data-theme="dark"] .log-line--warn .log-line__msg { color: #E2B554; }
 
 .empty {
   text-align: center;
@@ -735,8 +756,9 @@ body {
   position: relative;
 }
 @media (prefers-color-scheme: dark) {
-  .action-bar { background: #161616; border-top-color: #2A2A2A; }
+  :root:not([data-theme="light"]) .action-bar { background: #161616; border-top-color: #2A2A2A; }
 }
+:root[data-theme="dark"] .action-bar { background: #161616; border-top-color: #2A2A2A; }
 
 .btn {
   font-family: var(--font-sans);
@@ -778,9 +800,11 @@ body {
 .btn--ghost:hover { border-color: var(--pank); color: var(--ink); }
 .btn--ghost:active { background: var(--panel-soft); }
 @media (prefers-color-scheme: dark) {
-  .btn--ghost { background: #1F1F1F; border-color: #383838; }
-  .btn--ghost:hover { border-color: var(--pank); }
+  :root:not([data-theme="light"]) .btn--ghost { background: #1F1F1F; border-color: #383838; }
+  :root:not([data-theme="light"]) .btn--ghost:hover { border-color: var(--pank); }
 }
+:root[data-theme="dark"] .btn--ghost { background: #1F1F1F; border-color: #383838; }
+:root[data-theme="dark"] .btn--ghost:hover { border-color: var(--pank); }
 
 .btn--icon {
   padding: 9px 10px;
@@ -879,8 +903,9 @@ body {
   pointer-events: none;
 }
 @media (prefers-color-scheme: dark) {
-  .toast { background: var(--panel); color: var(--ink); }
+  :root:not([data-theme="light"]) .toast { background: var(--panel); color: var(--ink); }
 }
+:root[data-theme="dark"] .toast { background: var(--panel); color: var(--ink); }
 @keyframes toast-in {
   from { opacity: 0; transform: translate(-50%, 8px); }
   to { opacity: 1; transform: translate(-50%, 0); }

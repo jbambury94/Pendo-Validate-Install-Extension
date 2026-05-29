@@ -42,9 +42,20 @@ describe('normalizeAdviceList', () => {
     expect(result[0].supportUrl).toBe(PENDO_SUPPORT.technicalSupport)
   })
 
-  it('falls back to helpCenter when supportKey does not exist in PENDO_SUPPORT', () => {
+  it('falls back to troubleshooting when supportKey does not exist in PENDO_SUPPORT and text has no matchable pattern', () => {
     const result = normalizeAdviceList([{ text: 'tip', supportKey: 'nonExistentKey' }])
-    expect(result[0].supportUrl).toBe(PENDO_SUPPORT.helpCenter)
+    expect(result[0].supportUrl).toBe(PENDO_SUPPORT.troubleshooting)
+  })
+
+  it('infers a relevant supportKey from AI bullet text instead of the generic technicalSupport link', () => {
+    const result = normalizeAdviceList([{ text: 'Add data.pendo.io to your Content Security Policy connect-src directive.', source: 'ai' }])
+    expect(result[0].supportKey).toBe('csp')
+    expect(result[0].supportUrl).toBe(PENDO_SUPPORT.csp)
+  })
+
+  it('still uses technicalSupport URL for AI bullets that do not match any pattern', () => {
+    const result = normalizeAdviceList([{ text: 'Generic suggestion with nothing recognisable.', source: 'ai' }])
+    expect(result[0].supportUrl).toBe(PENDO_SUPPORT.technicalSupport)
   })
 
   it('filters out items with empty text', () => {

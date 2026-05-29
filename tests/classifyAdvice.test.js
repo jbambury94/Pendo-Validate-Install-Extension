@@ -47,12 +47,43 @@ describe('classifyAdvice', () => {
     expect(result.err[0].source).toBe('captured')
   })
 
-  it('routes captured warn log lines to warn bucket with helpCenter supportUrl', () => {
-    const captured = [{ level: 'warn', text: 'Missing visitor' }]
+  it('routes generic captured warn log lines to warn bucket with troubleshooting supportUrl', () => {
+    const captured = [{ level: 'warn', text: 'Some unrecognised warning' }]
     const result = classifyAdvice([], captured, [])
     expect(result.warn).toHaveLength(1)
-    expect(result.warn[0].supportUrl).toBe(PENDO_SUPPORT.helpCenter)
+    expect(result.warn[0].supportUrl).toBe(PENDO_SUPPORT.troubleshooting)
+    expect(result.warn[0].supportKey).toBe('troubleshooting')
     expect(result.warn[0].source).toBe('captured')
+  })
+
+  it('maps known Pendo validateInstall warn messages to snippet-appropriate support articles (not the browser-scripting article)', () => {
+    const captured = [
+      { level: 'warn', text: 'The current visitor is not identified and will be treated as "anonymous". (You might have used "VISITOR-UNIQUE-ID" as the visitor ID)' },
+      { level: 'warn', text: 'The current visitor is not associated with an account. Is this expected?' },
+      { level: 'warn', text: 'No account metadata found. Learn more about metadata here: http://help.pendo.io/resources/support-library/installation/metadata.html' },
+    ]
+    const result = classifyAdvice([], captured, [])
+    expect(result.warn).toHaveLength(3)
+    expect(result.warn[0].supportKey).toBe('chooseIdsMetadata')
+    expect(result.warn[0].supportUrl).toBe(PENDO_SUPPORT.chooseIdsMetadata)
+    expect(result.warn[1].supportKey).toBe('chooseIdsMetadata')
+    expect(result.warn[1].supportUrl).toBe(PENDO_SUPPORT.chooseIdsMetadata)
+    expect(result.warn[2].supportKey).toBe('configureMetadata')
+    expect(result.warn[2].supportUrl).toBe(PENDO_SUPPORT.configureMetadata)
+    result.warn.forEach(w => {
+      expect(w.supportUrl).not.toBe(PENDO_SUPPORT.helpCenter)
+      expect(w.supportKey).not.toBe('identifyVisitors')
+    })
+    expect(result.warn[2].text).not.toMatch(/help\.pendo\.io/)
+    expect(result.warn[2].text).toBe('No account metadata found.')
+  })
+
+  it('maps CSP-related captured errors to the CSP article instead of installGuide', () => {
+    const captured = [{ level: 'error', text: 'Refused to connect to data.pendo.io: blocked by CSP' }]
+    const result = classifyAdvice([], captured, [])
+    expect(result.err).toHaveLength(1)
+    expect(result.err[0].supportKey).toBe('csp')
+    expect(result.err[0].supportUrl).toBe(PENDO_SUPPORT.csp)
   })
 
   it('maps checks to ok bucket as builtin source', () => {
@@ -133,5 +164,24 @@ describe('classifyAdvice', () => {
     const result = classifyAdvice(advice, [], [])
     expect(result.warn).toHaveLength(1)
     expect(result.err).toHaveLength(0)
+  })
+
+  it('routes AI-failure items (technicalSupport supportKey) to warn bucket, never err', () => {
+    // The "AI suggestion unavailable" item is an extension-side failure, not a
+    // snippet/Launcher install issue. It must surface as a warning even when the
+    // failure detail contains phrases like "API key" that would otherwise be
+    // inferred as an installComponents-level error.
+    const advice = [{
+      text: 'AI suggestion unavailable: Anthropic returned an organization policy error: client-side (browser) API access is disabled for your workspace, and Chrome extensions are treated as client-side. Use OpenAI or Google Gemini in Settings, use an API key from a workspace that allows browser access, ask an Anthropic org admin to update that policy, or set storage key aiClaudeEndpoint to an HTTPS URL of a proxy you run that forwards to Anthropic\u2019s Messages API (same request/response shape as /v1/messages).',
+      source: 'ai',
+      supportKey: 'technicalSupport',
+      supportUrl: PENDO_SUPPORT.technicalSupport,
+    }]
+    const result = classifyAdvice(advice, [], [])
+    expect(result.err).toHaveLength(0)
+    expect(result.warn).toHaveLength(1)
+    expect(result.warn[0].supportKey).toBe('technicalSupport')
+    expect(result.warn[0].supportUrl).toBe(PENDO_SUPPORT.technicalSupport)
+    expect(result.warn[0].source).toBe('ai')
   })
 })
