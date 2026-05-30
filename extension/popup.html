@@ -33,11 +33,11 @@
       <div class="iva-tabs" role="tablist">
         <button id="tabStatusBtn"   class="iva-tab" role="tab" data-action="tab-status"   aria-controls="tabStatusPanel"   aria-selected="true">
           Status
-          <span class="iva-tab__count" id="statusTabCount" hidden>0</span>
+          <span class="iva-tab__count" id="statusTabCount" hidden aria-hidden="true">0</span>
         </button>
         <button id="tabLogsBtn"     class="iva-tab" role="tab" data-action="tab-logs"     aria-controls="tabLogsPanel"     aria-selected="false">
           Logs
-          <span class="iva-tab__count" id="logsTabCount" hidden>0</span>
+          <span class="iva-tab__count" id="logsTabCount" hidden aria-hidden="true">0</span>
         </button>
         <button id="tabSettingsBtn" class="iva-tab" role="tab" data-action="tab-settings" aria-controls="tabSettingsPanel" aria-selected="false">
           Settings
@@ -75,7 +75,7 @@
           <div class="card" id="checksCard" hidden>
             <div class="card__head">
               <div class="card__title">Checks &amp; recommendations</div>
-              <button class="card__action" id="copyAdvice" data-action="copy-advice" title="Copy advice">Copy</button>
+              <button class="card__action" id="copyAdvice" data-action="copy-advice" title="Copy advice" aria-label="Copy advice">Copy</button>
             </div>
             <div class="card__body card__body--flush" id="checkGroups"></div>
           </div>
@@ -130,7 +130,7 @@
               <span class="chip__dot"></span>Info <span id="logCountInfo">0</span>
             </button>
             <input id="logsSearch" class="logs-search" type="search" placeholder="Filter…" aria-label="Filter log lines" />
-            <button class="card__action" id="copyLogs" data-action="copy-logs" title="Copy all logs" style="margin-left:auto;">Copy</button>
+            <button class="card__action" id="copyLogs" data-action="copy-logs" title="Copy all logs" aria-label="Copy all logs" style="margin-left:auto;">Copy</button>
           </div>
 
           <div class="card">
@@ -183,7 +183,7 @@
                 <label class="field__label" for="aiApiKeyInput">API key</label>
                 <div class="field-row">
                   <input type="password" id="aiApiKeyInput" class="input input--mono" placeholder="sk-… / paste your key" autocomplete="off" spellcheck="false" data-action="ai-api-key-input" />
-                  <button type="button" class="btn btn--ghost" id="aiKeyToggleVisibility" data-action="toggle-key-visibility" style="padding:8px 10px;">Show</button>
+                  <button type="button" class="btn btn--ghost" id="aiKeyToggleVisibility" data-action="toggle-key-visibility" aria-label="Show API key" style="padding:8px 10px;">Show</button>
                 </div>
                 <div class="field__hint">Stored locally in <code>chrome.storage.local</code>. Never sent unless validation surfaces a warning. Anthropic Claude: some orgs disable client-side API access; if Claude returns a policy error, use OpenAI/Gemini or configure <code>aiClaudeEndpoint</code> to a proxy.</div>
               </div>

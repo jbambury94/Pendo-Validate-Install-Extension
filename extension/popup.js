@@ -1249,6 +1249,17 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   // ── Tab strip ────────────────────────────────────────────────────────────
+
+  function notifyPendoTabChange(id) {
+    const pendo = window.pendo;
+    if (!pendo || !pendo.location || typeof pendo.location.setUrl !== 'function') return;
+    try {
+      const url = new URL(window.location.href);
+      url.pathname = url.pathname.replace(/\/+$/, '') + '/' + id;
+      pendo.location.setUrl(url.toString());
+    } catch (_) { /* telemetry must never break tab switching */ }
+  }
+
   /** Activate a tab by id ('status' | 'logs' | 'settings'). */
   function activateTab(id) {
     const targetPanelId = id === 'logs' ? 'tabLogsPanel'
@@ -1257,6 +1268,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const targetBtn = id === 'logs' ? tabLogsBtn : id === 'settings' ? tabSettingsBtn : tabStatusBtn;
     tabBtns.forEach(b => b.setAttribute('aria-selected', b === targetBtn ? 'true' : 'false'));
     tabPanels.forEach(p => { p.hidden = p.id !== targetPanelId; });
+    notifyPendoTabChange(id);
   }
   tabStatusBtn.addEventListener('click', () => activateTab('status'));
   tabLogsBtn.addEventListener('click', () => activateTab('logs'));
@@ -2023,6 +2035,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const isPassword = aiApiKeyInput.type === 'password';
     aiApiKeyInput.type = isPassword ? 'text' : 'password';
     aiKeyToggle.textContent = isPassword ? 'Hide' : 'Show';
+    aiKeyToggle.setAttribute('aria-label', isPassword ? 'Hide API key' : 'Show API key');
   });
 
   aiSaveBtn.addEventListener('click', () => {
