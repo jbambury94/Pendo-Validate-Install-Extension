@@ -5,6 +5,7 @@
 *.swp
 *.zip
 .cursor/rules/version-on-commit.mdc
+.cursor/plans
 
 # Dependencies
 node_modules/
