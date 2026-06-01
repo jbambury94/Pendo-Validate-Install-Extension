@@ -1850,7 +1850,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       renderPageSnapshot(res);
       renderPageFacts(res);
-      renderLogs();
 
       lastContext = {
         pageUrl: pageUrl || 'unknown',
@@ -1859,6 +1858,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         hasError: !!hasError, hasWarn: !!hasWarn,
         snippetOnPage, launcherPresent, launcherAttempted, launcherDataValidated: !!launcherDataValidated, validatedIn: validatedIn || 'page', launcherUrl: res.launcherUrl
       };
+      renderLogs();
 
       exportMenuBtn.disabled = false;
       exportMenuBtn.title = 'Export results';
