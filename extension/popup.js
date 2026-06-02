@@ -1390,6 +1390,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       wrap.dataset.open = g.defaultOpen ? 'true' : 'false';
 
       const head = document.createElement('button');
+      head.id = 'checkGroupHead' + g.kind.charAt(0).toUpperCase() + g.kind.slice(1);
       head.type = 'button';
       head.className = 'check-group__head';
       head.dataset.action = 'toggle-check-group';
@@ -1487,7 +1488,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   /** Build a `.kv-row` (label / value / copy button) and append to a container. */
-  function appendKvRow(container, { label, value, mono = true, wrap = false, top = false }) {
+  function appendKvRow(container, { label, value, mono = true, wrap = false, top = false, copyId }) {
     const row = document.createElement('div');
     row.className = 'kv-row' + (top ? ' kv-row--top' : '');
 
@@ -1507,6 +1508,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     if (!empty) {
       const btn = document.createElement('button');
+      if (copyId) btn.id = copyId;
       btn.type = 'button';
       btn.className = 'kv-row__copy';
       btn.dataset.action = 'copy-kv';
@@ -1529,9 +1531,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   /** Render Identity card (visitor, account, API key). */
   function renderIdentityCard({ visitorId, accountId, detectedApiKey }) {
     identityBody.replaceChildren();
-    appendKvRow(identityBody, { label: 'VisitorId', value: visitorId || '—' });
-    appendKvRow(identityBody, { label: 'AccountId', value: accountId == null ? '—' : String(accountId) });
-    appendKvRow(identityBody, { label: 'API key', value: detectedApiKey || '—' });
+    appendKvRow(identityBody, { label: 'VisitorId', value: visitorId || '—', copyId: 'identityCopyVisitorId' });
+    appendKvRow(identityBody, { label: 'AccountId', value: accountId == null ? '—' : String(accountId), copyId: 'identityCopyAccountId' });
+    appendKvRow(identityBody, { label: 'API key', value: detectedApiKey || '—', copyId: 'identityCopyApiKey' });
     identityCard.hidden = false;
   }
 
@@ -1558,6 +1560,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       row.appendChild(v);
       if (count > 0) {
         const btn = document.createElement('button');
+        btn.id = 'metadataCopy' + label;
         btn.type = 'button';
         btn.className = 'kv-row__copy';
         btn.dataset.action = 'copy-kv';
@@ -1597,16 +1600,16 @@ document.addEventListener('DOMContentLoaded', async () => {
       : validatedIn === 'launcher-beta' ? 'Pendo Launcher Beta'
       : validatedIn === 'page' ? 'Page' : '—';
 
-    appendKvRow(pageSnapshotBody, { label: 'Pendo present', value: yn(status.pendoPresent), mono: false });
-    appendKvRow(pageSnapshotBody, { label: 'validateInstall', value: yn(status.validatePresent), mono: false });
-    appendKvRow(pageSnapshotBody, { label: 'Agent version', value: status.version || 'unknown' });
-    appendKvRow(pageSnapshotBody, { label: 'API key found', value: yn(apiKeyFound), mono: false });
-    appendKvRow(pageSnapshotBody, { label: 'Detected key', value: status.detectedApiKey || '—' });
-    appendKvRow(pageSnapshotBody, { label: 'Snippet on page', value: yn(snippetOnPage), mono: false });
-    appendKvRow(pageSnapshotBody, { label: 'Pendo Launcher', value: launcherDisplay, mono: false });
-    appendKvRow(pageSnapshotBody, { label: 'Launcher validated', value: yn(launcherDataValidated), mono: false });
-    appendKvRow(pageSnapshotBody, { label: 'Validated in', value: validatedInDisplay, mono: false });
-    appendKvRow(pageSnapshotBody, { label: 'Resource hits', value: String(status.resourceHits.length), mono: false });
+    appendKvRow(pageSnapshotBody, { label: 'Pendo present', value: yn(status.pendoPresent), mono: false, copyId: 'pageSnapshotCopyPendoPresent' });
+    appendKvRow(pageSnapshotBody, { label: 'validateInstall', value: yn(status.validatePresent), mono: false, copyId: 'pageSnapshotCopyValidateInstall' });
+    appendKvRow(pageSnapshotBody, { label: 'Agent version', value: status.version || 'unknown', copyId: 'pageSnapshotCopyAgentVersion' });
+    appendKvRow(pageSnapshotBody, { label: 'API key found', value: yn(apiKeyFound), mono: false, copyId: 'pageSnapshotCopyApiKeyFound' });
+    appendKvRow(pageSnapshotBody, { label: 'Detected key', value: status.detectedApiKey || '—', copyId: 'pageSnapshotCopyDetectedKey' });
+    appendKvRow(pageSnapshotBody, { label: 'Snippet on page', value: yn(snippetOnPage), mono: false, copyId: 'pageSnapshotCopySnippetOnPage' });
+    appendKvRow(pageSnapshotBody, { label: 'Pendo Launcher', value: launcherDisplay, mono: false, copyId: 'pageSnapshotCopyPendoLauncher' });
+    appendKvRow(pageSnapshotBody, { label: 'Launcher validated', value: yn(launcherDataValidated), mono: false, copyId: 'pageSnapshotCopyLauncherValidated' });
+    appendKvRow(pageSnapshotBody, { label: 'Validated in', value: validatedInDisplay, mono: false, copyId: 'pageSnapshotCopyValidatedIn' });
+    appendKvRow(pageSnapshotBody, { label: 'Resource hits', value: String(status.resourceHits.length), mono: false, copyId: 'pageSnapshotCopyResourceHits' });
     pageSnapshotCard.hidden = false;
   }
 
@@ -1617,9 +1620,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     const validatedInDisplay = validatedIn === 'launcher' ? 'Pendo Launcher'
       : validatedIn === 'launcher-beta' ? 'Pendo Launcher Beta'
       : validatedIn === 'page' ? 'Active tab' : '—';
-    appendKvRow(pageFactsBody, { label: 'Snippet', value: snippetOnPage ? 'Found' : 'Not found', mono: false });
-    appendKvRow(pageFactsBody, { label: 'Validated in', value: validatedInDisplay, mono: false });
-    appendKvRow(pageFactsBody, { label: 'Lines captured', value: String((res.captured || []).length) });
+    appendKvRow(pageFactsBody, { label: 'Snippet', value: snippetOnPage ? 'Found' : 'Not found', mono: false, copyId: 'pageFactsCopySnippet' });
+    appendKvRow(pageFactsBody, { label: 'Validated in', value: validatedInDisplay, mono: false, copyId: 'pageFactsCopyValidatedIn' });
+    appendKvRow(pageFactsBody, { label: 'Lines captured', value: String((res.captured || []).length), copyId: 'pageFactsCopyLinesCaptured' });
     pageFactsCard.hidden = false;
   }
 
