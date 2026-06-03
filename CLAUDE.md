@@ -4,18 +4,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a **Chrome browser extension (Manifest V3)** that validates Pendo installations on web pages. It runs `pendo.validateInstall()` in the page context, captures console output, checks visitor/account identity, detects API key presence, and provides remediation advice. The UI is delivered as a draggable iframe overlay injected into the active tab — not as a Chrome toolbar popup.
+This is a **Chromium browser extension (Manifest V3)** that validates Pendo installations on web pages. It works in **Chrome** and **Microsoft Edge**. It runs `pendo.validateInstall()` in the page context, captures console output, checks visitor/account identity, detects API key presence, and provides remediation advice. The UI is delivered as a draggable iframe overlay injected into the active tab — not as a Chrome toolbar popup.
 
-There is no build system. The `extension/` folder is loaded directly by Chrome as an unpacked extension. There is a Vitest + jsdom test suite at the repo root (`npm install && npm test`).
+There is no build system. The `extension/` folder is loaded directly by Chrome or Edge as an unpacked extension. There is a Vitest + jsdom test suite at the repo root (`npm install && npm test`).
 
 ## Running the Extension
 
-Load it in Chrome:
+Load it in Chrome or Edge:
+
+**Chrome:**
 1. Navigate to `chrome://extensions`
-2. Enable **Developer mode**
+2. Enable **Developer mode** (top-right toggle)
 3. Click **Load unpacked** → select the `extension/` folder
 
-To apply code changes: click the refresh icon on the extension card in `chrome://extensions`, then click the extension icon to reopen the floating panel.
+**Edge:**
+1. Navigate to `edge://extensions`
+2. Enable **Developer mode** (bottom-left toggle)
+3. Click **Load unpacked** → select the `extension/` folder
+
+To apply code changes: click the refresh icon on the extension card, then click the extension icon to reopen the floating panel.
 
 ## Architecture
 
@@ -49,6 +56,8 @@ When the user clicks "Validate Pendo Install", `popup.js` runs `runInPage()`:
 3. **Phase 2 — Separate Launcher tab.** If neither phase finds an agent, `findLauncherTab()` searches all open windows for a Pendo Launcher / Pendo Launcher (Beta) tab and re-runs `captureAndInspect('launcher' | 'launcher-beta')` there. `chrome-extension://`, `chrome://`, and `about:` URLs are filtered out — `executeScript({ world: 'MAIN' })` cannot inject into another extension's pages regardless of `host_permissions`. The injection is wrapped in `try/catch` so a failure degrades to the Phase 1 fallback.
 
 Results flow back to the panel context → `renderAdvice()` + `renderLogs()` populate the UI. Activating "Validate Pendo Install" auto-switches the tab strip to *Status*.
+
+**Note on Launcher extension IDs:** `PENDO_LAUNCHER_EXTENSION_IDS` in `popup.js` contains hardcoded Chrome Web Store IDs. When the Pendo Launcher is installed from the Edge Add-ons store it will have a different ID. The name-based regex fallback (`/pendo\s*launcher/i`) in `detectInstalledPendoLauncherExtension()` covers this case, so no code change is needed for Edge.
 
 ### Key Subsystems in `popup.js`
 

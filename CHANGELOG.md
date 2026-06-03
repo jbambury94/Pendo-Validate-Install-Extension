@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.7.1
+- **Microsoft Edge compatibility.** Verified that the extension loads and runs unmodified on Edge (Chromium MV3). All `chrome.*` APIs used by the extension are supported identically in Edge. The existing name-regex fallback in `detectInstalledPendoLauncherExtension()` covers Pendo Launcher installs from the Edge Add-ons store (which have different extension IDs than the Chrome Web Store). No code or manifest changes required.
+- **Updated install docs.** README and CLAUDE.md now include Edge install steps (`edge://extensions`), note Firefox as unsupported, and document the Launcher ID / Edge Add-ons store edge case.
+
 ## 1.7.0
 - **Pendo employee identification.** When the Chrome profile is signed in to a `@pendo.io` Google account, the extension uses the profile email as the Pendo visitor ID for self-instrumentation telemetry. Non-Pendo users continue to use an anonymous UUID. Email is read passively via `chrome.identity.getProfileUserInfo` (no OAuth prompt) and is not cached — signing out immediately reverts to the UUID fallback.
 - **New permission: `identity.email`.** Required for the profile-email feature above. Shows "Know your email address" in the Chrome install prompt.

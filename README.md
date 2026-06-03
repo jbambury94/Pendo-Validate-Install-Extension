@@ -5,11 +5,12 @@
 <h1 align="center">Pendo Validate Install</h1>
 
 <p align="center">
-  A Chrome extension that tells you in one click whether Pendo is installed correctly&nbsp;&mdash; and what to fix if it isn't.
+  A browser extension for Chrome and Edge that tells you in one click whether Pendo is installed correctly&nbsp;&mdash; and what to fix if it isn't.
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Chrome%20Extension-MV3-blue" alt="Chrome Extension MV3" />
+  <img src="https://img.shields.io/badge/Chrome-MV3-blue" alt="Chrome MV3" />
+  <img src="https://img.shields.io/badge/Edge-MV3-blue" alt="Edge MV3" />
   <img src="https://img.shields.io/badge/version-1.7.0-FF4876" alt="Version 1.7.0" />
   <img src="https://img.shields.io/badge/Pendo%20Agent-v2.314.1%20bundled-0b2239" alt="Pendo Agent v2.314.1 bundled" />
   <img src="https://img.shields.io/badge/tests-Vitest%20%2B%20jsdom-0f9d58" alt="Tests: Vitest + jsdom" />
@@ -25,7 +26,7 @@
 
 ## The problem
 
-Debugging a Pendo installation today means juggling browser DevTools, running `pendo.validateInstall()` by hand, guessing whether the snippet or the Pendo Launcher loaded, hunting for a missing API key, and cross-referencing CSP headers — all before you can even tell whether visitor identity is flowing. This extension collapses all of that into a single button click.
+Debugging a Pendo installation today means juggling browser DevTools, running `pendo.validateInstall()` by hand, guessing whether the snippet or the Pendo Launcher loaded, hunting for a missing API key, and cross-referencing CSP headers — all before you can even tell whether visitor identity is flowing. This extension collapses all of that into a single button click. It works in any Chromium-based browser (Chrome and Edge).
 
 ## Why you'll like it
 
@@ -47,10 +48,21 @@ Debugging a Pendo installation today means juggling browser DevTools, running `p
   <img src="docs/screenshots/install.png" width="600" alt="Loading the extension from chrome://extensions" />
 </p>
 
+**Chrome**
+
 1. Open Chrome and navigate to `chrome://extensions`.
 2. Enable **Developer mode** (top-right toggle).
 3. Click **Load unpacked** and select the `extension/` folder from this repo.
 4. Pin the extension icon in the toolbar for quick access.
+
+**Edge**
+
+1. Open Edge and navigate to `edge://extensions`.
+2. Enable **Developer mode** (bottom-left toggle).
+3. Click **Load unpacked** and select the `extension/` folder from this repo.
+4. Pin the extension icon in the toolbar for quick access.
+
+> **Firefox** is not currently supported. The extension relies on Manifest V3 APIs (`chrome.debugger`, `chrome.identity.email`) that Firefox does not implement.
 
 To apply code changes after editing: click the refresh icon on the extension card, then click the toolbar icon to reopen the panel.
 
@@ -109,5 +121,5 @@ Your key is stored locally in `chrome.storage.local` and is only sent when valid
 ---
 
 <p align="center">
-  <sub>v1.7.0 &middot; Manifest V3 &middot; Built with the Pendo Web SDK</sub>
+  <sub>v1.7.0 &middot; Manifest V3 &middot; Chrome + Edge &middot; Built with the Pendo Web SDK</sub>
 </p>
