@@ -436,7 +436,22 @@ export function buildAiPrompt(context, selectRelatedReadingFn) {
   return lines.join('\n')
 }
 
-export function getOrCreateVisitorId() {
+export function getProfileEmail() {
+  return new Promise((resolve) => {
+    try {
+      if (!chrome.identity || typeof chrome.identity.getProfileUserInfo !== 'function') return resolve('')
+      chrome.identity.getProfileUserInfo({ accountStatus: 'ANY' }, (info) => {
+        if (chrome.runtime.lastError) return resolve('')
+        resolve((info && info.email) ? String(info.email).trim().toLowerCase() : '')
+      })
+    } catch { resolve('') }
+  })
+}
+
+export async function getOrCreateVisitorId() {
+  const email = await getProfileEmail()
+  if (email && email.endsWith('@pendo.io')) return email
+
   return new Promise((resolve) => {
     try {
       if (!chrome.storage || !chrome.storage.local) {

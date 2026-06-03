@@ -21,10 +21,14 @@ global.chrome = {
   permissions: {
     contains: vi.fn(),
   },
+  identity: {
+    getProfileUserInfo: vi.fn((_opts, cb) => cb({ email: '', id: '' })),
+  },
   runtime: {
     getURL: vi.fn((path) => `chrome-extension://test-ext/${path}`),
     onMessage: { addListener: vi.fn() },
     sendMessage: vi.fn(),
+    lastError: null,
   },
   action: {
     onClicked: { addListener: vi.fn() },
