@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.7.0
+- **Pendo employee identification.** When the Chrome profile is signed in to a `@pendo.io` Google account, the extension uses the profile email as the Pendo visitor ID for self-instrumentation telemetry. Non-Pendo users continue to use an anonymous UUID. Email is read passively via `chrome.identity.getProfileUserInfo` (no OAuth prompt) and is not cached — signing out immediately reverts to the UUID fallback.
+- **New permission: `identity.email`.** Required for the profile-email feature above. Shows "Know your email address" in the Chrome install prompt.
+- **Privacy policy update.** Visitor-ID description, permissions table, and third-party data rows updated to reflect the new email-based identification for `@pendo.io` profiles.
+- **Accessibility & UI improvements.** Popup UI updated for improved accessibility and functionality.
+- **Bug fix: Logs panel first render.** Fixed an issue where the Logs panel was empty on first view because rendering ran before `lastContext` was set.
+- Test count is now 263 across 12 suites (new `getProfileEmail` and email-path tests added to `getOrCreateVisitorId` suite).
+
 ## 1.6.1
 - **Theme preference.** New theme selector in the Settings panel lets users choose System default / Light / Dark. Preference persists in `chrome.storage.local` (`themePreference`) and is mirrored to `localStorage('pendoValidateTheme')` so a synchronous `<head>` script can apply the theme before first paint, preventing flash of unstyled content (FOUC).
 - **Smarter advice classification.** `classifyAdvice` / `normalizeAdviceList` now infer relevant `supportKeys` from captured log messages, improving the Related reading links and AI prompt context for advice items that didn't carry explicit topic tags.

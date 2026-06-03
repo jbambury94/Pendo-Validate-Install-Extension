@@ -63,7 +63,7 @@ Results flow back to the panel context → `renderAdvice()` + `renderLogs()` pop
 | `getAiConfig()` | Reads `aiProvider`, `aiApiKey`, `aiEndpoint`, `aiModel`, `timeoutMs` from `chrome.storage.local` |
 | `buildMarkdownReport()` / `buildJsonReport()` | Generates downloadable/copyable reports. Markdown report includes a `## Related reading` section with contextually relevant KB links. |
 | `setExportMenuOpen()` | Toggles the Export fly-out menu (Markdown report + Copy summary) |
-| `getOrCreateVisitorId()` | Persistent UUID in `chrome.storage.local` for self-instrumentation |
+| `getProfileEmail()` / `getOrCreateVisitorId()` | Returns the Chrome profile email when it ends with `@pendo.io`; otherwise a persistent UUID in `chrome.storage.local`. Email read via `chrome.identity.getProfileUserInfo` (not cached). |
 | `applyTheme()` | Sets or removes `data-theme` on `<html>` to force light/dark mode. Preference stored as `themePreference` in `chrome.storage.local` and mirrored to `localStorage('pendoValidateTheme')` for synchronous FOUC-free load. |
 | `activateTab()` | Switches the *Status* / *Logs* / *Settings* tabs |
 | `bindResizeHandle()` | Wires the corner resize handle; relays `pendo-validate-resizestart` / `-resize` / `-resizeend` to `content.js` |
@@ -94,7 +94,7 @@ The endpoint URL, model, and request shape vary per provider; response parsing a
 
 ### Persistent Visitor ID
 
-The extension instruments itself with Pendo. A UUID is generated on first run and stored in `chrome.storage.local` under a stable key, so the extension user is consistently identified across sessions.
+The extension instruments itself with Pendo. If the Chrome profile is signed in to a `@pendo.io` Google account, the profile email (read passively via `chrome.identity.getProfileUserInfo`, not cached) is used as the visitor ID. Otherwise a UUID is generated on first run and stored in `chrome.storage.local` under a stable key, so the extension user is consistently identified across sessions.
 
 ## Permissions
 
@@ -105,6 +105,7 @@ Declared in `manifest.json`:
 - `tabs` — enumerate tabs when searching for a Launcher tab in Phase 2
 - `management` — recognise the Pendo Launcher / Launcher (Beta) extensions when present
 - `debugger` — reserved for future debug tooling
+- `identity.email` — read Chrome profile email to identify `@pendo.io` employees in self-instrumentation
 - `host_permissions: <all_urls>` — run scripts on any page
 
 ## Tests
@@ -115,7 +116,7 @@ Vitest + jsdom test suite at the repo root. Pure functions are extracted into `t
 - `npm run test:watch` — watch mode
 - `npm run test:coverage` — v8 coverage
 
-Suites: `normalizeAdviceList`, `buildMarkdownReport`/`buildJsonReport`, `captureAndInspect`, `getOrCreateVisitorId`, `requestAiAdvice` (all three providers + timeout/error paths + buildAiPrompt KB enrichment), `content.js` drag-clamping, `content.test.js` resize-clamping, `pendoKb` (findKbByTopics + selectRelatedReading), `classifyAdvice`, `deriveHeroState`, `buildPlainSummary`, `formatRelative`, and `theme` (applyTheme + loadThemePreference + saveThemePreference). ~240 tests.
+Suites: `normalizeAdviceList`, `buildMarkdownReport`/`buildJsonReport`, `captureAndInspect`, `getOrCreateVisitorId`, `requestAiAdvice` (all three providers + timeout/error paths + buildAiPrompt KB enrichment), `content.js` drag-clamping, `content.test.js` resize-clamping, `pendoKb` (findKbByTopics + selectRelatedReading), `classifyAdvice`, `deriveHeroState`, `buildPlainSummary`, `formatRelative`, and `theme` (applyTheme + loadThemePreference + saveThemePreference). ~263 tests.
 
 ## Updating the Bundled Pendo Agent
 

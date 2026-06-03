@@ -10,7 +10,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Chrome%20Extension-MV3-blue" alt="Chrome Extension MV3" />
-  <img src="https://img.shields.io/badge/version-1.6.1-FF4876" alt="Version 1.6.1" />
+  <img src="https://img.shields.io/badge/version-1.7.0-FF4876" alt="Version 1.7.0" />
   <img src="https://img.shields.io/badge/Pendo%20Agent-v2.314.1%20bundled-0b2239" alt="Pendo Agent v2.314.1 bundled" />
   <img src="https://img.shields.io/badge/tests-Vitest%20%2B%20jsdom-0f9d58" alt="Tests: Vitest + jsdom" />
   <img src="https://img.shields.io/badge/AI-OpenAI%20%7C%20Claude%20%7C%20Gemini-lightgrey" alt="AI: OpenAI | Claude | Gemini" />
@@ -109,5 +109,5 @@ Your key is stored locally in `chrome.storage.local` and is only sent when valid
 ---
 
 <p align="center">
-  <sub>v1.6.1 &middot; Manifest V3 &middot; Built with the Pendo Web SDK</sub>
+  <sub>v1.7.0 &middot; Manifest V3 &middot; Built with the Pendo Web SDK</sub>
 </p>

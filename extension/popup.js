@@ -39,8 +39,24 @@ function detectInstalledPendoLauncherExtension() {
   });
 }
 
+/** Read the signed-in Chrome profile email (passive, no OAuth prompt). */
+function getProfileEmail() {
+  return new Promise((resolve) => {
+    try {
+      if (!chrome.identity || typeof chrome.identity.getProfileUserInfo !== 'function') return resolve('');
+      chrome.identity.getProfileUserInfo({ accountStatus: 'ANY' }, (info) => {
+        if (chrome.runtime.lastError) return resolve('');
+        resolve((info && info.email) ? String(info.email).trim().toLowerCase() : '');
+      });
+    } catch { resolve(''); }
+  });
+}
+
 /** Get or create a persistent visitor UUID; store in chrome.storage.local and return it. */
-function getOrCreateVisitorId() {
+async function getOrCreateVisitorId() {
+  const email = await getProfileEmail();
+  if (email && email.endsWith('@pendo.io')) return email;
+
   return new Promise((resolve) => {
     try {
       if (!chrome.storage || !chrome.storage.local) {

@@ -1,7 +1,7 @@
 # Privacy Policy — Pendo Validate Install
 
 **Last updated:** 30 May 2026
-**Extension version:** 1.6.1
+**Extension version:** 1.7.0
 
 ---
 
@@ -17,7 +17,7 @@ All data below is stored in `chrome.storage.local`, which is isolated to this ex
 
 | Item | Storage key | Purpose |
 |---|---|---|
-| Visitor UUID | `pendoVisitorId` | A randomly generated UUID (via `crypto.randomUUID()`) used to identify this extension installation for product analytics. Contains no personal information. |
+| Visitor ID | `pendoVisitorId` | If the Chrome profile is signed in to a `@pendo.io` Google account, the visitor ID is that email address (read passively via `chrome.identity.getProfileUserInfo`, not cached). Otherwise a randomly generated UUID (via `crypto.randomUUID()`) is used to identify this extension installation for product analytics. |
 | Theme preference | `themePreference` | `"system"`, `"light"`, or `"dark"`. Purely cosmetic. Also mirrored to `localStorage('pendoValidateTheme')` for flash-free page loads. |
 | AI provider | `aiProvider` | `"openai"`, `"claude"`, or `"gemini"`. Stored only when you save AI settings. |
 | AI API key | `aiApiKey` | Your API key for the selected AI provider. Stored only when you save AI settings. |
@@ -32,7 +32,7 @@ No cookies are set. No data is written to files on disk.
 
 The extension bundles the Pendo Web SDK (`extension/vendor/pendo.js`) and initialises it each time the panel opens. The agent sends the following to **Pendo servers** (`data.pendo.io`, `app.pendo.io`):
 
-- The persistent visitor UUID described above (not your name, email, or any personal identifier).
+- The persistent visitor ID described above (for `@pendo.io` Chrome profiles this is the work email; for everyone else it is a random UUID with no personal information).
 - Interaction events within the panel (button clicks, tab switches).
 - Standard browser metadata: user agent string, viewport size, locale, extension version.
 
@@ -78,6 +78,7 @@ Because `web_accessible_resources` in the manifest matches `<all_urls>` (require
 | `tabs` | Search open tabs for a Pendo Launcher window (Phase 2 detection). |
 | `management` | Detect whether the Pendo Launcher / Launcher (Beta) extension is installed and enabled. |
 | `debugger` | Run the validation function inside the Pendo Launcher extension's isolated world via CDP when the Launcher injects the Pendo agent into a tab. This causes Chrome to show a "this extension started debugging this browser" banner while the debugger is attached (typically under one second). |
+| `identity.email` | Read the Chrome profile email (passively, no OAuth prompt) to identify `@pendo.io` employees in self-instrumentation telemetry. Shows "Know your email address" at install. |
 | `host_permissions: <all_urls>` | Allow the content script and floating panel iframe to operate on any page. |
 
 ---
@@ -94,7 +95,7 @@ Because `web_accessible_resources` in the manifest matches `<all_urls>` (require
 
 | Service | Data received | Privacy policy |
 |---|---|---|
-| Pendo (product analytics) | Visitor UUID, panel interaction events, browser metadata | [pendo.io/legal/privacy](https://www.pendo.io/legal/privacy/) |
+| Pendo (product analytics) | Visitor ID (work email for `@pendo.io` profiles, random UUID otherwise), panel interaction events, browser metadata | [pendo.io/legal/privacy](https://www.pendo.io/legal/privacy/) |
 | OpenAI (opt-in AI advice) | Validation context as described above | [openai.com/policies/privacy-policy](https://openai.com/policies/privacy-policy/) |
 | Anthropic (opt-in AI advice) | Validation context as described above | [anthropic.com/privacy](https://www.anthropic.com/privacy) |
 | Google (opt-in AI advice) | Validation context as described above | [policies.google.com/privacy](https://policies.google.com/privacy) |
