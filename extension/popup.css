@@ -321,6 +321,11 @@ body {
 .iva-body::-webkit-scrollbar { width: 8px; }
 .iva-body::-webkit-scrollbar-thumb { background: var(--line); border-radius: 999px; }
 
+.tab-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
 .tab-panel[hidden] { display: none; }
 
 /* Hero status */
