@@ -808,6 +808,11 @@ async function runInPage() {
    * inside the Pendo Launcher extension's content-script isolated world.
    */
   async function runValidationInLauncherWorld(tabId, launcher) {
+    // Firefox lacks the chrome.debugger (CDP) API; skip this Launcher-introspection
+    // path entirely so it degrades quietly instead of throwing on undefined.
+    if (typeof chrome === 'undefined' || !chrome.debugger || typeof chrome.debugger.attach !== 'function') {
+      return null;
+    }
     const target = { tabId };
     const launcherId = launcher.id;
     const expectedOrigin = `chrome-extension://${launcherId}`;

@@ -4,6 +4,11 @@
 *.tmp
 *.swp
 *.zip
+
+# Firefox / web-ext build artifacts
+dist/
+web-ext-artifacts/
+*.xpi
 .cursor/rules/version-on-commit.mdc
 .cursor/plans
 

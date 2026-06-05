@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.7.1 — Firefox build (branch: `Firefox`)
+- **Firefox (Gecko) support.** Loads as a Manifest V3 add-on on Firefox 128+ (the first release with `scripting.executeScript({ world: "MAIN" })`, which the validation relies on). `browser_specific_settings.gecko` sets a stable add-on id (`pendo-validate-install@pendo.io`) and `strict_min_version: "128.0"`; `background.scripts` adds the Firefox event-page fallback next to the Chrome `service_worker`.
+- **Dropped Chrome-only permissions** `debugger`, `identity`, and `identity.email`. On Firefox, `@pendo.io` employee identification (which needs `chrome.identity.getProfileUserInfo`) falls back to the anonymous UUID, and the `chrome.debugger` (CDP) Launcher-introspection path is skipped via a feature-detect guard in `runValidationInLauncherWorld()`. Snippet and same-tab Launcher detection are unaffected.
+- **FOUC theme script externalised to `theme-init.js`.** The pre-paint theme script was inline and silently dropped by the MV3 `script-src 'self'` CSP (strictly enforced in Firefox); it is now an external file and listed in `web_accessible_resources`.
+- **web-ext tooling.** Added `lint:ext`, `start:firefox`, `build:firefox`, and `sign:firefox` npm scripts plus `web-ext-config.cjs`. `npm run lint:ext` passes with 0 errors (remaining warnings are the feature-detected Chrome APIs and the ignored `service_worker` key). `dist/`, `web-ext-artifacts/`, and `*.xpi` are gitignored.
+- **Tests.** `tests/manifest.test.js` now asserts the Firefox manifest shape (Chrome-only permissions absent; `gecko` settings and `background.scripts` present). Full suite: 411 tests across 17 suites.
+
 ## 1.7.1
 - **Gemini model updated to `gemini-3.5-flash`.** Default Google Gemini model bumped from `gemini-2.0-flash` to the latest GA Flash release (Settings dropdown label and docs updated to match). Users with a custom `aiModel` saved in `chrome.storage.local` are unaffected.
 - **Gemini 3.x request compatibility.** `requestAiAdvice()` now drops the `temperature` sampling param (Google recommends defaults for Gemini 3.x) and pins `generationConfig.thinkingConfig.thinkingLevel` to `LOW` so the default medium-effort thinking does not exceed the request `timeoutMs`. Response parsing now joins all non-thought text parts instead of reading only `parts[0]`, guarding against multi-part responses.

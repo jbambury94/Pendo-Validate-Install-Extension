@@ -8,10 +8,7 @@
     "activeTab",
     "storage",
     "tabs",
-    "management",
-    "debugger",
-    "identity",
-    "identity.email"
+    "management"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -19,8 +16,15 @@
   "action": {
     "default_title": "Validate Pendo"
   },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "pendo-validate-install@pendo.io",
+      "strict_min_version": "128.0"
+    }
+  },
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background.js",
+    "scripts": ["background.js"]
   },
   "content_scripts": [
     {
@@ -35,6 +39,7 @@
         "popup.html",
         "popup.css",
         "popup.js",
+        "theme-init.js",
         "pendo-kb.js",
         "pendo-install-quality.md",
         "pendo-loader.js",

@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a **Chrome browser extension (Manifest V3)** that validates Pendo installations on web pages. It runs `pendo.validateInstall()` in the page context, captures console output, checks visitor/account identity, detects API key presence, and provides remediation advice. The UI is delivered as a draggable iframe overlay injected into the active tab — not as a Chrome toolbar popup.
+This is a **Manifest V3 browser extension** (Chrome, Edge, and Firefox) that validates Pendo installations on web pages. It runs `pendo.validateInstall()` in the page context, captures console output, checks visitor/account identity, detects API key presence, and provides remediation advice. The UI is delivered as a draggable iframe overlay injected into the active tab — not as a toolbar popup.
 
-There is no build system. The `extension/` folder is loaded directly by Chrome as an unpacked extension. There is a Vitest + jsdom test suite at the repo root (`npm install && npm test`).
+There is no bundler. The `extension/` folder is loaded directly as an unpacked extension (Chrome) or a temporary add-on (Firefox); Firefox packaging/signing uses `web-ext`. There is a Vitest + jsdom test suite at the repo root (`npm install && npm test`). This branch (`Firefox`) carries the Firefox-tuned manifest — see [Firefox build (Gecko)](#firefox-build-gecko).
 
 ## Running the Extension
 
@@ -24,7 +24,7 @@ To apply code changes: click the refresh icon on the extension card in `chrome:/
 - **`extension/manifest.json`** — MV3 manifest. No `default_popup`; the icon click is handled by the background service worker. Declares `background.service_worker`, `content_scripts`, and `web_accessible_resources` so `popup.html` can be loaded as a `chrome-extension://` iframe on any host page.
 - **`extension/background.js`** — Service worker. Listens for `chrome.action.onClicked`, ensures `content.js` is injected into pre-existing tabs (new navigations get it automatically), then sends a `pendo-validate-toggle` message.
 - **`extension/content.js`** — Content script. Owns the overlay lifecycle: creates/destroys an iframe (`#pendo-validate-overlay-iframe`) pointing at `popup.html`, and tracks drag + resize state via `postMessage` from the iframe (`pendo-validate-dragstart` / `-drag` / `-dragend` for dragging; `pendo-validate-resizestart` / `-resize` / `-resizeend` for resizing). Width and height are clamped to configurable min/max bounds. Guards against double-injection via `window.__pendoValidateInjected`.
-- **`extension/popup.html`** — Panel UI loaded inside the iframe. Three-tab strip: *Status* (status hero, quick stats, checks & recommendations, related reading, identity, metadata), *Logs* (filtered console output with level chips + text search), and *Settings* (theme preference, page snapshot, AI advice configuration). A synchronous `<head>` script reads `localStorage('pendoValidateTheme')` to apply a forced light/dark theme before first paint (FOUC prevention). The panel is user-resizable via a corner drag handle. References `pendo-kb.js`, `pendo-loader.js` (runs first), and `popup.js`.
+- **`extension/popup.html`** — Panel UI loaded inside the iframe. Three-tab strip: *Status* (status hero, quick stats, checks & recommendations, related reading, identity, metadata), *Logs* (filtered console output with level chips + text search), and *Settings* (theme preference, page snapshot, AI advice configuration). A synchronous `<head>` script — `theme-init.js`, kept external so it is not blocked by the MV3 `script-src 'self'` CSP (Firefox enforces this strictly) — reads `localStorage('pendoValidateTheme')` to apply a forced light/dark theme before first paint (FOUC prevention). The panel is user-resizable via a corner drag handle. References `pendo-kb.js`, `pendo-loader.js` (runs first), and `popup.js`.
 - **`extension/pendo-kb.js`** — Bundled knowledge base: 24 curated support.pendo.io install articles as a flat `PENDO_KB` array (each with `slug`, `title`, `url`, `topics[]`, `summary`, `bullets[]`). Exposes `findKbByTopics(topics, max)` which returns deduped entries ordered by topic-match count. Also defines `PENDO_KB_MIN_AGENT_VERSION` used by the agent-version detection signal. Loaded via `<script>` before `popup.js` and exposed in `web_accessible_resources`.
 - **`extension/pendo-loader.js`** — Immediately queues Pendo API calls, then defers loading `vendor/pendo.js` via `requestIdleCallback`/`setTimeout` to avoid blocking panel responsiveness.
 - **`extension/popup.js`** — All validation, advice, export, debug, AI, and tab-switching logic (~1,727 lines). Runs in the iframe's own context (not injected into the host page); detects iframe context via `window !== window.parent` and wires the close button, hero drag handle, and resize handle to relay events to `content.js`.
@@ -78,7 +78,7 @@ Results flow back to the panel context → `renderAdvice()` + `renderLogs()` pop
 
 Chrome's Manifest V3 prohibits remotely-hosted scripts. The Pendo Web SDK (`vendor/pendo.js`, ~540KB, v2.314.1) is bundled locally. The manifest's `content_security_policy` allows `script-src 'self'` only. `pendo-loader.js` loads the agent via `chrome.runtime.getURL('vendor/pendo.js')`.
 
-`web_accessible_resources` exposes `popup.html`, `popup.css`, `popup.js`, `pendo-kb.js`, `pendo-loader.js`, `vendor/pendo.js`, and the fonts/icons folders so the iframe can load them on any host origin.
+`web_accessible_resources` exposes `popup.html`, `popup.css`, `popup.js`, `theme-init.js`, `pendo-kb.js`, `pendo-install-quality.md`, `pendo-loader.js`, `vendor/pendo.js`, and the fonts/icons folders so the iframe can load them on any host origin.
 
 ### Optional Multi-provider AI
 
@@ -98,25 +98,50 @@ The extension instruments itself with Pendo. If the Chrome profile is signed in 
 
 ## Permissions
 
-Declared in `manifest.json`:
+Declared in `manifest.json` (this is the **Firefox** branch — Chrome-only permissions are dropped here):
 - `scripting` — inject scripts into tabs
 - `activeTab` — access the currently active tab
 - `storage` — persist visitor UUID and AI credentials
 - `tabs` — enumerate tabs when searching for a Launcher tab in Phase 2
 - `management` — recognise the Pendo Launcher / Launcher (Beta) extensions when present
-- `debugger` — reserved for future debug tooling
-- `identity` + `identity.email` — read Chrome profile email to identify `@pendo.io` employees in self-instrumentation
 - `host_permissions: <all_urls>` — run scripts on any page
+
+Dropped on the Firefox branch (present on Chrome/Edge branches, unsupported or invalid in Firefox):
+- `debugger` — Chrome DevTools Protocol Launcher introspection (Phase 1.75). Guarded out at runtime in `runValidationInLauncherWorld()`.
+- `identity` + `identity.email` — `chrome.identity.getProfileUserInfo` is Chrome-only; `getProfileEmail()` feature-detects and falls back to the anonymous UUID.
+
+## Firefox build (Gecko)
+
+This `Firefox` branch tracks `Stable` and layers Firefox compatibility on top. Keep it in sync by merging `origin/Stable` (no force-push).
+
+Manifest deltas vs. the Chrome/Edge branches ([extension/manifest.json](extension/manifest.json)):
+- `browser_specific_settings.gecko` — stable add-on `id` (`pendo-validate-install@pendo.io`) and `strict_min_version: "128.0"` (Firefox 128 is the first release with `scripting.executeScript({ world: "MAIN" })`, the load-bearing API).
+- `background` declares both `service_worker` (Chrome) and `scripts: ["background.js"]` (Firefox event page). Firefox ignores `service_worker`; Chrome ignores `scripts`.
+- Permissions `debugger`, `identity`, `identity.email` removed (see Permissions above).
+
+Graceful degradation (Firefox lacks these APIs; both are feature-detected, no code path throws):
+- `chrome.debugger` (CDP) — Phase 1.75 Launcher introspection is skipped via an early guard in `runValidationInLauncherWorld()`. Phase 1 (snippet) and Phase 1.5 (same-tab Launcher) are unaffected.
+- `chrome.identity.getProfileUserInfo` — `getProfileEmail()` returns empty, so `@pendo.io` self-instrumentation falls back to the persistent UUID.
+
+`chrome.*` works in Firefox (the namespace is aliased), so no `browser.*` rename or polyfill is needed.
+
+Tooling (`package.json` scripts, backed by `web-ext`; config in [web-ext-config.cjs](web-ext-config.cjs)):
+- `npm run lint:ext` — `addons-linter` validation (0 errors; warnings for the feature-detected Chrome APIs and the ignored `service_worker` key are expected).
+- `npm run start:firefox` — run in a throwaway Firefox profile.
+- `npm run build:firefox` — unsigned `.zip` in `dist/`.
+- `npm run sign:firefox` — AMO-signed `.xpi` (needs `WEB_EXT_API_KEY` / `WEB_EXT_API_SECRET`; `--channel unlisted` by default).
+
+`web-ext-config.cjs` excludes dev-only files (`popup-actions.md`, `vendor/README.md`); `pendo-install-quality.md` is a runtime resource and is intentionally kept in the package.
 
 ## Tests
 
-Vitest + jsdom test suite at the repo root. Pure functions are extracted into `tests/helpers.js` so they can run without a build step.
+Vitest + jsdom test suite at the repo root. Pure functions are extracted into `tests/helpers.js` so they can run without a build step. The suite is browser-agnostic; `tests/manifest.test.js` asserts the Firefox manifest shape (Chrome-only permissions absent, `gecko` settings and `background.scripts` present).
 
 - `npm test` — single run
 - `npm run test:watch` — watch mode
 - `npm run test:coverage` — v8 coverage
 
-Suites: `normalizeAdviceList`, `buildMarkdownReport`/`buildJsonReport`, `captureAndInspect`, `getOrCreateVisitorId`, `requestAiAdvice` (all three providers + timeout/error paths + buildAiPrompt KB enrichment), `content.js` drag-clamping, `content.test.js` resize-clamping, `pendoKb` (findKbByTopics + selectRelatedReading), `classifyAdvice`, `deriveHeroState`, `buildPlainSummary`, `formatRelative`, and `theme` (applyTheme + loadThemePreference + saveThemePreference). ~263 tests.
+Suites: `normalizeAdviceList`, `buildMarkdownReport`/`buildJsonReport`, `captureAndInspect`, `getOrCreateVisitorId`, `requestAiAdvice` (all three providers + timeout/error paths + buildAiPrompt KB enrichment), `content.js` drag-clamping, `content.test.js` resize-clamping, `pendoKb` (findKbByTopics + selectRelatedReading), `classifyAdvice`, `deriveHeroState`, `buildPlainSummary`, `formatRelative`, `theme` (applyTheme + loadThemePreference + saveThemePreference), `manifest` (Firefox manifest shape), `background` (AI fetch proxy), `assessInstallQuality`, `inferSupportKeyFromText`, and `parseAiAdviceResponse`. 411 tests across 17 suites.
 
 ## Updating the Bundled Pendo Agent
 
