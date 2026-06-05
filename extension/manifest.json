@@ -10,6 +10,7 @@
     "tabs",
     "management",
     "debugger",
+    "identity",
     "identity.email"
   ],
   "host_permissions": [

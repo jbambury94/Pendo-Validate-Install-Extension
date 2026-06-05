@@ -105,7 +105,7 @@ Declared in `manifest.json`:
 - `tabs` — enumerate tabs when searching for a Launcher tab in Phase 2
 - `management` — recognise the Pendo Launcher / Launcher (Beta) extensions when present
 - `debugger` — reserved for future debug tooling
-- `identity.email` — read Chrome profile email to identify `@pendo.io` employees in self-instrumentation
+- `identity` + `identity.email` — read Chrome profile email to identify `@pendo.io` employees in self-instrumentation
 - `host_permissions: <all_urls>` — run scripts on any page
 
 ## Tests
