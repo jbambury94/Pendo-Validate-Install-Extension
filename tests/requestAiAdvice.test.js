@@ -66,7 +66,7 @@ describe('requestAiAdvice — OpenAI provider', () => {
     fetch.mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: '- Fix snippet\n- Update key' } }] }) })
     const result = await requestAiAdvice(baseContext)
     expect(result).toHaveLength(2)
-    expect(result[0]).toMatchObject({ text: 'Fix snippet', source: 'ai', supportUrl: PENDO_SUPPORT.technicalSupport })
+    expect(result[0]).toMatchObject({ text: 'Fix snippet', source: 'ai' })
     expect(result[1].text).toBe('Update key')
   })
 
@@ -260,7 +260,7 @@ describe('buildAiPrompt', () => {
   it('works without selectRelatedReadingFn (backward-compatible)', () => {
     const prompt = buildAiPrompt(baseContext)
     expect(prompt).not.toContain('Reference excerpts')
-    expect(prompt).toContain('Respond with a short bullet list')
+    expect(prompt).toContain('Respond ONLY with a JSON array')
   })
 })
 
@@ -302,5 +302,81 @@ describe('buildAiPrompt — KB excerpt enrichment', () => {
     const ctx = { ...baseContext, status: { ...baseContext.status, pendoPresent: false } }
     const prompt = buildAiPrompt(ctx, (signals, max) => makeSrr(signals, max))
     expect(prompt).toContain('do not invent URLs')
+  })
+})
+
+describe('buildAiPrompt — enrichment details', () => {
+  it('includes visitor metadata field names', () => {
+    const ctx = {
+      ...baseContext,
+      status: { ...baseContext.status, visitorMetadata: { email: 'a@b.c', name: 'Alice', role: 'admin' } },
+    }
+    const prompt = buildAiPrompt(ctx)
+    expect(prompt).toContain('Visitor metadata fields: email, name, role')
+  })
+
+  it('includes account metadata field names', () => {
+    const ctx = {
+      ...baseContext,
+      status: { ...baseContext.status, accountMetadata: { name: 'Acme', plan: 'pro' } },
+    }
+    const prompt = buildAiPrompt(ctx)
+    expect(prompt).toContain('Account metadata fields: name, plan')
+  })
+
+  it('shows "none" when visitor metadata is absent', () => {
+    const ctx = {
+      ...baseContext,
+      status: { ...baseContext.status, visitorMetadata: null },
+    }
+    const prompt = buildAiPrompt(ctx)
+    expect(prompt).toContain('Visitor metadata fields: none')
+  })
+
+  it('shows "none" when account metadata is absent', () => {
+    const prompt = buildAiPrompt(baseContext)
+    expect(prompt).toContain('Account metadata fields: none')
+  })
+
+  it('includes install quality JSON line', () => {
+    const prompt = buildAiPrompt(baseContext)
+    expect(prompt).toContain('Install quality:')
+    expect(prompt).toContain('"visitorId"')
+    expect(prompt).toContain('"quality"')
+  })
+
+  it('includes existing advice block when advice is present', () => {
+    const ctx = {
+      ...baseContext,
+      advice: [
+        { text: 'Fix snippet placement', source: 'builtin' },
+        { text: 'Check CSP headers', source: 'builtin' },
+      ],
+    }
+    const prompt = buildAiPrompt(ctx)
+    expect(prompt).toContain('Existing advice already shown to the user')
+    expect(prompt).toContain('Fix snippet placement')
+    expect(prompt).toContain('Check CSP headers')
+  })
+
+  it('omits existing advice block when no advice', () => {
+    const ctx = { ...baseContext, advice: [] }
+    const prompt = buildAiPrompt(ctx)
+    expect(prompt).not.toContain('Existing advice already shown')
+  })
+
+  it('includes quality guide reference when _qualityGuide is set', () => {
+    const ctx = { ...baseContext, _qualityGuide: 'Visitor ID should be stable and unique.' }
+    const prompt = buildAiPrompt(ctx)
+    expect(prompt).toContain('Quality guide reference:')
+    expect(prompt).toContain('Visitor ID should be stable')
+  })
+
+  it('truncates _qualityGuide to 1200 chars', () => {
+    const ctx = { ...baseContext, _qualityGuide: 'x'.repeat(2000) }
+    const prompt = buildAiPrompt(ctx)
+    const guideSection = prompt.split('Quality guide reference:\n')[1]
+    const guideLine = guideSection.split('\n')[0]
+    expect(guideLine.length).toBe(1200)
   })
 })
