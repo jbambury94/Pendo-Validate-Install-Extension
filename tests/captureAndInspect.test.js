@@ -284,3 +284,165 @@ describe('captureAndInspect — variant messages', () => {
     expect(result.captured.some(l => l.level === 'warn' && l.text.includes('validateInstall()'))).toBe(true)
   })
 })
+
+describe('captureAndInspect — pendoGlobal tracking', () => {
+  it('reports pendoGlobal "pendo" for standard snippet', () => {
+    window.pendo = { validateInstall: vi.fn() }
+    expect(captureAndInspect().status.pendoGlobal).toBe('pendo')
+  })
+
+  it('reports pendoGlobal null when no agent', () => {
+    expect(captureAndInspect().status.pendoGlobal).toBeNull()
+  })
+
+  it('reports pendoGlobal "Pendo" for launcher variant using window.Pendo', () => {
+    window.Pendo = { validateInstall: vi.fn() }
+    expect(captureAndInspect('launcher').status.pendoGlobal).toBe('Pendo')
+  })
+
+  it('reports pendoGlobal "pendo" for launcher variant falling back to window.pendo', () => {
+    window.pendo = { validateInstall: vi.fn() }
+    expect(captureAndInspect('launcher').status.pendoGlobal).toBe('pendo')
+  })
+})
+
+describe('captureAndInspect — getSerializedMetadata', () => {
+  it('reads metadata from getSerializedMetadata() when available', () => {
+    window.pendo = {
+      validateInstall: vi.fn(),
+      apiKey: 'k',
+      getSerializedMetadata: () => ({
+        visitor: { id: 'v1', email: 'a@b.c', name: 'Alice' },
+        account: { id: 'a1', name: 'Acme', plan: 'pro' },
+      }),
+      _: { state: { visitorId: 'v1', accountId: 'a1' } },
+    }
+    const result = captureAndInspect()
+    expect(result.status.visitorMetadata).toMatchObject({ email: 'a@b.c', name: 'Alice' })
+    expect(result.status.accountMetadata).toMatchObject({ name: 'Acme', plan: 'pro' })
+  })
+
+  it('falls back to legacy agent._.options when getSerializedMetadata is absent', () => {
+    window.pendo = {
+      validateInstall: vi.fn(),
+      apiKey: 'k',
+      _: {
+        options: {
+          visitor: { id: 'v1', role: 'admin' },
+          account: { id: 'a1', industry: 'tech' },
+          apiKey: 'k',
+        },
+        state: { visitorId: 'v1', accountId: 'a1' },
+      },
+    }
+    const result = captureAndInspect()
+    expect(result.status.visitorMetadata).toMatchObject({ role: 'admin' })
+    expect(result.status.accountMetadata).toMatchObject({ industry: 'tech' })
+  })
+
+  it('skips agent._.options when agent._ is a function (underscore.js)', () => {
+    const fn = () => {}
+    fn.options = { visitor: { shouldIgnore: true } }
+    window.pendo = {
+      validateInstall: vi.fn(),
+      apiKey: 'k',
+      _: fn,
+      getVisitorId: () => 'v1',
+      getAccountId: () => 'a1',
+    }
+    const result = captureAndInspect()
+    expect(result.status.visitorMetadata).toBeNull()
+  })
+})
+
+describe('captureAndInspect — extended signals', () => {
+  it('detects Google Tag Manager and adds check', () => {
+    window.google_tag_manager = {}
+    window.pendo = { validateInstall: vi.fn(), apiKey: 'k', _: { state: { visitorId: 'v', accountId: 'a' } } }
+    global.performance = { getEntriesByType: vi.fn(() => [{ name: 'https://cdn.pendo.io/a.js', initiatorType: 'script' }]) }
+    const result = captureAndInspect()
+    expect(result.checks).toContain('Google Tag Manager detected.')
+    delete window.google_tag_manager
+  })
+
+  it('adds GTM advice when pendo absent but GTM present', () => {
+    window.google_tag_manager = {}
+    const result = captureAndInspect()
+    expect(result.advice.some(a => a.text.includes('Google Tag Manager') && a.supportKey === 'gtm')).toBe(true)
+    delete window.google_tag_manager
+  })
+
+  it('detects Tealium iQ (utag) and adds check', () => {
+    window.utag = {}
+    window.pendo = { validateInstall: vi.fn(), apiKey: 'k', _: { state: { visitorId: 'v', accountId: 'a' } } }
+    global.performance = { getEntriesByType: vi.fn(() => [{ name: 'https://cdn.pendo.io/a.js', initiatorType: 'script' }]) }
+    const result = captureAndInspect()
+    expect(result.checks).toContain('Tealium iQ (utag) detected.')
+    delete window.utag
+  })
+
+  it('detects React SPA framework', () => {
+    window.__REACT_DEVTOOLS_GLOBAL_HOOK__ = {}
+    window.pendo = { validateInstall: vi.fn(), apiKey: 'k', _: { state: { visitorId: 'v', accountId: 'a' } } }
+    global.performance = { getEntriesByType: vi.fn(() => [{ name: 'https://cdn.pendo.io/a.js', initiatorType: 'script' }]) }
+    const result = captureAndInspect()
+    expect(result.checks.some(c => c.includes('react'))).toBe(true)
+    delete window.__REACT_DEVTOOLS_GLOBAL_HOOK__
+  })
+
+  it('adds outdated agent advice when version is below minimum', () => {
+    window.pendo = {
+      validateInstall: vi.fn(),
+      apiKey: 'k',
+      getVersion: () => '2.10.0',
+      _: { state: { visitorId: 'v', accountId: 'a' } },
+    }
+    global.performance = { getEntriesByType: vi.fn(() => [{ name: 'https://cdn.pendo.io/a.js', initiatorType: 'script' }]) }
+    const result = captureAndInspect()
+    expect(result.advice.some(a => a.text.includes('older than the recommended minimum'))).toBe(true)
+  })
+
+  it('does not add outdated advice for current agent version', () => {
+    window.pendo = {
+      validateInstall: vi.fn(),
+      apiKey: 'k',
+      getVersion: () => '2.314.1',
+      _: { state: { visitorId: 'v', accountId: 'a' } },
+    }
+    global.performance = { getEntriesByType: vi.fn(() => [{ name: 'https://cdn.pendo.io/a.js', initiatorType: 'script' }]) }
+    const result = captureAndInspect()
+    expect(result.advice.some(a => a.text.includes('older than the recommended minimum'))).toBe(false)
+  })
+
+  it('adds account metadata gap advice when visitor metadata populated but account empty', () => {
+    window.pendo = {
+      validateInstall: vi.fn(),
+      apiKey: 'k',
+      getSerializedMetadata: () => ({
+        visitor: { id: 'v1', email: 'a@b.c', name: 'A' },
+        account: { id: 'a1' },
+      }),
+      _: { state: { visitorId: 'v1', accountId: 'a1' } },
+    }
+    global.performance = { getEntriesByType: vi.fn(() => [{ name: 'https://cdn.pendo.io/a.js', initiatorType: 'script' }]) }
+    const result = captureAndInspect()
+    expect(result.advice.some(a => a.text.includes('account metadata is empty'))).toBe(true)
+  })
+
+  it('uses hasFieldsBeyondId for metadata checks', () => {
+    window.pendo = {
+      validateInstall: vi.fn(),
+      apiKey: 'k',
+      getSerializedMetadata: () => ({
+        visitor: { id: 'v1' },
+        account: { id: 'a1' },
+      }),
+      _: { state: { visitorId: 'v1', accountId: 'a1' } },
+    }
+    global.performance = { getEntriesByType: vi.fn(() => [{ name: 'https://cdn.pendo.io/a.js', initiatorType: 'script' }]) }
+    const result = captureAndInspect()
+    expect(result.checks).not.toContain('Visitor metadata fields detected.')
+    expect(result.checks).not.toContain('Account metadata fields detected.')
+    expect(result.advice.some(a => a.text.includes('No visitor metadata fields detected'))).toBe(true)
+  })
+})

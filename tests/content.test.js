@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { clampDragPosition, clampResizeSize, enableDebuggingInPage } from './helpers.js'
+import { clampDragPosition, clampDragDelta, clampResizeSize, enableDebuggingInPage } from './helpers.js'
 
 // ── Drag clamping ─────────────────────────────────────────────────────────────
 
@@ -50,6 +50,56 @@ describe('clampDragPosition', () => {
   it('accounts for offsetY correctly', () => {
     const pos = clampDragPosition({ clientX: 100, clientY: 200, offsetX: 0, offsetY: 25, ...viewport })
     expect(pos.top).toBe(175)
+  })
+})
+
+// ── Delta-based drag clamping (matches production content.js applyDrag) ──────
+
+describe('clampDragDelta', () => {
+  const viewport = { innerWidth: 1024, innerHeight: 768, iframeWidth: 460 }
+
+  it('returns correct position from origin + delta', () => {
+    const pos = clampDragDelta({ originLeft: 100, originTop: 50, dx: 50, dy: 30, ...viewport })
+    expect(pos.left).toBe(150)
+    expect(pos.top).toBe(80)
+  })
+
+  it('clamps left to 0 on negative overshoot', () => {
+    const pos = clampDragDelta({ originLeft: 20, originTop: 50, dx: -100, dy: 0, ...viewport })
+    expect(pos.left).toBe(0)
+  })
+
+  it('clamps right to innerWidth - iframeWidth', () => {
+    const pos = clampDragDelta({ originLeft: 500, originTop: 50, dx: 200, dy: 0, ...viewport })
+    expect(pos.left).toBe(1024 - 460)
+  })
+
+  it('clamps top to 0', () => {
+    const pos = clampDragDelta({ originLeft: 100, originTop: 10, dx: 0, dy: -50, ...viewport })
+    expect(pos.top).toBe(0)
+  })
+
+  it('clamps bottom to innerHeight - 60', () => {
+    const pos = clampDragDelta({ originLeft: 100, originTop: 700, dx: 0, dy: 100, ...viewport })
+    expect(pos.top).toBe(768 - 60)
+  })
+
+  it('handles zero deltas (no movement)', () => {
+    const pos = clampDragDelta({ originLeft: 200, originTop: 100, dx: 0, dy: 0, ...viewport })
+    expect(pos.left).toBe(200)
+    expect(pos.top).toBe(100)
+  })
+
+  it('handles negative deltas within bounds', () => {
+    const pos = clampDragDelta({ originLeft: 200, originTop: 100, dx: -50, dy: -30, ...viewport })
+    expect(pos.left).toBe(150)
+    expect(pos.top).toBe(70)
+  })
+
+  it('clamps both axes simultaneously', () => {
+    const pos = clampDragDelta({ originLeft: 0, originTop: 0, dx: -100, dy: 900, ...viewport })
+    expect(pos.left).toBe(0)
+    expect(pos.top).toBe(708)
   })
 })
 

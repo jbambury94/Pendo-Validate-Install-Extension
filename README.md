@@ -81,7 +81,7 @@ The action bar at the bottom gives you **Validate Pendo Install**, **Debugger** 
 
 ## Optional: AI advice
 
-1. Open **Settings** and pick a provider — OpenAI (`gpt-4o-mini`), Anthropic Claude (`claude-haiku-4-5`), or Google Gemini (`gemini-2.0-flash`).
+1. Open **Settings** and pick a provider — OpenAI (`gpt-4o-mini`), Anthropic Claude (`claude-haiku-4-5`), or Google Gemini (`gemini-3.5-flash`).
 2. Paste your API key (use the **Show / Hide** toggle to confirm it) and click **Save**.
 3. Re-run validation — when warnings or errors are found, the extension requests AI-powered remediation advice grounded in official Pendo sources, with up to 6 curated KB excerpts injected into the prompt for context.
 

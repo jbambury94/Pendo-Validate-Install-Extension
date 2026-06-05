@@ -392,8 +392,6 @@ export function clampResizeSize({ originWidth, originHeight, dw, dh, innerWidth,
 
 export function buildAiPrompt(context, selectRelatedReadingFn) {
   const lines = []
-  lines.push('You are a Pendo installation assistant. Suggest concise, actionable remediation steps.')
-  lines.push('Base your guidance solely on official Pendo sources (pendo.io domains such as support.pendo.io, help.pendo.io, academy.pendo.io). If unsure, say so.')
   lines.push(`Page URL: ${context.pageUrl}`)
   lines.push(`Agent version: ${context.status.version || 'unknown'}`)
   lines.push(`validateInstall available: ${context.status.validatePresent}`)
@@ -403,10 +401,40 @@ export function buildAiPrompt(context, selectRelatedReadingFn) {
   lines.push(`VisitorId: ${context.status.visitorId || 'not set'}`)
   lines.push(`AccountId: ${context.status.accountId == null ? 'not set' : context.status.accountId}`)
   lines.push(`CSP meta: ${context.cspMeta || 'none'}`)
+
+  // Include metadata fields
+  if (context.status.visitorMetadata && typeof context.status.visitorMetadata === 'object') {
+    const keys = Object.keys(context.status.visitorMetadata).slice(0, 20)
+    lines.push(`Visitor metadata fields: ${keys.join(', ') || 'none'}`)
+  } else {
+    lines.push('Visitor metadata fields: none')
+  }
+  if (context.status.accountMetadata && typeof context.status.accountMetadata === 'object') {
+    const keys = Object.keys(context.status.accountMetadata).slice(0, 20)
+    lines.push(`Account metadata fields: ${keys.join(', ') || 'none'}`)
+  } else {
+    lines.push('Account metadata fields: none')
+  }
+
+  // Include quality assessment
+  const quality = assessInstallQuality(context)
+  lines.push(`Install quality: ${JSON.stringify(quality)}`)
+
   lines.push('Captured logs (level:message):')
   const trimmed = (context.captured || []).slice(0, 30)
   trimmed.forEach(l => lines.push(`[${l.level}] ${l.text}`))
   if ((context.captured || []).length > trimmed.length) lines.push('...truncated...')
+
+  // Include existing advice so AI does not repeat it
+  const existingAdvice = context.advice || []
+  if (existingAdvice.length) {
+    lines.push('')
+    lines.push('Existing advice already shown to the user (DO NOT repeat or paraphrase these):')
+    existingAdvice.forEach(a => {
+      const text = typeof a === 'string' ? a : (a.text || '')
+      if (text) lines.push(`- ${text}`)
+    })
+  }
 
   if (typeof selectRelatedReadingFn === 'function') {
     const signals = {
@@ -432,7 +460,17 @@ export function buildAiPrompt(context, selectRelatedReadingFn) {
     }
   }
 
-  lines.push('Respond with a short bullet list of concrete fixes.')
+  // Quality guide excerpt (passed from popup.js when available)
+  if (context._qualityGuide) {
+    lines.push('')
+    lines.push('Quality guide reference:')
+    lines.push(String(context._qualityGuide).slice(0, 1200))
+  }
+
+  lines.push('')
+  lines.push('Respond ONLY with a JSON array. Each element: {"text":"one plain sentence","supportKey":"chooseIdsMetadata"}')
+  lines.push('Rules: text must be one plain sentence with no markdown, no URLs, no numbering. supportKey must be one of: installGuide, chooseIdsMetadata, configureMetadata, csp, spa, gtm, segment, iframe, sandbox, agentSettings, agentDebug, troubleshooting, hostnameAllowlist, multiDomain, launcherPlan, signedMetadata, installComponents.')
+  lines.push('Max 3 items. Skip anything already covered in "Existing advice" above.')
   return lines.join('\n')
 }
 
@@ -506,6 +544,74 @@ export async function getAiConfig() {
   })
 }
 
+export function stripAllUrls(text) {
+  return String(text || '').replace(/https?:\/\/\S+/gi, '').replace(/\s{2,}/g, ' ').trim()
+}
+
+export function parseAiAdviceResponse(content, existingAdvice) {
+  const existing = (existingAdvice || []).map(a => {
+    const t = typeof a === 'string' ? a : (a.text || '')
+    return t.toLowerCase().replace(/[^\w\s]/g, '').trim()
+  }).filter(Boolean)
+
+  let items = []
+
+  const jsonMatch = content.match(/\[[\s\S]*\]/)
+  if (jsonMatch) {
+    try {
+      const parsed = JSON.parse(jsonMatch[0])
+      if (Array.isArray(parsed)) {
+        items = parsed.filter(i => i && typeof i.text === 'string' && i.text.trim())
+          .map(i => ({ text: i.text.trim(), supportKey: i.supportKey || null }))
+      }
+    } catch {}
+  }
+
+  if (!items.length) {
+    items = content.split(/\n+/)
+      .map(line => line
+        .replace(/^#{1,6}\s+/, '')
+        .replace(/^\d+\.\s+/, '')
+        .replace(/^[-*]\s*/, '')
+        .replace(/\*\*([^*]+)\*\*/g, '$1')
+        .replace(/\*([^*]+)\*/g, '$1')
+        .replace(/`([^`]+)`/g, '$1')
+        .trim()
+      )
+      .filter(Boolean)
+      .map(text => ({ text, supportKey: null }))
+  }
+
+  const results = []
+  for (const item of items) {
+    let text = stripAllUrls(item.text)
+    if (!text || text.length < 5) continue
+
+    const normalized = text.toLowerCase().replace(/[^\w\s]/g, '').trim()
+    const tokens = normalized.split(/\s+/)
+
+    let isDuplicate = false
+    for (const ex of existing) {
+      if (!ex) continue
+      if (normalized.includes(ex) || ex.includes(normalized)) { isDuplicate = true; break }
+      const exTokens = ex.split(/\s+/)
+      const overlap = tokens.filter(t => exTokens.includes(t)).length
+      if (overlap / Math.max(tokens.length, 1) > 0.7) { isDuplicate = true; break }
+    }
+    if (isDuplicate) continue
+
+    let supportKey = item.supportKey
+    if (!supportKey || !PENDO_SUPPORT[supportKey]) {
+      supportKey = inferSupportKeyFromText(text)
+    }
+
+    results.push({ text, source: 'ai', supportKey })
+    if (results.length >= 3) break
+  }
+
+  return results
+}
+
 export async function requestAiAdvice(context) {
   const cfg = await getAiConfig()
   const apiKey = String((cfg && cfg.aiApiKey) || '').trim()
@@ -513,7 +619,7 @@ export async function requestAiAdvice(context) {
 
   const provider = cfg.aiProvider || 'openai'
   const prompt = buildAiPrompt(context)
-  const systemMsg = 'You are a concise Pendo install troubleshooting assistant. Only rely on official Pendo documentation and avoid speculative advice.'
+  const systemMsg = 'You are a concise Pendo install troubleshooting assistant. Only rely on official Pendo documentation. Respond ONLY with a JSON array of objects, each with "text" (one plain sentence, no markdown/URLs/numbering) and "supportKey". Max 3 items. Do not repeat advice already provided.'
 
   let endpoint, headers, body
 
@@ -530,10 +636,12 @@ export async function requestAiAdvice(context) {
     if (directAnthropic) headers['anthropic-dangerous-direct-browser-access'] = 'true'
     body = { model, max_tokens: 1024, system: systemMsg, messages: [{ role: 'user', content: prompt }] }
   } else if (provider === 'gemini') {
-    const model = cfg.aiModel || 'gemini-2.0-flash'
+    const model = cfg.aiModel || 'gemini-3.5-flash'
     endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`
     headers = { 'Content-Type': 'application/json' }
-    body = { contents: [{ parts: [{ text: systemMsg + '\n\n' + prompt }] }], generationConfig: { temperature: 0.1 } }
+    // Gemini 3.x is tuned for default sampling, so temperature/top_p/top_k are omitted. Thinking is
+    // pinned to LOW because the default (medium) effort can exceed timeoutMs on this short prompt.
+    body = { contents: [{ parts: [{ text: systemMsg + '\n\n' + prompt }] }], generationConfig: { thinkingConfig: { thinkingLevel: 'LOW' } } }
   } else {
     const model = cfg.aiModel || 'gpt-4o-mini'
     endpoint = cfg.aiEndpoint || 'https://api.openai.com/v1/chat/completions'
@@ -596,11 +704,13 @@ export async function requestAiAdvice(context) {
     }
     let content = ''
     if (provider === 'claude') content = data?.content?.[0]?.text || ''
-    else if (provider === 'gemini') content = data?.candidates?.[0]?.content?.parts?.[0]?.text || ''
+    else if (provider === 'gemini') {
+      const parts = data?.candidates?.[0]?.content?.parts || []
+      content = parts.filter(p => p && typeof p.text === 'string' && !p.thought).map(p => p.text).join('')
+    }
     else content = data?.choices?.[0]?.message?.content || ''
     if (!content) return []
-    return content.split(/\n+/).map(t => t.replace(/^[-*]\s*/, '').trim()).filter(Boolean)
-      .map(text => ({ text, source: 'ai', supportUrl: PENDO_SUPPORT.technicalSupport }))
+    return parseAiAdviceResponse(content, context.advice)
   } catch (e) {
     clearTimeout(timer)
     const isAbort = e && (e.name === 'AbortError' || (e.message && String(e.message).includes('aborted')))
@@ -616,6 +726,7 @@ export async function requestAiAdvice(context) {
 /**
  * captureAndInspect — extracted from the inner function inside runInPage().
  * Designed to run in a browser page context; uses window, document, console, performance.
+ * Keep in sync with the production copy in extension/popup.js.
  */
 export function captureAndInspect(variant = 'page') {
   const captured = []
@@ -639,13 +750,20 @@ export function captureAndInspect(variant = 'page') {
   console.info  = (...a) => { push('info',  a); original.info(...a) }
 
   const isLauncher = variant === 'launcher' || variant === 'launcher-beta'
-  const agent = isLauncher
-    ? ((window && (window.Pendo || window.pendo)) || null)
-    : ((window && window.pendo) || null)
+  let agent, pendoGlobal
+  if (isLauncher) {
+    if (window && window.Pendo) { agent = window.Pendo; pendoGlobal = 'Pendo' }
+    else if (window && window.pendo) { agent = window.pendo; pendoGlobal = 'pendo' }
+    else { agent = null; pendoGlobal = null }
+  } else {
+    agent = (window && window.pendo) || null
+    pendoGlobal = agent ? 'pendo' : null
+  }
   const validateFn = (agent && agent.validateInstall) || null
 
   const status = {
     pendoPresent: !!agent,
+    pendoGlobal,
     validatePresent: typeof validateFn === 'function',
     version: null,
     detectedApiKey: null,
@@ -691,9 +809,18 @@ export function captureAndInspect(variant = 'page') {
           return Object.keys(out).length ? out : null
         } catch { return null }
       }
-      const opts = agent._ && agent._.options
-      status.visitorMetadata = safeCloneFields(opts && opts.visitor) || safeCloneFields(agent._ && agent._.state && agent._.state.visitor)
-      status.accountMetadata = safeCloneFields(opts && opts.account) || safeCloneFields(agent._ && agent._.state && agent._.state.account)
+      let serialized = null
+      try {
+        if (typeof agent.getSerializedMetadata === 'function') {
+          serialized = agent.getSerializedMetadata()
+        }
+      } catch {}
+      const opts = agent._ && typeof agent._ === 'object' ? agent._.options : null
+      const legacyState = agent._ && typeof agent._ === 'object' ? agent._.state : null
+      const visitorSrc = (serialized && serialized.visitor) || (opts && opts.visitor) || (legacyState && legacyState.visitor)
+      const accountSrc = (serialized && serialized.account) || (opts && opts.account) || (legacyState && legacyState.account)
+      status.visitorMetadata = safeCloneFields(visitorSrc)
+      status.accountMetadata = safeCloneFields(accountSrc)
     }
   } catch {}
 
@@ -758,9 +885,10 @@ export function captureAndInspect(variant = 'page') {
     else checks.push("visitorId present.")
     if (status.accountId == null) advice.push({ text: "accountId not found. If you use accounts, provide accountId in pendo.initialize.", source: 'builtin', supportKey: 'chooseIdsMetadata' })
     else checks.push("accountId present.")
-    if (status.visitorMetadata) checks.push("Visitor metadata fields detected.")
-    if (status.accountMetadata) checks.push("Account metadata fields detected.")
-    if (status.visitorId && !status.visitorMetadata) {
+    const hasFieldsBeyondId = (meta) => !!meta && typeof meta === 'object' && Object.keys(meta).some(k => k !== 'id')
+    if (hasFieldsBeyondId(status.visitorMetadata)) checks.push("Visitor metadata fields detected.")
+    if (hasFieldsBeyondId(status.accountMetadata)) checks.push("Account metadata fields detected.")
+    if (status.visitorId && !hasFieldsBeyondId(status.visitorMetadata)) {
       advice.push({ text: "No visitor metadata fields detected beyond the ID. Consider passing name, email, and role for better segmentation.", source: 'builtin', supportKey: 'chooseIdsMetadata' })
     }
   }
@@ -781,11 +909,55 @@ export function captureAndInspect(variant = 'page') {
     advice.push({ text: "No Pendo network resources observed. If using a deferred or self-hosted setup, ensure agent requests are not blocked.", source: 'builtin', supportKey: 'spa' })
   }
 
+  // --- Extended detection signals (additive) ---
+  try {
+    const isIframe = (typeof window !== 'undefined') && window.top !== window
+    if (isIframe) {
+      advice.push({ text: "Page is running inside an iframe. Ensure the Pendo snippet is installed in this frame with matching API key and IDs.", source: 'builtin', supportKey: 'iframe' })
+    }
+    const pageHref = (typeof location !== 'undefined' && location.href) || ''
+    if (/\b(staging|preview|dev\.|qa\.)/i.test(pageHref)) {
+      advice.push({ text: "This appears to be a staging or development environment. Use unique Visitor/Account ID prefixes and configure an Exclude List to keep test data separate.", source: 'builtin', supportKey: 'sandbox' })
+    }
+    if (typeof window !== 'undefined' && window.google_tag_manager) {
+      checks.push("Google Tag Manager detected.")
+      if (!status.pendoPresent) {
+        advice.push({ text: "Google Tag Manager is present but Pendo was not found. If installing Pendo via GTM, check your Custom HTML tag fires on all pages.", source: 'builtin', supportKey: 'gtm' })
+      }
+    }
+    if (typeof window !== 'undefined' && window.utag) {
+      checks.push("Tealium iQ (utag) detected.")
+    }
+    const spaGlobals = typeof window !== 'undefined'
+      ? { react: !!window.React || !!window.__REACT_DEVTOOLS_GLOBAL_HOOK__, vue: !!window.Vue || !!window.__VUE__, angular: !!window.angular || !!window.ng, next: !!window.next || !!window.__NEXT_DATA__, nuxt: !!window.__NUXT__ }
+      : {}
+    const detectedFramework = spaGlobals.react ? 'react' : spaGlobals.vue ? 'vue' : spaGlobals.angular ? 'angular' : spaGlobals.next ? 'next' : spaGlobals.nuxt ? 'nuxt' : null
+    if (detectedFramework) {
+      checks.push(`SPA framework detected: ${detectedFramework}.`)
+    }
+    if (status.pendoPresent && status.version) {
+      const minVersion = (typeof PENDO_KB_MIN_AGENT_VERSION !== 'undefined') ? PENDO_KB_MIN_AGENT_VERSION : '2.17.0'
+      const curr = String(status.version).split('.').map(Number)
+      const min = String(minVersion).split('.').map(Number)
+      const outdated = (curr[0] < min[0]) || (curr[0] === min[0] && curr[1] < min[1]) || (curr[0] === min[0] && curr[1] === min[1] && (curr[2] || 0) < (min[2] || 0))
+      if (outdated) {
+        advice.push({ text: `Agent version ${status.version} is older than the recommended minimum (${minVersion}). Consider updating to access recent fixes and features.`, source: 'builtin', supportKey: 'agentSettings', supportKeys: ['agentSettings', 'agentDebug'] })
+      }
+    }
+    if (status.pendoPresent && status.visitorId) {
+      const hasVFields = status.visitorMetadata && typeof status.visitorMetadata === 'object' && Object.keys(status.visitorMetadata).some(k => k !== 'id')
+      const hasAFields = status.accountMetadata && typeof status.accountMetadata === 'object' && Object.keys(status.accountMetadata).some(k => k !== 'id')
+      if (hasVFields && !hasAFields && status.accountId != null) {
+        advice.push({ text: "Visitor metadata is populated but account metadata is empty. Consider passing account-level fields (name, plan, industry) for richer segmentation.", source: 'builtin', supportKey: 'configureMetadata', supportKeys: ['configureMetadata', 'chooseIdsMetadata'] })
+      }
+    }
+  } catch {}
+
   if (status.validatePresent && !hasError && !hasWarn && captured.length > 0) {
     checks.push("validateInstall() produced no warnings or errors.")
   }
 
-  if (advice.length === 0 && checks.length > 0) advice.push({ text: "Installation looks healthy based on current checks.", source: 'builtin', supportKey: 'helpCenter' })
+  if (advice.length === 0 && checks.length > 0) checks.push("Installation looks healthy based on current checks.")
   else if (advice.length === 0) advice.push({ text: "Review the output below and compare with a known-good page. Check initialise timing and data mapping.", source: 'builtin', supportKey: 'spa' })
 
   if (variant === 'launcher') {
@@ -797,10 +969,122 @@ export function captureAndInspect(variant = 'page') {
   return { status, captured, advice, checks, cspMeta, apiKeyFound, hasError, hasWarn }
 }
 
-/** Pure drag-clamp logic extracted from content.js onDragMove. */
+// ========== Install quality assessment ==========
+const PLACEHOLDER_IDS = /^(anonymous|guest|unknown|undefined|null|0|test|demo|user|visitor)$/i
+
+export function assessInstallQuality(context) {
+  const status = context.status || {}
+  const pageUrl = context.pageUrl || ''
+  const result = {
+    visitorId: { present: false, value: null, quality: 'good', issues: [] },
+    accountId: { present: false, value: null, quality: 'good', issues: [] },
+    visitorMetadata: { fields: [], missingRecommended: [], quality: 'good' },
+    accountMetadata: { fields: [], missingRecommended: [], quality: 'good' },
+    environment: { isStaging: false, issues: [] },
+  }
+
+  // Visitor ID
+  const vid = status.visitorId
+  if (vid) {
+    result.visitorId.present = true
+    result.visitorId.value = vid
+    if (PLACEHOLDER_IDS.test(String(vid).trim())) {
+      result.visitorId.quality = 'poor'
+      result.visitorId.issues.push(`visitorId "${vid}" is a placeholder value.`)
+    } else if (String(vid).length < 3) {
+      result.visitorId.quality = 'weak'
+      result.visitorId.issues.push(`visitorId "${vid}" is very short (fewer than 3 characters).`)
+    } else if (/^\d+$/.test(String(vid)) && Number(vid) < 100) {
+      result.visitorId.quality = 'weak'
+      result.visitorId.issues.push(`visitorId "${vid}" looks like a low numeric counter.`)
+    }
+  }
+
+  // Account ID
+  const aid = status.accountId
+  if (aid != null) {
+    result.accountId.present = true
+    result.accountId.value = aid
+    if (PLACEHOLDER_IDS.test(String(aid).trim())) {
+      result.accountId.quality = 'poor'
+      result.accountId.issues.push(`accountId "${aid}" is a placeholder value.`)
+    } else if (vid && String(aid) === String(vid)) {
+      result.accountId.quality = 'weak'
+      result.accountId.issues.push('accountId is identical to visitorId (likely misconfiguration).')
+    }
+  }
+
+  // Visitor metadata
+  const vmeta = status.visitorMetadata
+  if (vmeta && typeof vmeta === 'object') {
+    const fields = Object.keys(vmeta).filter(k => k !== 'id')
+    result.visitorMetadata.fields = fields
+    const recommended = ['email', 'name', 'fullName', 'full_name', 'role', 'title']
+    const has = recommended.filter(r => fields.some(f => f.toLowerCase() === r.toLowerCase()))
+    const missing = recommended.filter(r => !fields.some(f => f.toLowerCase() === r.toLowerCase()))
+    // Group name variants
+    const hasName = has.some(h => /^(name|fullName|full_name)$/i.test(h))
+    const hasRole = has.some(h => /^(role|title)$/i.test(h))
+    const missingGroups = []
+    if (!has.includes('email')) missingGroups.push('email')
+    if (!hasName) missingGroups.push('name/fullName')
+    if (!hasRole) missingGroups.push('role/title')
+    result.visitorMetadata.missingRecommended = missingGroups
+    if (fields.length === 0) result.visitorMetadata.quality = 'poor'
+    else if (missingGroups.length >= 2) result.visitorMetadata.quality = 'weak'
+  } else if (vid) {
+    result.visitorMetadata.quality = 'poor'
+    result.visitorMetadata.missingRecommended = ['email', 'name/fullName', 'role/title']
+  }
+
+  // Account metadata
+  const ameta = status.accountMetadata
+  if (ameta && typeof ameta === 'object') {
+    const fields = Object.keys(ameta).filter(k => k !== 'id')
+    result.accountMetadata.fields = fields
+    const recommended = ['name', 'plan', 'tier', 'industry']
+    const missingGroups = []
+    const hasName = fields.some(f => f.toLowerCase() === 'name')
+    const hasPlan = fields.some(f => /^(plan|tier)$/i.test(f))
+    if (!hasName) missingGroups.push('name')
+    if (!hasPlan) missingGroups.push('plan/tier')
+    result.accountMetadata.missingRecommended = missingGroups
+    if (fields.length === 0) result.accountMetadata.quality = 'poor'
+    else if (missingGroups.length >= 2) result.accountMetadata.quality = 'weak'
+  } else if (aid != null) {
+    result.accountMetadata.quality = 'poor'
+    result.accountMetadata.missingRecommended = ['name', 'plan/tier']
+  }
+
+  // Environment
+  const isStaging = /\b(staging|preview|dev\.|qa\.|localhost)\b/i.test(pageUrl)
+  result.environment.isStaging = isStaging
+  if (isStaging && vid) {
+    const hasPrefix = /^(dev_|staging_|test_|qa_)/i.test(String(vid))
+    if (!hasPrefix) {
+      result.environment.issues.push('Staging/dev URL detected but visitorId lacks a test prefix (dev_, staging_, test_, qa_).')
+    }
+  }
+
+  return result
+}
+
+/** Pure drag-clamp logic (absolute pointer model, used by older tests). */
 export function clampDragPosition({ clientX, clientY, offsetX, offsetY, innerWidth, innerHeight, iframeWidth }) {
   const newLeft = clientX - offsetX
   const newTop  = clientY - offsetY
+  const maxLeft = innerWidth - iframeWidth
+  const maxTop  = innerHeight - 60
+  return {
+    left: Math.max(0, Math.min(newLeft, maxLeft)),
+    top:  Math.max(0, Math.min(newTop,  maxTop)),
+  }
+}
+
+/** Delta-based drag clamp matching production content.js applyDrag(). */
+export function clampDragDelta({ originLeft, originTop, dx, dy, innerWidth, innerHeight, iframeWidth }) {
+  const newLeft = originLeft + (dx || 0)
+  const newTop  = originTop  + (dy || 0)
   const maxLeft = innerWidth - iframeWidth
   const maxTop  = innerHeight - 60
   return {
