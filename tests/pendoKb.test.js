@@ -176,4 +176,67 @@ describe('selectRelatedReading', () => {
     const allTopics = results.flatMap(r => r.topics);
     expect(allTopics).toContain('iframe');
   });
+
+  it('returns agent/troubleshooting articles when validatePresent is false', () => {
+    const results = selectRelatedReading({ pendoPresent: true, validatePresent: false }, 10, findKbByTopics);
+    expect(results.length).toBeGreaterThan(0);
+    const allTopics = results.flatMap(r => r.topics);
+    expect(allTopics.some(t => t === 'agent' || t === 'troubleshooting')).toBe(true);
+  });
+
+  it('returns metadata articles when hasVisitorMeta is false', () => {
+    const results = selectRelatedReading({ pendoPresent: true, hasVisitorMeta: false }, 10, findKbByTopics);
+    expect(results.length).toBeGreaterThan(0);
+    const allTopics = results.flatMap(r => r.topics);
+    expect(allTopics).toContain('metadata');
+  });
+
+  it('returns metadata+account articles when hasAccountMeta is false but hasVisitorMeta is true', () => {
+    const results = selectRelatedReading({ pendoPresent: true, hasVisitorMeta: true, hasAccountMeta: false }, 10, findKbByTopics);
+    expect(results.length).toBeGreaterThan(0);
+    const allTopics = results.flatMap(r => r.topics);
+    expect(allTopics).toContain('metadata');
+  });
+
+  it('returns identity+account articles when accountId is null', () => {
+    const results = selectRelatedReading({ pendoPresent: true, accountId: null }, 10, findKbByTopics);
+    expect(results.length).toBeGreaterThan(0);
+    const allTopics = results.flatMap(r => r.topics);
+    expect(allTopics.some(t => t === 'identity' || t === 'account')).toBe(true);
+  });
+
+  it('returns network/csp articles when noResourceHits is true and pendoPresent', () => {
+    const results = selectRelatedReading({ pendoPresent: true, noResourceHits: true }, 10, findKbByTopics);
+    expect(results.length).toBeGreaterThan(0);
+    const allTopics = results.flatMap(r => r.topics);
+    expect(allTopics.some(t => t === 'network' || t === 'csp')).toBe(true);
+  });
+
+  it('returns segment articles when hasSegment is true', () => {
+    const results = selectRelatedReading({ pendoPresent: true, hasSegment: true }, 10, findKbByTopics);
+    expect(results.length).toBeGreaterThan(0);
+    const allTopics = results.flatMap(r => r.topics);
+    expect(allTopics.some(t => t === 'segment' || t === 'tag-manager')).toBe(true);
+  });
+
+  it('returns launcher articles when launcherPresent is true', () => {
+    const results = selectRelatedReading({ pendoPresent: true, launcherPresent: true }, 10, findKbByTopics);
+    expect(results.length).toBeGreaterThan(0);
+    const allTopics = results.flatMap(r => r.topics);
+    expect(allTopics).toContain('launcher');
+  });
+
+  it('returns agent/configuration articles when agentVersionOld is true', () => {
+    const results = selectRelatedReading({ pendoPresent: true, agentVersionOld: true }, 10, findKbByTopics);
+    expect(results.length).toBeGreaterThan(0);
+    const allTopics = results.flatMap(r => r.topics);
+    expect(allTopics.some(t => t === 'agent' || t === 'configuration')).toBe(true);
+  });
+
+  it('returns api-key/install articles when apiKeyMissing is true', () => {
+    const results = selectRelatedReading({ pendoPresent: true, apiKeyMissing: true }, 10, findKbByTopics);
+    expect(results.length).toBeGreaterThan(0);
+    const allTopics = results.flatMap(r => r.topics);
+    expect(allTopics.some(t => t === 'api-key' || t === 'install')).toBe(true);
+  });
 });

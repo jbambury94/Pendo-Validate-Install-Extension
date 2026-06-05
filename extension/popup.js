@@ -231,6 +231,117 @@ function normalizeAdviceList(advice = []) {
   }).filter(a => a.text);
 }
 
+// ========== Install quality assessment ==========
+const PLACEHOLDER_IDS = /^(anonymous|guest|unknown|undefined|null|0|test|demo|user|visitor)$/i;
+
+function assessInstallQuality(context) {
+  const status = context.status || {};
+  const pageUrl = context.pageUrl || '';
+  const result = {
+    visitorId: { present: false, value: null, quality: 'good', issues: [] },
+    accountId: { present: false, value: null, quality: 'good', issues: [] },
+    visitorMetadata: { fields: [], missingRecommended: [], quality: 'good' },
+    accountMetadata: { fields: [], missingRecommended: [], quality: 'good' },
+    environment: { isStaging: false, issues: [] },
+  };
+
+  const vid = status.visitorId;
+  if (vid) {
+    result.visitorId.present = true;
+    result.visitorId.value = vid;
+    if (PLACEHOLDER_IDS.test(String(vid).trim())) {
+      result.visitorId.quality = 'poor';
+      result.visitorId.issues.push(`visitorId "${vid}" is a placeholder value.`);
+    } else if (String(vid).length < 3) {
+      result.visitorId.quality = 'weak';
+      result.visitorId.issues.push(`visitorId "${vid}" is very short (fewer than 3 characters).`);
+    } else if (/^\d+$/.test(String(vid)) && Number(vid) < 100) {
+      result.visitorId.quality = 'weak';
+      result.visitorId.issues.push(`visitorId "${vid}" looks like a low numeric counter.`);
+    }
+  }
+
+  const aid = status.accountId;
+  if (aid != null) {
+    result.accountId.present = true;
+    result.accountId.value = aid;
+    if (PLACEHOLDER_IDS.test(String(aid).trim())) {
+      result.accountId.quality = 'poor';
+      result.accountId.issues.push(`accountId "${aid}" is a placeholder value.`);
+    } else if (vid && String(aid) === String(vid)) {
+      result.accountId.quality = 'weak';
+      result.accountId.issues.push('accountId is identical to visitorId (likely misconfiguration).');
+    }
+  }
+
+  const vmeta = status.visitorMetadata;
+  if (vmeta && typeof vmeta === 'object') {
+    const fields = Object.keys(vmeta).filter(k => k !== 'id');
+    result.visitorMetadata.fields = fields;
+    const has = fields.map(f => f.toLowerCase());
+    const hasName = has.some(h => /^(name|fullname|full_name)$/.test(h));
+    const hasRole = has.some(h => /^(role|title)$/.test(h));
+    const missingGroups = [];
+    if (!has.includes('email')) missingGroups.push('email');
+    if (!hasName) missingGroups.push('name/fullName');
+    if (!hasRole) missingGroups.push('role/title');
+    result.visitorMetadata.missingRecommended = missingGroups;
+    if (fields.length === 0) result.visitorMetadata.quality = 'poor';
+    else if (missingGroups.length >= 2) result.visitorMetadata.quality = 'weak';
+  } else if (vid) {
+    result.visitorMetadata.quality = 'poor';
+    result.visitorMetadata.missingRecommended = ['email', 'name/fullName', 'role/title'];
+  }
+
+  const ameta = status.accountMetadata;
+  if (ameta && typeof ameta === 'object') {
+    const fields = Object.keys(ameta).filter(k => k !== 'id');
+    result.accountMetadata.fields = fields;
+    const missingGroups = [];
+    if (!fields.some(f => f.toLowerCase() === 'name')) missingGroups.push('name');
+    if (!fields.some(f => /^(plan|tier)$/i.test(f))) missingGroups.push('plan/tier');
+    result.accountMetadata.missingRecommended = missingGroups;
+    if (fields.length === 0) result.accountMetadata.quality = 'poor';
+    else if (missingGroups.length >= 2) result.accountMetadata.quality = 'weak';
+  } else if (aid != null) {
+    result.accountMetadata.quality = 'poor';
+    result.accountMetadata.missingRecommended = ['name', 'plan/tier'];
+  }
+
+  const isStaging = /\b(staging|preview|dev\.|qa\.|localhost)\b/i.test(pageUrl);
+  result.environment.isStaging = isStaging;
+  if (isStaging && vid) {
+    const hasPrefix = /^(dev_|staging_|test_|qa_)/i.test(String(vid));
+    if (!hasPrefix) {
+      result.environment.issues.push('Staging/dev URL detected but visitorId lacks a test prefix (dev_, staging_, test_, qa_).');
+    }
+  }
+
+  return result;
+}
+
+/** Append install-quality advice in extension context (not injectable into page). */
+function appendQualityAdviceToResult(result, pageUrl) {
+  if (!result?.status?.pendoPresent) return result;
+  const quality = assessInstallQuality({ status: result.status, pageUrl: pageUrl || '' });
+  result.advice = result.advice || [];
+  const { status } = result;
+  if (quality.visitorId.quality === 'poor') {
+    result.advice.push({ text: `visitorId is set to a placeholder value ("${status.visitorId}"). Use a stable authenticated identifier.`, source: 'builtin', supportKey: 'chooseIdsMetadata' });
+  } else if (quality.visitorId.quality === 'weak') {
+    result.advice.push({ text: quality.visitorId.issues[0] || 'visitorId may not be a stable identifier.', source: 'builtin', supportKey: 'chooseIdsMetadata' });
+  }
+  if (quality.accountId.quality === 'poor') {
+    result.advice.push({ text: `accountId is set to a placeholder value ("${status.accountId}"). Use a stable organisation identifier.`, source: 'builtin', supportKey: 'chooseIdsMetadata' });
+  } else if (quality.accountId.quality === 'weak' && quality.accountId.issues.length) {
+    result.advice.push({ text: quality.accountId.issues[0], source: 'builtin', supportKey: 'chooseIdsMetadata' });
+  }
+  if (quality.environment.issues.length) {
+    result.advice.push({ text: quality.environment.issues[0] + ' Consider test prefixes and an Exclude List to keep analytics clean.', source: 'builtin', supportKey: 'sandbox' });
+  }
+  return result;
+}
+
 // ========== Related reading selection ==========
 /**
  * Map validation signals to KB topics, then return the most relevant
@@ -754,11 +865,14 @@ async function runInPage() {
   const [{ result: pageResult }] = await chrome.scripting.executeScript({
     target: { tabId: tab.id },
     world: "MAIN",
-    func: captureAndInspect
+    func: captureAndInspect,
+    args: ['page']
   });
 
-  const snippetOnPage = !!(pageResult && pageResult.status && pageResult.status.pendoPresent);
   const basePageUrl = tab && tab.url ? tab.url : 'unknown';
+  if (pageResult) appendQualityAdviceToResult(pageResult, basePageUrl);
+
+  const snippetOnPage = !!(pageResult && pageResult.status && pageResult.status.pendoPresent);
 
   // Phase 1.5: Always check for the Launcher in the same tab. Launcher and snippet can coexist.
   let launcherInPageResult = null;
@@ -769,6 +883,7 @@ async function runInPage() {
       func: captureAndInspect,
       args: ['launcher']
     });
+    if (p15result) appendQualityAdviceToResult(p15result, basePageUrl);
     if (p15result && p15result.status && p15result.status.pendoPresent) {
       if (!snippetOnPage || p15result.status.pendoGlobal === 'Pendo') {
         launcherInPageResult = p15result;
@@ -815,6 +930,7 @@ async function runInPage() {
   if (installedLauncher) {
     const cdpResult = await runValidationInLauncherWorld(tab.id, installedLauncher);
     if (cdpResult && cdpResult.result && cdpResult.result.status && cdpResult.result.status.pendoPresent) {
+      appendQualityAdviceToResult(cdpResult.result, basePageUrl);
       const lStatus = cdpResult.result.status;
       const launcherDataValidated = !!(lStatus.pendoPresent && lStatus.validatePresent && (lStatus.visitorId || lStatus.visitorMetadata));
       return {
@@ -882,8 +998,6 @@ async function getAiConfig() {
 /** Build prompt for AI from validation context (URL, status, logs, CSP). */
 function buildAiPrompt(context) {
   const lines = [];
-  lines.push('You are a Pendo installation assistant. Suggest concise, actionable remediation steps.');
-  lines.push('Base your guidance solely on official Pendo sources (pendo.io domains such as support.pendo.io, help.pendo.io, academy.pendo.io). If unsure, say so.');
   lines.push(`Page URL: ${context.pageUrl}`);
   lines.push(`Agent version: ${context.status.version || 'unknown'}`);
   lines.push(`validateInstall available: ${context.status.validatePresent}`);
@@ -893,10 +1007,40 @@ function buildAiPrompt(context) {
   lines.push(`VisitorId: ${context.status.visitorId || 'not set'}`);
   lines.push(`AccountId: ${context.status.accountId == null ? 'not set' : context.status.accountId}`);
   lines.push(`CSP meta: ${context.cspMeta || 'none'}`);
+
+  // Include metadata fields
+  if (context.status.visitorMetadata && typeof context.status.visitorMetadata === 'object') {
+    const keys = Object.keys(context.status.visitorMetadata).slice(0, 20);
+    lines.push(`Visitor metadata fields: ${keys.join(', ') || 'none'}`);
+  } else {
+    lines.push('Visitor metadata fields: none');
+  }
+  if (context.status.accountMetadata && typeof context.status.accountMetadata === 'object') {
+    const keys = Object.keys(context.status.accountMetadata).slice(0, 20);
+    lines.push(`Account metadata fields: ${keys.join(', ') || 'none'}`);
+  } else {
+    lines.push('Account metadata fields: none');
+  }
+
+  // Include quality assessment
+  const quality = assessInstallQuality(context);
+  lines.push(`Install quality: ${JSON.stringify(quality)}`);
+
   lines.push('Captured logs (level:message):');
   const trimmed = (context.captured || []).slice(0, 30);
   trimmed.forEach(l => lines.push(`[${l.level}] ${l.text}`));
   if ((context.captured || []).length > trimmed.length) lines.push('...truncated...');
+
+  // Include existing advice so AI does not repeat it
+  const existingAdvice = context.advice || [];
+  if (existingAdvice.length) {
+    lines.push('');
+    lines.push('Existing advice already shown to the user (DO NOT repeat or paraphrase these):');
+    existingAdvice.forEach(a => {
+      const text = typeof a === 'string' ? a : (a.text || '');
+      if (text) lines.push(`- ${text}`);
+    });
+  }
 
   if (typeof selectRelatedReading === 'function') {
     const signals = {
@@ -922,7 +1066,17 @@ function buildAiPrompt(context) {
     }
   }
 
-  lines.push('Respond with a short bullet list of concrete fixes.');
+  // Quality guide excerpt (passed from popup.js when available)
+  if (context._qualityGuide) {
+    lines.push('');
+    lines.push('Quality guide reference:');
+    lines.push(String(context._qualityGuide).slice(0, 1200));
+  }
+
+  lines.push('');
+  lines.push('Respond ONLY with a JSON array. Each element: {"text":"one plain sentence","supportKey":"chooseIdsMetadata"}');
+  lines.push('Rules: text must be one plain sentence with no markdown, no URLs, no numbering. supportKey must be one of: installGuide, chooseIdsMetadata, configureMetadata, csp, spa, gtm, segment, iframe, sandbox, agentSettings, agentDebug, troubleshooting, hostnameAllowlist, multiDomain, launcherPlan, signedMetadata, installComponents.');
+  lines.push('Max 3 items. Skip anything already covered in "Existing advice" above.');
   return lines.join('\n');
 }
 
@@ -935,6 +1089,81 @@ function friendlyAiFailureDetail(provider, rawDetail) {
   return null;
 }
 
+/** Strip all URLs from a string. */
+function stripAllUrls(text) {
+  return String(text || '').replace(/https?:\/\/\S+/gi, '').replace(/\s{2,}/g, ' ').trim();
+}
+
+/** Parse AI response content into clean advice items with dedup against existing advice. */
+function parseAiAdviceResponse(content, existingAdvice) {
+  const existing = (existingAdvice || []).map(a => {
+    const t = typeof a === 'string' ? a : (a.text || '');
+    return t.toLowerCase().replace(/[^\w\s]/g, '').trim();
+  }).filter(Boolean);
+
+  let items = [];
+
+  // Try JSON parse first (preferred contract)
+  const jsonMatch = content.match(/\[[\s\S]*\]/);
+  if (jsonMatch) {
+    try {
+      const parsed = JSON.parse(jsonMatch[0]);
+      if (Array.isArray(parsed)) {
+        items = parsed.filter(i => i && typeof i.text === 'string' && i.text.trim())
+          .map(i => ({ text: i.text.trim(), supportKey: i.supportKey || null }));
+      }
+    } catch {}
+  }
+
+  // Fallback: strip markdown and split on newlines
+  if (!items.length) {
+    items = content.split(/\n+/)
+      .map(line => line
+        .replace(/^#{1,6}\s+/, '')
+        .replace(/^\d+\.\s+/, '')
+        .replace(/^[-*]\s*/, '')
+        .replace(/\*\*([^*]+)\*\*/g, '$1')
+        .replace(/\*([^*]+)\*/g, '$1')
+        .replace(/`([^`]+)`/g, '$1')
+        .trim()
+      )
+      .filter(Boolean)
+      .map(text => ({ text, supportKey: null }));
+  }
+
+  // Strip URLs and deduplicate
+  const results = [];
+  for (const item of items) {
+    let text = stripAllUrls(item.text);
+    if (!text || text.length < 5) continue;
+
+    const normalized = text.toLowerCase().replace(/[^\w\s]/g, '').trim();
+    const tokens = normalized.split(/\s+/);
+
+    // Check overlap with existing advice
+    let isDuplicate = false;
+    for (const ex of existing) {
+      if (!ex) continue;
+      if (normalized.includes(ex) || ex.includes(normalized)) { isDuplicate = true; break; }
+      const exTokens = ex.split(/\s+/);
+      const overlap = tokens.filter(t => exTokens.includes(t)).length;
+      if (overlap / Math.max(tokens.length, 1) > 0.7) { isDuplicate = true; break; }
+    }
+    if (isDuplicate) continue;
+
+    // Infer supportKey if not provided
+    let supportKey = item.supportKey;
+    if (!supportKey || !PENDO_SUPPORT[supportKey]) {
+      supportKey = inferSupportKeyFromText(text);
+    }
+
+    results.push({ text, source: 'ai', supportKey });
+    if (results.length >= 3) break;
+  }
+
+  return results;
+}
+
 /** Call configured AI API for remediation suggestions; returns array of { text, source: 'ai' }. */
 async function requestAiAdvice(context) {
   const cfg = await getAiConfig();
@@ -943,7 +1172,7 @@ async function requestAiAdvice(context) {
 
   const provider = cfg.aiProvider || 'openai';
   const prompt = buildAiPrompt(context);
-  const systemMsg = 'You are a concise Pendo install troubleshooting assistant. Only rely on official Pendo documentation and avoid speculative advice.';
+  const systemMsg = 'You are a concise Pendo install troubleshooting assistant. Only rely on official Pendo documentation. Respond ONLY with a JSON array of objects, each with "text" (one plain sentence, no markdown/URLs/numbering) and "supportKey". Max 3 items. Do not repeat advice already provided.';
 
   let endpoint, headers, body;
 
@@ -1036,8 +1265,7 @@ async function requestAiAdvice(context) {
     if (!content) {
       return [];
     }
-    return content.split(/\n+/).map(t => t.replace(/^[-*]\s*/, '').trim()).filter(Boolean)
-      .map(text => ({ text, source: 'ai', supportUrl: PENDO_SUPPORT.technicalSupport }));
+    return parseAiAdviceResponse(content, context.advice);
   } catch (e) {
     clearTimeout(timer);
     console.error('AI request failed', e);
@@ -1188,6 +1416,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   let logFilters = { error: true, warn: true, info: true };
   let logQuery = '';
   let toastTimer = null;
+  let qualityGuideCache = null;
+
+  // Prefetch quality guide for AI prompt enrichment
+  try {
+    fetch(chrome.runtime.getURL('pendo-install-quality.md'))
+      .then(r => r.ok ? r.text() : '')
+      .then(t => { qualityGuideCache = t; })
+      .catch(() => {});
+  } catch {}
+
 
   // Seed hero icon
   setStatusHero({ state: 'idle', title: 'Ready to validate', sub: 'Click Validate Pendo Install to begin.' });
@@ -1455,7 +1693,8 @@ document.addEventListener('DOMContentLoaded', async () => {
           tag.textContent = 'AI';
           cell.appendChild(tag);
         }
-        cell.appendChild(document.createTextNode(it.text));
+        const displayText = it.source === 'ai' ? stripAllUrls(stripEmbeddedHelpUrl(it.text)) : it.text;
+        cell.appendChild(document.createTextNode(displayText));
         if (it.supportUrl) {
           const docWrap = document.createElement('div');
           const a = document.createElement('a');
@@ -1889,7 +2128,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       const failureDetected = !status.validatePresent || hasError || hasWarn;
       if (failureDetected) {
-        const aiAdvice = await requestAiAdvice(lastContext);
+        const aiContext = Object.assign({}, lastContext);
+        if (qualityGuideCache) aiContext._qualityGuide = qualityGuideCache;
+        const aiAdvice = await requestAiAdvice(aiContext);
         if (aiAdvice && aiAdvice.length) {
           adviceList = adviceList.concat(aiAdvice);
           lastContext.advice = adviceList;
