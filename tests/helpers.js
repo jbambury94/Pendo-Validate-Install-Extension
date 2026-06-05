@@ -530,10 +530,12 @@ export async function requestAiAdvice(context) {
     if (directAnthropic) headers['anthropic-dangerous-direct-browser-access'] = 'true'
     body = { model, max_tokens: 1024, system: systemMsg, messages: [{ role: 'user', content: prompt }] }
   } else if (provider === 'gemini') {
-    const model = cfg.aiModel || 'gemini-2.0-flash'
+    const model = cfg.aiModel || 'gemini-3.5-flash'
     endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`
     headers = { 'Content-Type': 'application/json' }
-    body = { contents: [{ parts: [{ text: systemMsg + '\n\n' + prompt }] }], generationConfig: { temperature: 0.1 } }
+    // Gemini 3.x is tuned for default sampling, so temperature/top_p/top_k are omitted. Thinking is
+    // pinned to LOW because the default (medium) effort can exceed timeoutMs on this short prompt.
+    body = { contents: [{ parts: [{ text: systemMsg + '\n\n' + prompt }] }], generationConfig: { thinkingConfig: { thinkingLevel: 'LOW' } } }
   } else {
     const model = cfg.aiModel || 'gpt-4o-mini'
     endpoint = cfg.aiEndpoint || 'https://api.openai.com/v1/chat/completions'
@@ -596,7 +598,10 @@ export async function requestAiAdvice(context) {
     }
     let content = ''
     if (provider === 'claude') content = data?.content?.[0]?.text || ''
-    else if (provider === 'gemini') content = data?.candidates?.[0]?.content?.parts?.[0]?.text || ''
+    else if (provider === 'gemini') {
+      const parts = data?.candidates?.[0]?.content?.parts || []
+      content = parts.filter(p => p && typeof p.text === 'string' && !p.thought).map(p => p.text).join('')
+    }
     else content = data?.choices?.[0]?.message?.content || ''
     if (!content) return []
     return content.split(/\n+/).map(t => t.replace(/^[-*]\s*/, '').trim()).filter(Boolean)

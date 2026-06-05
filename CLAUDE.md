@@ -88,7 +88,7 @@ If the user has saved an API key in Settings, `requestAiAdvice()` calls one of t
 |---|---|---|
 | OpenAI | `https://api.openai.com/v1/chat/completions` | `gpt-4o-mini` |
 | Anthropic Claude | `https://api.anthropic.com/v1/messages` | `claude-haiku-4-5-20251001` |
-| Google Gemini | `https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent` | `gemini-2.0-flash` |
+| Google Gemini | `https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent` | `gemini-3.5-flash` |
 
 The endpoint URL, model, and request shape vary per provider; response parsing also branches per provider. Credentials live in `chrome.storage.local` under `aiProvider`, `aiApiKey`, and (optional overrides) `aiEndpoint`, `aiModel`, `timeoutMs`. The feature degrades gracefully when no key is set.
 
