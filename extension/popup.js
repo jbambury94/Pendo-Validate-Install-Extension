@@ -430,9 +430,6 @@ function buildMarkdownReport(context) {
   };
   if (status.visitorMetadata) meta.visitorMetadata = status.visitorMetadata;
   if (status.accountMetadata) meta.accountMetadata = status.accountMetadata;
-  if (status.resourceHits && status.resourceHits.length) {
-    meta.observedPendoResources = status.resourceHits.map(r => ({ initiatorType: r.initiatorType || 'resource', name: r.name }));
-  }
   if (cspMeta) meta.cspMeta = cspMeta;
   if (launcherUrl) meta.validatedInUrl = launcherUrl;
   lines.push("```json");

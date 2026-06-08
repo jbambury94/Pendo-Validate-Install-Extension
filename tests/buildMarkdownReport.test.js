@@ -166,12 +166,14 @@ describe('buildMarkdownReport — content sections', () => {
     expect(md).not.toContain('"launcherDataValidated"')
   })
 
-  it('includes resource hits in metadata when present', () => {
+  it('omits observedPendoResources but keeps resourceHitCount in metadata', () => {
     const ctx = {
       ...baseContext,
       status: { ...baseContext.status, resourceHits: [{ name: 'https://cdn.pendo.io/agent.js', initiatorType: 'script' }] },
     }
-    expect(buildMarkdownReport(ctx)).toContain('observedPendoResources')
+    const md = buildMarkdownReport(ctx)
+    expect(md).not.toContain('observedPendoResources')
+    expect(md).toContain('"resourceHitCount": 1')
   })
 })
 
