@@ -984,12 +984,41 @@ async function runInPage() {
 }
 
 // ========== AI advice (optional) ==========
+const AI_DEFAULT_MODELS = {
+  openai: 'gpt-4o-mini',
+  claude: 'claude-haiku-4-5-20251001',
+  gemini: 'gemini-3.5-flash',
+};
+
+const DEPRECATED_AI_MODELS = new Set([
+  'gemini-2.0-flash',
+  'gemini-2.0-flash-001',
+  'gemini-2.0-flash-lite',
+  'gemini-2.0-flash-lite-001',
+  'gemini-3-flash-preview',
+]);
+
+function resolveAiModel(provider, aiModel) {
+  const p = provider || 'openai';
+  const custom = String(aiModel || '').trim();
+  if (!custom || DEPRECATED_AI_MODELS.has(custom)) {
+    return AI_DEFAULT_MODELS[p] || AI_DEFAULT_MODELS.openai;
+  }
+  return custom;
+}
+
 /** Read AI config from chrome.storage.local: aiEndpoint, aiApiKey, aiModel. Used for optional ChatGPT-powered advice. */
 async function getAiConfig() {
   return new Promise(resolve => {
     try {
       if (!chrome.storage || !chrome.storage.local) return resolve({});
-      chrome.storage.local.get({ aiProvider: 'openai', aiEndpoint: '', aiClaudeEndpoint: '', aiApiKey: '', aiModel: '' }, resolve);
+      chrome.storage.local.get({ aiProvider: 'openai', aiEndpoint: '', aiClaudeEndpoint: '', aiApiKey: '', aiModel: '' }, cfg => {
+        if (cfg.aiModel && DEPRECATED_AI_MODELS.has(cfg.aiModel)) {
+          try { chrome.storage.local.remove('aiModel'); } catch (_) {}
+          cfg.aiModel = '';
+        }
+        resolve(cfg);
+      });
     } catch (e) {
       console.error(e);
       resolve({});
@@ -1176,10 +1205,10 @@ async function requestAiAdvice(context) {
   const prompt = buildAiPrompt(context);
   const systemMsg = 'You are a concise Pendo install troubleshooting assistant. Only rely on official Pendo documentation. Respond ONLY with a JSON array of objects, each with "text" (one plain sentence, no markdown/URLs/numbering) and "supportKey". Max 3 items. Do not repeat advice already provided.';
 
+  const model = resolveAiModel(provider, cfg.aiModel);
   let endpoint, headers, body;
 
   if (provider === 'claude') {
-    const model = cfg.aiModel || 'claude-haiku-4-5-20251001';
     const claudeUrl = String((cfg && cfg.aiClaudeEndpoint) || '').trim();
     endpoint = claudeUrl || 'https://api.anthropic.com/v1/messages';
     const directAnthropic = /anthropic\.com/i.test(endpoint);
@@ -1191,14 +1220,12 @@ async function requestAiAdvice(context) {
     if (directAnthropic) headers['anthropic-dangerous-direct-browser-access'] = 'true';
     body = { model, max_tokens: 1024, system: systemMsg, messages: [{ role: 'user', content: prompt }] };
   } else if (provider === 'gemini') {
-    const model = cfg.aiModel || 'gemini-3.5-flash';
     endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
     headers = { 'Content-Type': 'application/json' };
     // Gemini 3.x is tuned for default sampling, so temperature/top_p/top_k are omitted. Thinking is
     // pinned to LOW because the default (medium) effort can exceed timeoutMs on this short prompt.
     body = { contents: [{ parts: [{ text: systemMsg + '\n\n' + prompt }] }], generationConfig: { thinkingConfig: { thinkingLevel: 'LOW' } } };
   } else {
-    const model = cfg.aiModel || 'gpt-4o-mini';
     endpoint = cfg.aiEndpoint || 'https://api.openai.com/v1/chat/completions';
     headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
     body = { model, messages: [{ role: 'system', content: systemMsg }, { role: 'user', content: prompt }], temperature: 0.1 };

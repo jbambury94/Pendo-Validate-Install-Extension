@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { requestAiAdvice, buildAiPrompt, PENDO_SUPPORT, friendlyAiFailureDetail, selectRelatedReading } from './helpers.js'
+import { requestAiAdvice, buildAiPrompt, PENDO_SUPPORT, friendlyAiFailureDetail, selectRelatedReading, resolveAiModel, AI_DEFAULT_MODELS, DEPRECATED_AI_MODELS, getAiConfig } from './helpers.js'
 import { readFileSync } from 'fs'
 import { join } from 'path'
 import { JSDOM } from 'jsdom'
@@ -220,6 +220,98 @@ describe('friendlyAiFailureDetail', () => {
     expect(msg).toContain('Google Gemini')
     expect(msg).toContain('aiClaudeEndpoint')
     expect(friendlyAiFailureDetail('openai', 'CORS requests are not allowed for this Organization')).toBeNull()
+  })
+})
+
+describe('resolveAiModel', () => {
+  it('returns openai default when provider is openai and aiModel is empty', () => {
+    expect(resolveAiModel('openai', '')).toBe('gpt-4o-mini')
+  })
+
+  it('returns claude default when provider is claude and aiModel is empty', () => {
+    expect(resolveAiModel('claude', '')).toBe('claude-haiku-4-5-20251001')
+  })
+
+  it('returns gemini default when provider is gemini and aiModel is empty', () => {
+    expect(resolveAiModel('gemini', '')).toBe('gemini-3.5-flash')
+  })
+
+  it('falls back to openai default for unknown provider', () => {
+    expect(resolveAiModel('unknown', '')).toBe('gpt-4o-mini')
+  })
+
+  it('replaces deprecated gemini-2.0-flash with gemini-3.5-flash', () => {
+    expect(resolveAiModel('gemini', 'gemini-2.0-flash')).toBe('gemini-3.5-flash')
+  })
+
+  it('replaces all deprecated model IDs with provider default', () => {
+    for (const model of DEPRECATED_AI_MODELS) {
+      expect(resolveAiModel('gemini', model)).toBe('gemini-3.5-flash')
+    }
+  })
+
+  it('passes through unknown custom models unchanged', () => {
+    expect(resolveAiModel('openai', 'gpt-5-mini')).toBe('gpt-5-mini')
+  })
+
+  it('treats null/undefined aiModel as empty', () => {
+    expect(resolveAiModel('claude', null)).toBe('claude-haiku-4-5-20251001')
+    expect(resolveAiModel('openai', undefined)).toBe('gpt-4o-mini')
+  })
+})
+
+describe('requestAiAdvice — default model in request', () => {
+  it('sends gpt-4o-mini in the OpenAI request body', async () => {
+    mockStorage({ aiProvider: 'openai', aiEndpoint: '', aiApiKey: 'sk-test', aiModel: '' })
+    fetch.mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: '- tip' } }] }) })
+    await requestAiAdvice(baseContext)
+    const body = JSON.parse(fetch.mock.calls[0][1].body)
+    expect(body.model).toBe('gpt-4o-mini')
+  })
+
+  it('sends claude-haiku-4-5-20251001 in the Claude request body', async () => {
+    mockStorage({ aiProvider: 'claude', aiEndpoint: '', aiApiKey: 'ant-test', aiModel: '' })
+    chrome.runtime.sendMessage.mockResolvedValue({
+      ok: true, status: 200, json: { content: [{ text: '- tip' }] },
+    })
+    await requestAiAdvice(baseContext)
+    const msg = chrome.runtime.sendMessage.mock.calls[0][0]
+    const body = JSON.parse(msg.body)
+    expect(body.model).toBe('claude-haiku-4-5-20251001')
+  })
+
+  it('sends gemini-3.5-flash in the Gemini request URL', async () => {
+    mockStorage({ aiProvider: 'gemini', aiEndpoint: '', aiApiKey: 'gem-test', aiModel: '' })
+    fetch.mockResolvedValue({ ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: '- tip' }] } }] }) })
+    await requestAiAdvice(baseContext)
+    expect(fetch.mock.calls[0][0]).toContain('/models/gemini-3.5-flash:generateContent')
+  })
+})
+
+describe('requestAiAdvice — deprecated model migration', () => {
+  it('replaces deprecated gemini-2.0-flash with default and uses it in request', async () => {
+    mockStorage({ aiProvider: 'gemini', aiEndpoint: '', aiApiKey: 'gem-test', aiModel: 'gemini-2.0-flash' })
+    fetch.mockResolvedValue({ ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: '- tip' }] } }] }) })
+    await requestAiAdvice(baseContext)
+    expect(fetch.mock.calls[0][0]).toContain('/models/gemini-3.5-flash:generateContent')
+  })
+})
+
+describe('getAiConfig — deprecated model migration', () => {
+  it('clears deprecated aiModel from storage and returns empty aiModel', async () => {
+    chrome.storage.local.remove = vi.fn()
+    mockStorage({ aiProvider: 'gemini', aiEndpoint: '', aiApiKey: 'gem-test', aiModel: 'gemini-2.0-flash' })
+    const cfg = await getAiConfig()
+    expect(cfg.aiModel).toBe('')
+    expect(chrome.storage.local.remove).toHaveBeenCalledWith('aiModel')
+  })
+
+  it('does not clear a valid custom aiModel', async () => {
+    chrome.storage.local.remove = vi.fn()
+    mockStorage({ aiProvider: 'openai', aiEndpoint: '', aiApiKey: 'sk-test', aiModel: 'gpt-5-mini' })
+    const cfg = await getAiConfig()
+    expect(cfg.aiModel).toBe('gpt-5-mini')
+    expect(chrome.storage.local.remove).not.toHaveBeenCalled()
   })
 })
 

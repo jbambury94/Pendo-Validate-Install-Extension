@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.7.2
+- **Deprecated AI model auto-migration.** `getAiConfig()` now detects retired model IDs stored in `chrome.storage.local` (e.g. `gemini-2.0-flash`, shut down June 1 2026) and clears them on read so the current provider default is used instead. Legitimate custom model overrides are unaffected.
+
 ## 1.7.1
 - **Gemini model updated to `gemini-3.5-flash`.** Default Google Gemini model bumped from `gemini-2.0-flash` to the latest GA Flash release (Settings dropdown label and docs updated to match). Users with a custom `aiModel` saved in `chrome.storage.local` are unaffected.
 - **Gemini 3.x request compatibility.** `requestAiAdvice()` now drops the `temperature` sampling param (Google recommends defaults for Gemini 3.x) and pins `generationConfig.thinkingConfig.thinkingLevel` to `LOW` so the default medium-effort thinking does not exceed the request `timeoutMs`. Response parsing now joins all non-thought text parts instead of reading only `parts[0]`, guarding against multi-part responses.
