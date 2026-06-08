@@ -1069,6 +1069,34 @@ export function assessInstallQuality(context) {
   return result
 }
 
+/**
+ * Mirror of popup.js appendQualityAdviceToResult. Appends install-quality advice to a
+ * result already produced by captureAndInspect. The environment/sandbox advice is only
+ * added when captureAndInspect did not already emit a sandbox recommendation, so a
+ * staging URL with a non-prefixed visitorId yields a single sandbox recommendation.
+ */
+export function appendQualityAdviceToResult(result, pageUrl) {
+  if (!result?.status?.pendoPresent) return result
+  const quality = assessInstallQuality({ status: result.status, pageUrl: pageUrl || '' })
+  result.advice = result.advice || []
+  const { status } = result
+  if (quality.visitorId.quality === 'poor') {
+    result.advice.push({ text: `visitorId is set to a placeholder value ("${status.visitorId}"). Use a stable authenticated identifier.`, source: 'builtin', supportKey: 'chooseIdsMetadata' })
+  } else if (quality.visitorId.quality === 'weak') {
+    result.advice.push({ text: quality.visitorId.issues[0] || 'visitorId may not be a stable identifier.', source: 'builtin', supportKey: 'chooseIdsMetadata' })
+  }
+  if (quality.accountId.quality === 'poor') {
+    result.advice.push({ text: `accountId is set to a placeholder value ("${status.accountId}"). Use a stable organisation identifier.`, source: 'builtin', supportKey: 'chooseIdsMetadata' })
+  } else if (quality.accountId.quality === 'weak' && quality.accountId.issues.length) {
+    result.advice.push({ text: quality.accountId.issues[0], source: 'builtin', supportKey: 'chooseIdsMetadata' })
+  }
+  const hasSandboxAdvice = result.advice.some(a => a && a.supportKey === 'sandbox')
+  if (quality.environment.issues.length && !hasSandboxAdvice) {
+    result.advice.push({ text: quality.environment.issues[0] + ' Consider test prefixes and an Exclude List to keep analytics clean.', source: 'builtin', supportKey: 'sandbox' })
+  }
+  return result
+}
+
 /** Pure drag-clamp logic (absolute pointer model, used by older tests). */
 export function clampDragPosition({ clientX, clientY, offsetX, offsetY, innerWidth, innerHeight, iframeWidth }) {
   const newLeft = clientX - offsetX

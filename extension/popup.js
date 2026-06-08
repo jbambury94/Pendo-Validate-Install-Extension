@@ -336,7 +336,12 @@ function appendQualityAdviceToResult(result, pageUrl) {
   } else if (quality.accountId.quality === 'weak' && quality.accountId.issues.length) {
     result.advice.push({ text: quality.accountId.issues[0], source: 'builtin', supportKey: 'chooseIdsMetadata' });
   }
-  if (quality.environment.issues.length) {
+  // captureAndInspect already emits a sandbox/staging recommendation when the page URL
+  // looks like a lower environment, so only add this one when none exists yet (e.g.
+  // localhost, which captureAndInspect's URL pattern does not match) to avoid two
+  // overlapping sandbox recommendations.
+  const hasSandboxAdvice = result.advice.some(a => a && a.supportKey === 'sandbox');
+  if (quality.environment.issues.length && !hasSandboxAdvice) {
     result.advice.push({ text: quality.environment.issues[0] + ' Consider test prefixes and an Exclude List to keep analytics clean.', source: 'builtin', supportKey: 'sandbox' });
   }
   return result;
