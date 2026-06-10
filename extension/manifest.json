@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Pendo Validate Install Ext",
-  "version": "1.7.1",
+  "version": "1.8.0",
   "description": "Validates Pendo Install (Snippet or Launcher), captures console, checks identity/CSP, and confirms whether an API key is present.",
   "permissions": [
     "scripting",
@@ -35,6 +35,7 @@
         "popup.html",
         "popup.css",
         "popup.js",
+        "theme-init.js",
         "pendo-kb.js",
         "pendo-install-quality.md",
         "pendo-loader.js",

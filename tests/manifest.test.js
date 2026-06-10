@@ -13,3 +13,20 @@ describe('manifest permissions', () => {
     )
   })
 })
+
+describe('manifest web_accessible_resources', () => {
+  it('exposes every file popup.html loads inside the overlay iframe', () => {
+    const resources = manifest.web_accessible_resources[0].resources
+    expect(resources).toEqual(
+      expect.arrayContaining([
+        'popup.html',
+        'popup.css',
+        'popup.js',
+        'theme-init.js',
+        'pendo-kb.js',
+        'pendo-loader.js',
+        'vendor/pendo.js',
+      ]),
+    )
+  })
+})
