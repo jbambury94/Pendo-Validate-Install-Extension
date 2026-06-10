@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.8.0
+- **Multi-browser release packaging.** New `scripts/build.mjs` builds one zip per browser target from the single `extension/` source: `pendo-validate-install-<version>-chrome.zip`, `-edge.zip`, and `-firefox.zip` (npm scripts `build`, `build:chrome`, `build:edge`, `build:firefox`; output in `dist/`). Per-target manifest transforms live in `scripts/browser-targets.mjs`.
+- **Firefox support (128+).** The Firefox package drops the `debugger` / `identity` / `identity.email` permissions (not implemented in Firefox), runs `background.js` as an event page instead of a service worker, and adds `browser_specific_settings.gecko`. `runValidationInLauncherWorld()` now returns `null` when `chrome.debugger` is unavailable, so the CDP Launcher-introspection phase degrades quietly; visitor identification falls back to the anonymous UUID. Zips are unsigned — Firefox loads them as a temporary add-on via `about:debugging`.
+- **Theme FOUC script externalized.** The inline `<head>` theme script in `popup.html` moved to `extension/theme-init.js` (now in `web_accessible_resources`) because Firefox's MV3 CSP silently drops inline scripts. Behaviour is identical in Chrome and Edge.
+- **Automated releases.** New `.github/workflows/release.yml`: pushing a `v*` tag runs the test suite, builds all three zips, lints the Firefox build with `web-ext`, and attaches the zips to a GitHub Release. Manual `workflow_dispatch` runs produce workflow artifacts without publishing.
+- **Single-branch development.** The separate `Edge` and `Firefox` branches are deprecated; all browser targets now build from one branch. Their adaptations have been folded into the main source.
+- **Version sync.** `manifest.json`, `package.json`, and the README badges/footer previously drifted (1.7.1 / 1.7.0 / 1.7.0); all now read 1.8.0.
+- New `tests/browserTargets.test.js` suite covering the per-browser manifest transforms; `tests/manifest.test.js` extended to assert `web_accessible_resources` completeness.
+
 ## 1.7.2
 - **Deprecated AI model auto-migration.** `getAiConfig()` now detects retired model IDs stored in `chrome.storage.local` (e.g. `gemini-2.0-flash`, shut down June 1 2026) and clears them on read so the current provider default is used instead. Legitimate custom model overrides are unaffected.
 

@@ -4,6 +4,11 @@
 *.tmp
 *.swp
 *.zip
+
+# Build artifacts (scripts/build.mjs, web-ext)
+dist/
+web-ext-artifacts/
+*.xpi
 .cursor/rules/version-on-commit.mdc
 .cursor/plans
 

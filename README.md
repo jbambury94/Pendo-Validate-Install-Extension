@@ -5,12 +5,14 @@
 <h1 align="center">Pendo Validate Install</h1>
 
 <p align="center">
-  A Chrome extension that tells you in one click whether Pendo is installed correctly&nbsp;&mdash; and what to fix if it isn't.
+  A browser extension for Chrome, Edge, and Firefox that tells you in one click whether Pendo is installed correctly&nbsp;&mdash; and what to fix if it isn't.
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Chrome%20Extension-MV3-blue" alt="Chrome Extension MV3" />
-  <img src="https://img.shields.io/badge/version-1.7.0-FF4876" alt="Version 1.7.0" />
+  <img src="https://img.shields.io/badge/Chrome-MV3-blue" alt="Chrome MV3" />
+  <img src="https://img.shields.io/badge/Edge-MV3-blue" alt="Edge MV3" />
+  <img src="https://img.shields.io/badge/Firefox-MV3%20(128%2B)-orange" alt="Firefox MV3 (128+)" />
+  <img src="https://img.shields.io/badge/version-1.8.0-FF4876" alt="Version 1.8.0" />
   <img src="https://img.shields.io/badge/Pendo%20Agent-v2.314.1%20bundled-0b2239" alt="Pendo Agent v2.314.1 bundled" />
   <img src="https://img.shields.io/badge/tests-Vitest%20%2B%20jsdom-0f9d58" alt="Tests: Vitest + jsdom" />
   <img src="https://img.shields.io/badge/AI-OpenAI%20%7C%20Claude%20%7C%20Gemini-lightgrey" alt="AI: OpenAI | Claude | Gemini" />
@@ -25,7 +27,7 @@
 
 ## The problem
 
-Debugging a Pendo installation today means juggling browser DevTools, running `pendo.validateInstall()` by hand, guessing whether the snippet or the Pendo Launcher loaded, hunting for a missing API key, and cross-referencing CSP headers — all before you can even tell whether visitor identity is flowing. This extension collapses all of that into a single button click.
+Debugging a Pendo installation today means juggling browser DevTools, running `pendo.validateInstall()` by hand, guessing whether the snippet or the Pendo Launcher loaded, hunting for a missing API key, and cross-referencing CSP headers — all before you can even tell whether visitor identity is flowing. This extension collapses all of that into a single button click. One codebase ships to Chrome, Edge, and Firefox — grab the zip for your browser from [Releases](../../releases).
 
 ## Why you'll like it
 
@@ -47,12 +49,19 @@ Debugging a Pendo installation today means juggling browser DevTools, running `p
   <img src="docs/screenshots/install.png" width="600" alt="Loading the extension from chrome://extensions" />
 </p>
 
-1. Open Chrome and navigate to `chrome://extensions`.
-2. Enable **Developer mode** (top-right toggle).
-3. Click **Load unpacked** and select the `extension/` folder from this repo.
-4. Pin the extension icon in the toolbar for quick access.
+Download the zip for your browser from the [latest GitHub Release](../../releases/latest) — one file per target:
 
-To apply code changes after editing: click the refresh icon on the extension card, then click the toolbar icon to reopen the panel.
+| Browser | Release file | Install steps |
+|---|---|---|
+| **Chrome** | `pendo-validate-install-<version>-chrome.zip` | Unzip, open `chrome://extensions`, enable **Developer mode** (top-right toggle), click **Load unpacked**, select the unzipped folder. |
+| **Edge** | `pendo-validate-install-<version>-edge.zip` | Unzip, open `edge://extensions`, enable **Developer mode** (bottom-left toggle), click **Load unpacked**, select the unzipped folder. |
+| **Firefox** (128+) | `pendo-validate-install-<version>-firefox.zip` | Open `about:debugging#/runtime/this-firefox`, click **Load Temporary Add-on…**, select the zip (no need to unzip). |
+
+Then pin the extension icon in the toolbar for quick access.
+
+> **Firefox note:** the zip is unsigned, so Firefox loads it as a *temporary* add-on that is removed when the browser restarts — just reload it from `about:debugging`. A permanent install requires Mozilla (AMO) signing. The Firefox build also omits the `@pendo.io` profile-email identification feature (Firefox has no `identity.email` API), falling back to an anonymous UUID.
+
+**From source** (Chrome / Edge): clone this repo and **Load unpacked** → select the `extension/` folder directly. To apply code changes after editing: click the refresh icon on the extension card, then click the toolbar icon to reopen the panel. For Firefox, build first (`npm install && npm run build:firefox`) since the source manifest is Chrome-flavoured.
 
 ---
 
@@ -103,11 +112,13 @@ Your key is stored locally in `chrome.storage.local` and is only sent when valid
 
 - Architecture, validation phases, and AI internals — see [CLAUDE.md](CLAUDE.md).
 - Release notes — see [CHANGELOG.md](CHANGELOG.md).
-- Run the test suite: `npm install && npm test` (Vitest + jsdom, 252 tests across 12 suites).
+- Run the test suite: `npm install && npm test` (Vitest + jsdom, 438 tests across 19 suites).
+- Build the release zips: `npm run build` (all three browsers) or `npm run build:chrome` / `build:edge` / `build:firefox`. Output lands in `dist/`; the per-browser manifest transforms live in `scripts/browser-targets.mjs`.
+- Releases are automated: pushing a `v*` tag runs tests, builds all three zips, and attaches them to a GitHub Release (`.github/workflows/release.yml`).
 - UI element / `data-action` reference — see [extension/popup-actions.md](extension/popup-actions.md).
 
 ---
 
 <p align="center">
-  <sub>v1.7.0 &middot; Manifest V3 &middot; Built with the Pendo Web SDK</sub>
+  <sub>v1.8.0 &middot; Manifest V3 &middot; Chrome + Edge + Firefox &middot; Built with the Pendo Web SDK</sub>
 </p>
