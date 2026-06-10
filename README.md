@@ -1,3 +1,6 @@
+> [!WARNING]
+> **This branch (`Edge`) is deprecated.** All browser targets — Chrome, Edge, and Firefox — now build from a single branch (`Stable`). Download the Edge zip from [GitHub Releases](../../releases) or build it with `npm run build:edge`. No further changes will land here.
+
 <p align="center">
   <img src="extension/icons/icon128.png" width="96" alt="Pendo Validate Install icon" />
 </p>
