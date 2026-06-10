@@ -1,3 +1,6 @@
+> [!WARNING]
+> **This branch (`Firefox`) is deprecated.** All browser targets — Chrome, Edge, and Firefox — now build from a single branch (`Stable`); the Firefox-specific adaptations that lived here are folded into that source. Download the Firefox zip from [GitHub Releases](../../releases) or build it with `npm run build:firefox`. No further changes will land here.
+
 <p align="center">
   <img src="extension/icons/icon128.png" width="96" alt="Pendo Validate Install icon" />
 </p>
