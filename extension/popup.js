@@ -549,6 +549,72 @@ function enableDebuggingInPage() {
   } catch (e) { return { ok: false, message: (e && e.message) || String(e) }; }
 }
 
+/**
+ * Evaluate a JS expression inside the Pendo Launcher extension's content-script world via CDP.
+ * Returns { ok: true, value } or { ok: false, reason, message? }.
+ */
+async function evaluateInLauncherWorld(tabId, launcherId, expression) {
+  if (typeof chrome === 'undefined' || !chrome.debugger || typeof chrome.debugger.attach !== 'function') {
+    return { ok: false, reason: 'no-debugger-api' };
+  }
+  const target = { tabId };
+  const expectedOrigin = `chrome-extension://${launcherId}`;
+
+  try {
+    await chrome.debugger.attach(target, '1.3');
+  } catch (e) {
+    return { ok: false, reason: 'attach-failed', message: e && e.message ? e.message : String(e) };
+  }
+
+  try {
+    const contexts = [];
+    const handler = (source, method, params) => {
+      if (source.tabId === tabId && method === 'Runtime.executionContextCreated') {
+        contexts.push(params.context);
+      }
+    };
+    chrome.debugger.onEvent.addListener(handler);
+    await chrome.debugger.sendCommand(target, 'Runtime.enable');
+    await new Promise(r => setTimeout(r, 60));
+    chrome.debugger.onEvent.removeListener(handler);
+
+    const launcherCtx = contexts.find(ctx =>
+      (ctx.origin || '').toLowerCase() === expectedOrigin
+    );
+    if (!launcherCtx) return { ok: false, reason: 'no-launcher-context' };
+
+    const evalResult = await chrome.debugger.sendCommand(target, 'Runtime.evaluate', {
+      expression,
+      contextId: launcherCtx.id,
+      returnByValue: true
+    });
+
+    if (evalResult?.exceptionDetails) {
+      const text = evalResult.exceptionDetails.text || evalResult.exceptionDetails.exception?.description || 'Evaluation failed';
+      return { ok: false, reason: 'eval-exception', message: text };
+    }
+    return { ok: true, value: evalResult?.result?.value };
+  } finally {
+    try { await chrome.debugger.detach(target); } catch {}
+  }
+}
+
+/** Enable pendo.enableDebugging() inside the Launcher content-script world (Phase 1.75 path). */
+async function enableDebuggingViaLauncherCdp(tabId, launcher) {
+  const expression = `(${enableDebuggingInPage.toString()})()`;
+  const cdp = await evaluateInLauncherWorld(tabId, launcher.id, expression);
+  if (!cdp.ok) {
+    if (cdp.reason === 'no-debugger-api') {
+      return { ok: false, message: 'Launcher debugger requires Chrome or Edge (CDP not available in this browser).' };
+    }
+    if (cdp.reason === 'no-launcher-context') {
+      return { ok: false, message: 'Pendo Launcher agent context not found on this tab. Re-run validation first.' };
+    }
+    return { ok: false, message: cdp.message || 'Failed to enable debugger in Launcher context.' };
+  }
+  return cdp.value || { ok: false, message: 'No result from Launcher debugger.' };
+}
+
 // ========== Page validation: inject and run in tab ==========
 /**
  * Three-phase validation:
@@ -810,56 +876,11 @@ async function runInPage() {
    * inside the Pendo Launcher extension's content-script isolated world.
    */
   async function runValidationInLauncherWorld(tabId, launcher) {
-    // Firefox lacks the chrome.debugger (CDP) API; skip this Launcher-introspection
-    // path entirely so it degrades quietly instead of throwing on undefined.
-    if (typeof chrome === 'undefined' || !chrome.debugger || typeof chrome.debugger.attach !== 'function') {
-      return null;
-    }
-    const target = { tabId };
-    const launcherId = launcher.id;
-    const expectedOrigin = `chrome-extension://${launcherId}`;
-
-    try {
-      await chrome.debugger.attach(target, '1.3');
-    } catch (e) {
-      return null;
-    }
-
-    try {
-      const contexts = [];
-      const handler = (source, method, params) => {
-        if (source.tabId === tabId && method === 'Runtime.executionContextCreated') {
-          contexts.push(params.context);
-        }
-      };
-      chrome.debugger.onEvent.addListener(handler);
-      await chrome.debugger.sendCommand(target, 'Runtime.enable');
-      // CDP delivers all existing executionContextCreated events after Runtime.enable;
-      // a brief yield lets the event queue flush before we read the collected contexts.
-      await new Promise(r => setTimeout(r, 60));
-      chrome.debugger.onEvent.removeListener(handler);
-
-      const launcherCtx = contexts.find(ctx =>
-        (ctx.origin || '').toLowerCase() === expectedOrigin
-      );
-      if (!launcherCtx) return null;
-
-      const variant = launcher.variant;
-      const expression = `(${captureAndInspect.toString()})('${variant}')`;
-
-      const evalResult = await chrome.debugger.sendCommand(target, 'Runtime.evaluate', {
-        expression,
-        contextId: launcherCtx.id,
-        returnByValue: true
-      });
-
-      if (evalResult?.result?.value) {
-        return { result: evalResult.result.value, variant };
-      }
-      return null;
-    } finally {
-      try { await chrome.debugger.detach(target); } catch {}
-    }
+    const variant = launcher.variant;
+    const expression = `(${captureAndInspect.toString()})('${variant}')`;
+    const cdp = await evaluateInLauncherWorld(tabId, launcher.id, expression);
+    if (!cdp.ok || cdp.value == null) return null;
+    return { result: cdp.value, variant };
   }
 
   const EMPTY_RESULT = {
@@ -926,7 +947,9 @@ async function runInPage() {
       launcherDataValidated,
       validatedIn: 'launcher',
       launcherUrl: basePageUrl,
-      origin: 'launcher'
+      origin: 'launcher',
+      validationPath: 'launcher-main',
+      validationTabId: tab.id
     };
   }
 
@@ -949,7 +972,10 @@ async function runInPage() {
         launcherDataValidated,
         validatedIn: cdpResult.variant,
         launcherUrl: basePageUrl,
-        origin: cdpResult.variant
+        origin: cdpResult.variant,
+        validationPath: 'launcher-cdp',
+        validationTabId: tab.id,
+        launcherExtensionId: installedLauncher.id
       };
     }
 
@@ -2153,7 +2179,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         timestamp: toIso(now),
         status, captured, advice: adviceList, checks: checksToRender, cspMeta: cspMeta || '', apiKeyFound, origin: validatedIn || origin || 'page',
         hasError: !!hasError, hasWarn: !!hasWarn,
-        snippetOnPage, launcherPresent, launcherAttempted, launcherDataValidated: !!launcherDataValidated, validatedIn: validatedIn || 'page', launcherUrl: res.launcherUrl
+        snippetOnPage, launcherPresent, launcherAttempted, launcherDataValidated: !!launcherDataValidated, validatedIn: validatedIn || 'page', launcherUrl: res.launcherUrl,
+        validationPath: res.validationPath || (validatedIn === 'page' ? 'page' : 'unknown'),
+        validationTabId: res.validationTabId,
+        launcherExtensionId: res.launcherExtensionId
       };
       renderLogs();
 
@@ -2199,9 +2228,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  /** Enable Pendo Debugger: calls pendo.enableDebugging() in the page. */
+  /** Enable Pendo Debugger: calls pendo.enableDebugging() in the validated agent context. */
   launchDebuggerBtn.addEventListener('click', async () => {
-    const res = await runInActiveTab(enableDebuggingInPage);
+    const useLauncherCdp = !!(lastContext && lastContext.validationPath === 'launcher-cdp' && lastContext.validationTabId);
+    let res;
+    if (useLauncherCdp) {
+      const launcher = lastContext.launcherExtensionId
+        ? { id: lastContext.launcherExtensionId, variant: lastContext.validatedIn || 'launcher' }
+        : await detectInstalledPendoLauncherExtension();
+      if (!launcher) {
+        res = { ok: false, message: 'Pendo Launcher extension not found.' };
+      } else {
+        res = await enableDebuggingViaLauncherCdp(lastContext.validationTabId, launcher);
+      }
+    } else {
+      res = await runInActiveTab(enableDebuggingInPage);
+    }
     if (res.ok) showToast('Debugger enabled');
     else showToast(res.message || 'Debugger failed');
   });

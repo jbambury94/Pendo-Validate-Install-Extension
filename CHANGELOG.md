@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.8.1
+- **Launcher debugger fix.** When validation detects Pendo via the Launcher content-script world (Phase 1.75 / CDP), the **Debugger** button now calls `pendo.enableDebugging()` in that same isolated context instead of only the page MAIN world (where no agent exists).
+- **CDP helper refactor.** Extracted `evaluateInLauncherWorld()` shared by validation and debugger; validation stores `validationPath`, `validationTabId`, and `launcherExtensionId` for routing.
+- **Tests.** New `tests/evaluateInLauncherWorld.test.js` suite (mocked `chrome.debugger`); manifest version assertion in `tests/manifest.test.js`; helpers synced in `tests/helpers.js`. 447 tests across 20 suites.
+- **Docs.** `CLAUDE.md` removed from version control (added to `.gitignore`); README no longer links to it. File remains locally for agent guidance.
+
 ## 1.8.0
 - **Multi-browser release packaging.** New `scripts/build.mjs` builds one zip per browser target from the single `extension/` source: `pendo-validate-install-<version>-chrome.zip`, `-edge.zip`, and `-firefox.zip` (npm scripts `build`, `build:chrome`, `build:edge`, `build:firefox`; output in `dist/`). Per-target manifest transforms live in `scripts/browser-targets.mjs`.
 - **Firefox support (128+).** The Firefox package drops the `debugger` / `identity` / `identity.email` permissions (not implemented in Firefox), runs `background.js` as an event page instead of a service worker, and adds `browser_specific_settings.gecko`. `runValidationInLauncherWorld()` now returns `null` when `chrome.debugger` is unavailable, so the CDP Launcher-introspection phase degrades quietly; visitor identification falls back to the anonymous UUID. Zips are unsigned — Firefox loads them as a temporary add-on via `about:debugging`.

@@ -520,6 +520,71 @@ export function enableDebuggingInPage() {
   }
 }
 
+/**
+ * Evaluate a JS expression inside the Pendo Launcher extension's content-script world via CDP.
+ * Returns { ok: true, value } or { ok: false, reason, message? }.
+ */
+export async function evaluateInLauncherWorld(tabId, launcherId, expression) {
+  if (typeof chrome === 'undefined' || !chrome.debugger || typeof chrome.debugger.attach !== 'function') {
+    return { ok: false, reason: 'no-debugger-api' }
+  }
+  const target = { tabId }
+  const expectedOrigin = `chrome-extension://${launcherId}`
+
+  try {
+    await chrome.debugger.attach(target, '1.3')
+  } catch (e) {
+    return { ok: false, reason: 'attach-failed', message: e && e.message ? e.message : String(e) }
+  }
+
+  try {
+    const contexts = []
+    const handler = (source, method, params) => {
+      if (source.tabId === tabId && method === 'Runtime.executionContextCreated') {
+        contexts.push(params.context)
+      }
+    }
+    chrome.debugger.onEvent.addListener(handler)
+    await chrome.debugger.sendCommand(target, 'Runtime.enable')
+    await new Promise(r => setTimeout(r, 60))
+    chrome.debugger.onEvent.removeListener(handler)
+
+    const launcherCtx = contexts.find(ctx =>
+      (ctx.origin || '').toLowerCase() === expectedOrigin
+    )
+    if (!launcherCtx) return { ok: false, reason: 'no-launcher-context' }
+
+    const evalResult = await chrome.debugger.sendCommand(target, 'Runtime.evaluate', {
+      expression,
+      contextId: launcherCtx.id,
+      returnByValue: true
+    })
+
+    if (evalResult?.exceptionDetails) {
+      const text = evalResult.exceptionDetails.text || evalResult.exceptionDetails.exception?.description || 'Evaluation failed'
+      return { ok: false, reason: 'eval-exception', message: text }
+    }
+    return { ok: true, value: evalResult?.result?.value }
+  } finally {
+    try { await chrome.debugger.detach(target) } catch {}
+  }
+}
+
+/** Enable pendo.enableDebugging() inside the Launcher content-script world (Phase 1.75 path). */
+export async function enableDebuggingViaLauncherCdp(tabId, launcher) {
+  const expression = `(${enableDebuggingInPage.toString()})()`
+  const cdp = await evaluateInLauncherWorld(tabId, launcher.id, expression)
+  if (!cdp.ok) {
+    if (cdp.reason === 'no-debugger-api') {
+      return { ok: false, message: 'Launcher debugger requires Chrome or Edge (CDP not available in this browser).' }
+    }
+    if (cdp.reason === 'no-launcher-context') {
+      return { ok: false, message: 'Pendo Launcher agent context not found on this tab. Re-run validation first.' }
+    }
+    return { ok: false, message: cdp.message || 'Failed to enable debugger in Launcher context.' }
+  }
+  return cdp.value || { ok: false, message: 'No result from Launcher debugger.' }
+}
 
 /** Rewrite known provider errors into clearer guidance (kept in sync with popup.js). */
 export function friendlyAiFailureDetail(provider, rawDetail) {

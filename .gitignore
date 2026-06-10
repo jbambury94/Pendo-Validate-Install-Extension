@@ -21,3 +21,4 @@ coverage/
 
 # Vitest cache
 .vitest-cache/
+CLAUDE.md
