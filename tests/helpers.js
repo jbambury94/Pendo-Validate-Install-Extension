@@ -27,6 +27,12 @@ export const PENDO_SUPPORT = {
   launcherPlan:     'https://support.pendo.io/hc/en-us/articles/21163862516507',
   troubleshooting:  'https://support.pendo.io/hc/en-us/articles/10033806003483',
   vds:              'https://support.pendo.io/hc/en-us/articles/360031864732-Help-launching-the-Visual-Design-Studio',
+  agentConfig:            'https://web-sdk.pendo.io/config/',
+  agentConfigCore:        'https://web-sdk.pendo.io/config/core',
+  agentConfigAnalytics:   'https://web-sdk.pendo.io/config/analytics',
+  agentConfigGuides:      'https://web-sdk.pendo.io/config/guides',
+  agentConfigNetworkLogs: 'https://web-sdk.pendo.io/config/network-logs',
+  agentConfigReplay:      'https://web-sdk.pendo.io/config/replay',
 }
 
 export const SUPPORT_LABELS = {
@@ -51,6 +57,12 @@ export const SUPPORT_LABELS = {
   launcherPlan: 'Launcher planning guide',
   troubleshooting: 'Pendo not displaying',
   vds: 'Launching the Visual Design Studio',
+  agentConfig: 'Web SDK configuration',
+  agentConfigCore: 'Config: Core',
+  agentConfigAnalytics: 'Config: Analytics',
+  agentConfigGuides: 'Config: Guides',
+  agentConfigNetworkLogs: 'Config: Network logs',
+  agentConfigReplay: 'Config: Replay',
 }
 
 export const ERR_SUPPORT_KEYS = new Set(['installGuide', 'installComponents', 'agentSettings'])
@@ -204,6 +216,8 @@ export function buildMarkdownReport(context, selectRelatedReadingFn) {
     accountId: status.accountId == null ? 'not set' : status.accountId,
     resourceHitCount: (status.resourceHits && status.resourceHits.length) || 0,
     redirectCount: status.redirectCount || 0,
+    urlSanitizationPatterns: (status.urlSanitization && status.urlSanitization.inlinePatterns) || [],
+    urlObservedStrips: (status.urlSanitization && status.urlSanitization.observedStrips) || 0,
     capturedLineCount: (captured && captured.length) || 0,
   }
   if (status.visitorMetadata) meta.visitorMetadata = status.visitorMetadata
@@ -448,7 +462,7 @@ export function buildAiPrompt(context, selectRelatedReadingFn) {
       cspIssue: !!(context.cspMeta || '').length || (context.captured || []).some(l => /csp|content.security/i.test(l.text)),
       noResourceHits: context.status.resourceHits && context.status.resourceHits.length === 0,
       apiKeyMissing: !context.apiKeyFound,
-      urlSanitized: !!(context.status.pendoPresent && (context.status.redirectCount || 0) > 0),
+      urlSanitized: !!(context.status.pendoPresent && ((context.status.redirectCount || 0) > 0 || (context.status.urlSanitization && (context.status.urlSanitization.inlinePatterns.length || context.status.urlSanitization.observedStrips)))),
     }
     const kbEntries = selectRelatedReadingFn(signals, 6)
     if (kbEntries && kbEntries.length) {
@@ -867,6 +881,8 @@ export function captureAndInspect(variant = 'page') {
     accountId: null,
     visitorMetadata: null,
     accountMetadata: null,
+    configKeys: null,
+    configSource: null,
     resourceHits: [],
   }
 
@@ -917,6 +933,20 @@ export function captureAndInspect(variant = 'page') {
       const accountSrc = (serialized && serialized.account) || (opts && opts.account) || (legacyState && legacyState.account)
       status.visitorMetadata = safeCloneFields(visitorSrc)
       status.accountMetadata = safeCloneFields(accountSrc)
+    }
+  } catch {}
+
+  // Detect the options passed to pendo.initialize() via the async snippet queue.
+  // The standard snippet stubs queue calls onto pendo._q as ['initialize', { ...config }];
+  // the real agent augments the same object so the original call survives post-load.
+  try {
+    const q = (agent && Array.isArray(agent._q)) ? agent._q : null
+    if (q) {
+      let cfg = null
+      for (const entry of q) {
+        if (Array.isArray(entry) && entry[0] === 'initialize' && entry[1] && typeof entry[1] === 'object') cfg = entry[1]
+      }
+      if (cfg) { status.configKeys = Object.keys(cfg); status.configSource = 'snippet-queue' }
     }
   } catch {}
 
@@ -1060,6 +1090,62 @@ export function captureAndInspect(variant = 'page') {
     if (status.pendoPresent && redirectCount > 0) {
       advice.push({ text: "This page redirected during load, which can strip query parameters from the URL. If the Visual Design Studio won't launch over your app, the application may be sanitizing the URL and dropping Pendo's \"pendo-designer\" token. Enable \"Disable Designer Launch URL Token\" in the app's Tagging & Guide Settings, or launch the designer manually with pendo.designerv2.launchInAppDesigner().", source: 'builtin', supportKey: 'vds' })
     }
+    // --- Client-side URL-sanitization detection (DOM + runtime) ---
+    try {
+      const urlSan = { historyApiPatched: false, inlinePatterns: [], inlineScripts: 0, externalScripts: 0, observedStrips: 0 }
+      try {
+        const fnStr = (fn) => { try { return Function.prototype.toString.call(fn) } catch { return '' } }
+        const isNative = (fn) => /\{\s*\[native code\]\s*\}/.test(fnStr(fn))
+        urlSan.historyApiPatched = !(isNative(history.pushState) && isNative(history.replaceState))
+      } catch {}
+      try {
+        if (!window.__pendoValidateHistoryHooked) {
+          window.__pendoValidateUrlStrips = []
+          const histMethods = ['pushState', 'replaceState']
+          histMethods.forEach((name) => {
+            const orig = history[name]
+            if (typeof orig !== 'function') return
+            history[name] = function () {
+              const before = location.search
+              const ret = orig.apply(this, arguments)
+              try {
+                const after = location.search
+                if (before && before.length > 1 && (!after || after.length <= 1)) {
+                  window.__pendoValidateUrlStrips.push({ method: name, before, hadPendoToken: /pendo-?designer|[?&]pendo/i.test(before) })
+                }
+              } catch {}
+              return ret
+            }
+          })
+          window.__pendoValidateHistoryHooked = true
+        }
+        urlSan.observedStrips = (window.__pendoValidateUrlStrips || []).length
+      } catch {}
+      try {
+        const scripts = Array.from(document.scripts || [])
+        urlSan.externalScripts = scripts.filter(s => s.src).length
+        const inlineScripts = scripts.filter(s => !s.src && s.textContent)
+        urlSan.inlineScripts = inlineScripts.length
+        const src = inlineScripts.map(s => s.textContent).join('\n')
+        const patterns = [
+          { name: 'replaceState/pushState to pathname', re: /\.(?:replace|push)State\([^;)]*location\.pathname/ },
+          { name: 'location.search cleared',            re: /location\.search\s*=\s*(['"`])\1/ },
+          { name: 'searchParams.delete',                re: /searchParams\.delete\s*\(/ },
+          { name: "split('?')[0]",                      re: /\.split\(\s*(['"`])\?\1\s*\)\s*\[\s*0\s*\]/ },
+          { name: 'pendo-designer reference',           re: /pendo-?designer/i },
+          { name: 'sanitize/strip URL',                 re: /(sanitiz|strip|clean)\w*\s*(url|query|param)/i },
+        ]
+        for (const p of patterns) { try { if (p.re.test(src)) urlSan.inlinePatterns.push(p.name) } catch {} }
+      } catch {}
+      status.urlSanitization = urlSan
+      const hasClientSignal = urlSan.inlinePatterns.length > 0 || urlSan.observedStrips > 0
+      if (status.pendoPresent && hasClientSignal) {
+        const detail = urlSan.observedStrips > 0 ? 'the query string was observed being removed from the URL' : ('inline scripts contain: ' + urlSan.inlinePatterns.join(', '))
+        advice.push({ text: `Client-side code on this page modifies the URL (${detail}). This can strip Pendo's "pendo-designer" token and prevent the Visual Design Studio from launching. If VDS won't open, enable "Disable Designer Launch URL Token" in the app's Tagging & Guide Settings.`, source: 'builtin', supportKey: 'vds' })
+      } else if (status.pendoPresent && urlSan.inlineScripts > 0) {
+        checks.push('No URL-sanitization patterns found in inline scripts (external bundles not scanned).')
+      }
+    } catch {}
   } catch {}
 
   if (status.validatePresent && !hasError && !hasWarn && captured.length > 0) {
@@ -1203,6 +1289,99 @@ export function appendQualityAdviceToResult(result, pageUrl) {
   if (quality.environment.issues.length && !hasSandboxAdvice) {
     result.advice.push({ text: quality.environment.issues[0] + ' Consider test prefixes and an Exclude List to keep analytics clean.', source: 'builtin', supportKey: 'sandbox' })
   }
+  return result
+}
+
+// ========== Configuration flag detection ==========
+/** Standard pendo.initialize keys that do NOT count as customisation "flags". */
+export const STANDARD_INIT_KEYS = new Set(['visitor', 'account', 'apiKey', 'publicAppId'])
+
+/** Known top-level pendo.initialize options mapped to their Web SDK config doc category. */
+export const CONFIG_FLAG_CATEGORY = {
+  // Core (https://web-sdk.pendo.io/config/core)
+  additionalPublicAppIds: 'core', additionalApiKeys: 'core', annotateUrl: 'core', autoFrameInstall: 'core',
+  contentHost: 'core', cookieDomain: 'core', crossAppGuideStorageSuffix: 'core', dataHost: 'core',
+  disableCookies: 'core', disableFeedback: 'core', disablePendo: 'core', disablePersistence: 'core',
+  enableCrossOriginIsolation: 'core', eventPropertyTimeout: 'core', forceAnonymous: 'core', forcedLeader: 'core',
+  frameIdentitySync: 'core', frameIdentityTopDownOnly: 'core', ignoreHashRouting: 'core', initializeImmediately: 'core',
+  initializeWhenVisible: 'core', localStorageOnly: 'core', location: 'core', observeShadowRoots: 'core',
+  preferBroadcastChannel: 'core', preferMutationObserver: 'core', preventUnloadListener: 'core',
+  queryStringWhitelist: 'core', sanitizeUrl: 'core', secureDesignerConnect: 'core', selfHostedWebSDKUrl: 'core',
+  selfHostedAgentUrl: 'core', sendEventsWithPostOnly: 'core',
+  // Analytics (https://web-sdk.pendo.io/config/analytics)
+  allowedText: 'analytics', analytics: 'analytics', enableDebugEvents: 'analytics', eventPropertyMatchParents: 'analytics',
+  excludeAllText: 'analytics', excludeNonGuideAnalytics: 'analytics', interceptPreventDefault: 'analytics',
+  interceptStopPropagation: 'analytics', syntheticClicks: 'analytics', interceptElementRemoval: 'analytics',
+  // Guides (https://web-sdk.pendo.io/config/guides)
+  appAutoOrdering: 'guides', cacheGuides: 'guides', cacheGuidesTimeout: 'guides', disableDesigner: 'guides',
+  disableGlobalCSS: 'guides', disableGuidePseudoStyles: 'guides', disablePrefetch: 'guides',
+  enableDesignerKeyboardShortcut: 'guides', enableGuideTimeout: 'guides', guideSeenTimeoutLength: 'guides',
+  guideValidation: 'guides', guides: 'guides', inlineStyleNonce: 'guides', leaderApplication: 'guides',
+  leaderKey: 'guides', preventCodeInjection: 'guides', delayGuides: 'guides', disableGuides: 'guides', guideTimeout: 'guides',
+  // Network logs (https://web-sdk.pendo.io/config/network-logs)
+  networkLogs: 'networkLogs',
+  // Replay (https://web-sdk.pendo.io/config/replay)
+  recording: 'replay',
+}
+
+/** Config doc category -> support link key. */
+export const CONFIG_CATEGORY_SUPPORT_KEY = {
+  core: 'agentConfigCore', analytics: 'agentConfigAnalytics', guides: 'agentConfigGuides',
+  networkLogs: 'agentConfigNetworkLogs', replay: 'agentConfigReplay',
+}
+
+/** Config doc category -> human label used inside the warning text. */
+export const CONFIG_CATEGORY_LABEL = {
+  core: 'Core', analytics: 'Analytics', guides: 'Guides', networkLogs: 'Network logs', replay: 'Replay',
+}
+
+/**
+ * Identify non-standard configuration flags from the options passed to pendo.initialize().
+ * Reads status.configKeys (captured from the snippet queue). Returns { detected, flags },
+ * where `detected` indicates the init options were readable and `flags` lists each
+ * non-standard key with its config-doc category (null for unrecognised/custom keys).
+ */
+export function assessConfigFlags(status) {
+  const keys = status && Array.isArray(status.configKeys) ? status.configKeys : null
+  if (!keys) return { detected: false, flags: [] }
+  const flags = keys
+    .filter(k => !STANDARD_INIT_KEYS.has(k))
+    .map(k => ({ key: k, category: CONFIG_FLAG_CATEGORY[k] || null }))
+  return { detected: true, flags }
+}
+
+/**
+ * Append a single grouped warning when pendo.initialize() uses options beyond a standard
+ * install (visitor + account, plus the required apiKey/publicAppId). Each flag is named with
+ * its config category and the warning links to the Web SDK configuration docs. No-op when the
+ * init options were not readable; adds a passing check when only standard keys are present.
+ */
+export function appendConfigFlagsAdviceToResult(result) {
+  if (!result || !result.status || !result.status.pendoPresent) return result
+  const { detected, flags } = assessConfigFlags(result.status)
+  if (!detected) return result
+  result.advice = result.advice || []
+  result.checks = result.checks || []
+  if (!flags.length) {
+    result.checks.push('Standard configuration detected (visitor + account only).')
+    return result
+  }
+  const labelList = flags
+    .map(f => `${f.key} (${f.category ? CONFIG_CATEGORY_LABEL[f.category] : 'other'})`)
+    .join(', ')
+  const categories = []
+  for (const f of flags) {
+    if (f.category && !categories.includes(f.category)) categories.push(f.category)
+  }
+  const supportKeys = categories.map(c => CONFIG_CATEGORY_SUPPORT_KEY[c]).filter(Boolean)
+  result.advice.push({
+    text: `Non-standard configuration flags detected in pendo.initialize(): ${labelList}. `
+      + 'A standard install passes only visitor and account. Confirm each flag is intentional and '
+      + 'review it against the Pendo Web SDK configuration docs.',
+    source: 'builtin',
+    supportKey: 'agentConfig',
+    supportKeys,
+  })
   return result
 }
 

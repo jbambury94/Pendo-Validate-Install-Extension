@@ -478,3 +478,99 @@ describe('captureAndInspect — URL sanitization / redirect detection', () => {
     expect(result.advice.some(a => a.supportKey === 'vds')).toBe(true)
   })
 })
+
+describe('captureAndInspect — client-side URL sanitization', () => {
+  beforeEach(() => {
+    window.__pendoValidateHistoryHooked = false
+    window.__pendoValidateUrlStrips = []
+  })
+
+  it('flags an inline script that clears location.search', () => {
+    document.head.innerHTML = '<script>function clean(){ location.search = "" }</script>'
+    window.pendo = { validateInstall: vi.fn(), apiKey: 'k', _: { state: { visitorId: 'v', accountId: 'a' } } }
+    const result = captureAndInspect()
+    expect(result.status.urlSanitization.inlinePatterns).toContain('location.search cleared')
+    expect(result.advice.some(a => a.supportKey === 'vds' && /Client-side code/.test(a.text))).toBe(true)
+  })
+
+  it('flags an inline script using searchParams.delete', () => {
+    document.head.innerHTML = '<script>const u = new URL(location.href); u.searchParams.delete("pendo-designer")</script>'
+    window.pendo = { validateInstall: vi.fn(), apiKey: 'k', _: { state: { visitorId: 'v', accountId: 'a' } } }
+    const result = captureAndInspect()
+    expect(result.status.urlSanitization.inlinePatterns).toContain('searchParams.delete')
+    expect(result.advice.some(a => a.supportKey === 'vds')).toBe(true)
+  })
+
+  it('flags an observed query-string strip recorded by the history hook', () => {
+    window.__pendoValidateHistoryHooked = true
+    window.__pendoValidateUrlStrips = [{ method: 'replaceState', before: '?pendo-designer=x', hadPendoToken: true }]
+    window.pendo = { validateInstall: vi.fn(), apiKey: 'k', _: { state: { visitorId: 'v', accountId: 'a' } } }
+    const result = captureAndInspect()
+    expect(result.status.urlSanitization.observedStrips).toBe(1)
+    expect(result.advice.some(a => a.supportKey === 'vds' && /query string was observed/.test(a.text))).toBe(true)
+  })
+
+  it('adds a clean check when inline scripts have no sanitization patterns', () => {
+    document.head.innerHTML = '<script>console.log("hello world")</script>'
+    window.pendo = { validateInstall: vi.fn(), apiKey: 'k', _: { state: { visitorId: 'v', accountId: 'a' } } }
+    const result = captureAndInspect()
+    expect(result.status.urlSanitization.inlinePatterns).toEqual([])
+    expect(result.checks).toContain('No URL-sanitization patterns found in inline scripts (external bundles not scanned).')
+    expect(result.advice.some(a => a.supportKey === 'vds')).toBe(false)
+  })
+
+  it('does not flag client-side sanitization when pendo is absent', () => {
+    document.head.innerHTML = '<script>location.search = ""</script>'
+    const result = captureAndInspect()
+    expect(result.advice.some(a => a.supportKey === 'vds')).toBe(false)
+  })
+
+  it('reports inline and external script counts', () => {
+    document.head.innerHTML = '<script src="https://cdn.example.com/app.js"></script><script>var x = 1</script>'
+    window.pendo = { validateInstall: vi.fn(), apiKey: 'k', _: { state: { visitorId: 'v', accountId: 'a' } } }
+    const result = captureAndInspect()
+    expect(result.status.urlSanitization.externalScripts).toBe(1)
+    expect(result.status.urlSanitization.inlineScripts).toBe(1)
+  })
+})
+
+describe('captureAndInspect — init config detection (snippet queue)', () => {
+  it('captures top-level pendo.initialize() keys from pendo._q', () => {
+    window.pendo = {
+      validateInstall: vi.fn(),
+      _q: [['initialize', { visitor: { id: 'v' }, account: { id: 'a' }, disableCookies: true }]],
+    }
+    const result = captureAndInspect()
+    expect(result.status.configSource).toBe('snippet-queue')
+    expect(result.status.configKeys).toEqual(['visitor', 'account', 'disableCookies'])
+  })
+
+  it('uses the last initialize entry when several calls are queued', () => {
+    window.pendo = {
+      validateInstall: vi.fn(),
+      _q: [
+        ['initialize', { visitor: { id: 'v' } }],
+        ['identify', { id: 'x' }],
+        ['initialize', { visitor: { id: 'v' }, account: { id: 'a' }, excludeAllText: true }],
+      ],
+    }
+    expect(captureAndInspect().status.configKeys).toEqual(['visitor', 'account', 'excludeAllText'])
+  })
+
+  it('leaves configKeys/configSource null when there is no _q queue', () => {
+    window.pendo = { validateInstall: vi.fn() }
+    const result = captureAndInspect()
+    expect(result.status.configKeys).toBeNull()
+    expect(result.status.configSource).toBeNull()
+  })
+
+  it('leaves configKeys null when _q has no initialize entry', () => {
+    window.pendo = { validateInstall: vi.fn(), _q: [['identify', { id: 'x' }]] }
+    expect(captureAndInspect().status.configKeys).toBeNull()
+  })
+
+  it('ignores a non-array _q', () => {
+    window.pendo = { validateInstall: vi.fn(), _q: 'nope' }
+    expect(captureAndInspect().status.configKeys).toBeNull()
+  })
+})
