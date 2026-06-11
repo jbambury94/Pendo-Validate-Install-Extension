@@ -2,6 +2,9 @@
  * Proxy Claude API calls from the panel through the service worker. Anthropic still
  * classifies extension fetch as a browser client (requires dangerous-direct-browser-access);
  * some orgs block that entirely — see friendly messaging in popup.js requestAiAdvice catch.
+ *
+ * Also handles toolbar icon clicks: injects content.js into pre-existing tabs, then sends
+ * pendo-validate-toggle to show/hide the overlay panel.
  */
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type !== 'pendo-validate-ai-fetch') return;

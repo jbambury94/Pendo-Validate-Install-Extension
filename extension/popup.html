@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <title>Pendo Validate Install assistant</title>
     <!-- Local fonts only: remote Google Fonts added network + render delay on every popup open -->
+    <!-- Head load order: theme-init.js runs synchronously pre-paint (FOUC prevention; external because MV3 CSP blocks inline scripts); then popup.css; pendo-loader.js defers the bundled agent -->
     <script src="theme-init.js"></script>
     <link rel="stylesheet" href="popup.css">
     <script src="pendo-loader.js"></script>
@@ -57,6 +58,7 @@
             <div class="status-hero__time" id="statusHeroTime">NEVER</div>
           </div>
 
+          <!-- Result sections below start hidden; popup.js reveals and populates them after a validation run -->
           <div class="quick-stats" id="quickStats" hidden>
             <div class="qs qs--err"  id="qsErr">
               <div class="qs__num" id="qsErrNum">0</div>
@@ -245,6 +247,7 @@
     <!-- Toast container -->
     <div id="toast" class="toast" hidden aria-live="polite"></div>
 
+    <!-- Load order: pendo-kb.js (KB globals) must load before popup.js -->
     <!-- Pendo support knowledge base (topics, summaries, article links) -->
     <script src="pendo-kb.js"></script>
     <!-- Popup logic: validation, advice, export, copy, render, tabs, drag/resize -->

@@ -1,8 +1,12 @@
 name: Release
 
-# Pushing a version tag (e.g. v1.8.0) runs tests, builds the Chrome / Edge /
+# Pushing a version tag (e.g. v1.8.2) runs tests, builds the Chrome / Edge /
 # Firefox zips, and attaches them to a GitHub Release. workflow_dispatch
 # builds the same zips as workflow artifacts without publishing a Release.
+#
+# Releases only publish from Stable: a tagged commit that is not on origin/Stable
+# fails the "Verify tagged commit is on Stable" step before any build runs. Merge
+# to Stable first, then tag that commit.
 on:
   push:
     tags: ['v*']
@@ -18,6 +22,17 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify tagged commit is on Stable
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          git fetch --no-tags origin +refs/heads/Stable:refs/remotes/origin/Stable
+          if ! git branch -r --contains "${GITHUB_SHA}" | grep -qE '^[[:space:]]*origin/Stable$'; then
+            echo "::error::Tag ${GITHUB_REF_NAME} points at ${GITHUB_SHA}, which is not on origin/Stable. Merge to Stable first."
+            exit 1
+          fi
 
       - name: Set up Node.js
         uses: actions/setup-node@v4

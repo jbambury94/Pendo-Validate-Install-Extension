@@ -77,11 +77,24 @@ async function getOrCreateVisitorId() {
   });
 }
 
+/** Read the IVA extension version from the manifest (for self-instrumentation metadata). */
+function getIvaVersion() {
+  try {
+    return (chrome.runtime && typeof chrome.runtime.getManifest === 'function')
+      ? (chrome.runtime.getManifest().version || '')
+      : '';
+  } catch { return ''; }
+}
+
 /** Initialize Pendo with stored visitor UUID (runs as soon as script loads). */
 (async function initPendoWithStoredVisitor() {
   const visitorId = await getOrCreateVisitorId();
   if (typeof window.pendo !== 'undefined' && visitorId) {
-    window.pendo.initialize({ visitor: { id: visitorId } });
+    const visitor = { id: visitorId };
+    const ivaVersion = getIvaVersion();
+    if (ivaVersion) visitor.ivaVersion = ivaVersion;
+    if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(visitorId)) visitor.email = visitorId;
+    window.pendo.initialize({ visitor });
   }
 })();
 
@@ -110,7 +123,14 @@ const PENDO_SUPPORT = {
   signedMetadata: 'https://support.pendo.io/hc/en-us/articles/360039616892',
   hostnameAllowlist: 'https://support.pendo.io/hc/en-us/articles/16101373319707',
   launcherPlan: 'https://support.pendo.io/hc/en-us/articles/21163862516507',
-  troubleshooting: 'https://support.pendo.io/hc/en-us/articles/10033806003483'
+  troubleshooting: 'https://support.pendo.io/hc/en-us/articles/10033806003483',
+  vds: 'https://support.pendo.io/hc/en-us/articles/360031864732-Help-launching-the-Visual-Design-Studio',
+  agentConfig: 'https://web-sdk.pendo.io/config/',
+  agentConfigCore: 'https://web-sdk.pendo.io/config/core',
+  agentConfigAnalytics: 'https://web-sdk.pendo.io/config/analytics',
+  agentConfigGuides: 'https://web-sdk.pendo.io/config/guides',
+  agentConfigNetworkLogs: 'https://web-sdk.pendo.io/config/network-logs',
+  agentConfigReplay: 'https://web-sdk.pendo.io/config/replay'
 };
 
 /** Friendly labels for documentation links shown next to check items. */
@@ -134,7 +154,14 @@ const SUPPORT_LABELS = {
   signedMetadata: 'Signed metadata (JWT)',
   hostnameAllowlist: 'Hostname allowlist',
   launcherPlan: 'Launcher planning guide',
-  troubleshooting: 'Pendo not displaying'
+  troubleshooting: 'Pendo not displaying',
+  vds: 'Launching the Visual Design Studio',
+  agentConfig: 'Web SDK configuration',
+  agentConfigCore: 'Config: Core',
+  agentConfigAnalytics: 'Config: Analytics',
+  agentConfigGuides: 'Config: Guides',
+  agentConfigNetworkLogs: 'Config: Network logs',
+  agentConfigReplay: 'Config: Replay'
 };
 
 /** supportKeys that indicate an error-severity advice item (blocking install/snippet/agent issues). */
@@ -162,6 +189,7 @@ function inferSupportKeyFromText(text) {
   if (!text) return null;
   const s = String(text);
   const rules = [
+    { re: /visual\s+design\s+studio|pendo-designer|launchInAppDesigner|designer\s+launch\s+url\s+token|url\s+token|sanitiz\w*\s+(?:\w+\s+){0,2}(?:url|quer\w*)|(?:url|quer\w*)\s+(?:\w+\s+){0,2}sanitiz/i, key: 'vds' },
     { re: /no\s+matching\s+api\s+key/i,                                               key: 'installComponents' },
     { re: /api\s+key/i,                                                               key: 'installComponents' },
     { re: /VISITOR[-\s_]?UNIQUE[-\s_]?ID|treated as "?anonymous"?|not identified/i,    key: 'chooseIdsMetadata' },
@@ -202,6 +230,7 @@ function normalizeAdviceList(advice = []) {
       source = a.source || 'builtin';
       supportKey = a.supportKey || null;
       const resolvedFromKey = supportKey && PENDO_SUPPORT[supportKey];
+      // Skip AI items' generic technicalSupport URL so inferSupportKeyFromText can choose a topic-specific link.
       if (a.supportUrl && !(source === 'ai' && a.supportUrl === PENDO_SUPPORT.technicalSupport)) {
         supportUrl = a.supportUrl;
       } else if (resolvedFromKey) {
@@ -232,8 +261,10 @@ function normalizeAdviceList(advice = []) {
 }
 
 // ========== Install quality assessment ==========
+// Common anonymous/guest/test literals — not stable per-user identities (graded poor).
 const PLACEHOLDER_IDS = /^(anonymous|guest|unknown|undefined|null|0|test|demo|user|visitor)$/i;
 
+/** Grade visitorId, accountId, metadata coverage, and environment into good/weak/poor tiers; consumed by appendQualityAdviceToResult and buildAiPrompt. */
 function assessInstallQuality(context) {
   const status = context.status || {};
   const pageUrl = context.pageUrl || '';
@@ -268,6 +299,7 @@ function assessInstallQuality(context) {
     if (PLACEHOLDER_IDS.test(String(aid).trim())) {
       result.accountId.quality = 'poor';
       result.accountId.issues.push(`accountId "${aid}" is a placeholder value.`);
+    // accountId identical to visitorId usually means it was copied from the visitor — a misconfiguration.
     } else if (vid && String(aid) === String(vid)) {
       result.accountId.quality = 'weak';
       result.accountId.issues.push('accountId is identical to visitorId (likely misconfiguration).');
@@ -279,6 +311,7 @@ function assessInstallQuality(context) {
     const fields = Object.keys(vmeta).filter(k => k !== 'id');
     result.visitorMetadata.fields = fields;
     const has = fields.map(f => f.toLowerCase());
+    // Recommended visitor metadata: email, name/fullName, role/title (per Choose IDs & metadata).
     const hasName = has.some(h => /^(name|fullname|full_name)$/.test(h));
     const hasRole = has.some(h => /^(role|title)$/.test(h));
     const missingGroups = [];
@@ -286,6 +319,7 @@ function assessInstallQuality(context) {
     if (!hasName) missingGroups.push('name/fullName');
     if (!hasRole) missingGroups.push('role/title');
     result.visitorMetadata.missingRecommended = missingGroups;
+    // poor = no metadata fields; weak = two or more recommended groups missing.
     if (fields.length === 0) result.visitorMetadata.quality = 'poor';
     else if (missingGroups.length >= 2) result.visitorMetadata.quality = 'weak';
   } else if (vid) {
@@ -298,6 +332,7 @@ function assessInstallQuality(context) {
     const fields = Object.keys(ameta).filter(k => k !== 'id');
     result.accountMetadata.fields = fields;
     const missingGroups = [];
+    // Recommended account metadata: name and plan/tier.
     if (!fields.some(f => f.toLowerCase() === 'name')) missingGroups.push('name');
     if (!fields.some(f => /^(plan|tier)$/i.test(f))) missingGroups.push('plan/tier');
     result.accountMetadata.missingRecommended = missingGroups;
@@ -308,6 +343,7 @@ function assessInstallQuality(context) {
     result.accountMetadata.missingRecommended = ['name', 'plan/tier'];
   }
 
+  // Lower environments (staging/dev/localhost) should use test-prefixed IDs to keep production analytics clean.
   const isStaging = /\b(staging|preview|dev\.|qa\.|localhost)\b/i.test(pageUrl);
   result.environment.isStaging = isStaging;
   if (isStaging && vid) {
@@ -347,6 +383,99 @@ function appendQualityAdviceToResult(result, pageUrl) {
   return result;
 }
 
+// ========== Configuration flag detection ==========
+/** Standard pendo.initialize keys that do NOT count as customisation "flags". */
+const STANDARD_INIT_KEYS = new Set(['visitor', 'account', 'apiKey', 'publicAppId']);
+
+/** Known top-level pendo.initialize options mapped to their Web SDK config doc category. */
+const CONFIG_FLAG_CATEGORY = {
+  // Core (https://web-sdk.pendo.io/config/core)
+  additionalPublicAppIds: 'core', additionalApiKeys: 'core', annotateUrl: 'core', autoFrameInstall: 'core',
+  contentHost: 'core', cookieDomain: 'core', crossAppGuideStorageSuffix: 'core', dataHost: 'core',
+  disableCookies: 'core', disableFeedback: 'core', disablePendo: 'core', disablePersistence: 'core',
+  enableCrossOriginIsolation: 'core', eventPropertyTimeout: 'core', forceAnonymous: 'core', forcedLeader: 'core',
+  frameIdentitySync: 'core', frameIdentityTopDownOnly: 'core', ignoreHashRouting: 'core', initializeImmediately: 'core',
+  initializeWhenVisible: 'core', localStorageOnly: 'core', location: 'core', observeShadowRoots: 'core',
+  preferBroadcastChannel: 'core', preferMutationObserver: 'core', preventUnloadListener: 'core',
+  queryStringWhitelist: 'core', sanitizeUrl: 'core', secureDesignerConnect: 'core', selfHostedWebSDKUrl: 'core',
+  selfHostedAgentUrl: 'core', sendEventsWithPostOnly: 'core',
+  // Analytics (https://web-sdk.pendo.io/config/analytics)
+  allowedText: 'analytics', analytics: 'analytics', enableDebugEvents: 'analytics', eventPropertyMatchParents: 'analytics',
+  excludeAllText: 'analytics', excludeNonGuideAnalytics: 'analytics', interceptPreventDefault: 'analytics',
+  interceptStopPropagation: 'analytics', syntheticClicks: 'analytics', interceptElementRemoval: 'analytics',
+  // Guides (https://web-sdk.pendo.io/config/guides)
+  appAutoOrdering: 'guides', cacheGuides: 'guides', cacheGuidesTimeout: 'guides', disableDesigner: 'guides',
+  disableGlobalCSS: 'guides', disableGuidePseudoStyles: 'guides', disablePrefetch: 'guides',
+  enableDesignerKeyboardShortcut: 'guides', enableGuideTimeout: 'guides', guideSeenTimeoutLength: 'guides',
+  guideValidation: 'guides', guides: 'guides', inlineStyleNonce: 'guides', leaderApplication: 'guides',
+  leaderKey: 'guides', preventCodeInjection: 'guides', delayGuides: 'guides', disableGuides: 'guides', guideTimeout: 'guides',
+  // Network logs (https://web-sdk.pendo.io/config/network-logs)
+  networkLogs: 'networkLogs',
+  // Replay (https://web-sdk.pendo.io/config/replay)
+  recording: 'replay'
+};
+
+/** Config doc category -> support link key. */
+const CONFIG_CATEGORY_SUPPORT_KEY = {
+  core: 'agentConfigCore', analytics: 'agentConfigAnalytics', guides: 'agentConfigGuides',
+  networkLogs: 'agentConfigNetworkLogs', replay: 'agentConfigReplay'
+};
+
+/** Config doc category -> human label used inside the warning text. */
+const CONFIG_CATEGORY_LABEL = {
+  core: 'Core', analytics: 'Analytics', guides: 'Guides', networkLogs: 'Network logs', replay: 'Replay'
+};
+
+/**
+ * Identify non-standard configuration flags from the options passed to pendo.initialize().
+ * Reads status.configKeys (captured from the snippet queue). Returns { detected, flags },
+ * where `detected` indicates the init options were readable and `flags` lists each
+ * non-standard key with its config-doc category (null for unrecognised/custom keys).
+ */
+function assessConfigFlags(status) {
+  const keys = status && Array.isArray(status.configKeys) ? status.configKeys : null;
+  if (!keys) return { detected: false, flags: [] };
+  const flags = keys
+    .filter(k => !STANDARD_INIT_KEYS.has(k))
+    .map(k => ({ key: k, category: CONFIG_FLAG_CATEGORY[k] || null }));
+  return { detected: true, flags };
+}
+
+/**
+ * Append a single grouped warning when pendo.initialize() uses options beyond a standard
+ * install (visitor + account, plus the required apiKey/publicAppId). Each flag is named with
+ * its config category and the warning links to the Web SDK configuration docs. No-op when the
+ * init options were not readable; adds a passing check when only standard keys are present.
+ */
+function appendConfigFlagsAdviceToResult(result) {
+  if (!result || !result.status || !result.status.pendoPresent) return result;
+  const { detected, flags } = assessConfigFlags(result.status);
+  if (!detected) return result;
+  result.advice = result.advice || [];
+  result.checks = result.checks || [];
+  if (!flags.length) {
+    result.checks.push('Standard configuration detected (visitor + account only).');
+    return result;
+  }
+  const labelList = flags
+    .map(f => `${f.key} (${f.category ? CONFIG_CATEGORY_LABEL[f.category] : 'other'})`)
+    .join(', ');
+  const categories = [];
+  for (const f of flags) {
+    if (f.category && !categories.includes(f.category)) categories.push(f.category);
+  }
+  const supportKeys = categories.map(c => CONFIG_CATEGORY_SUPPORT_KEY[c]).filter(Boolean);
+  result.advice.push({
+    text: `Non-standard configuration flags detected in pendo.initialize(): ${labelList}. `
+      + 'A standard install passes only visitor and account. Confirm each flag is intentional and '
+      + 'review it against the Pendo Web SDK configuration docs.',
+    source: 'builtin',
+    supportKey: 'agentConfig',
+    supportKeys
+  });
+  return result;
+}
+
 // ========== Related reading selection ==========
 /**
  * Map validation signals to KB topics, then return the most relevant
@@ -377,6 +506,7 @@ function selectRelatedReading(signals, max) {
   if (signals.launcherPresent)                     topics.push('launcher');
   if (signals.agentVersionOld)                     topics.push('agent', 'configuration');
   if (signals.apiKeyMissing)                       topics.push('api-key', 'install');
+  if (signals.urlSanitized)                        topics.push('vds', 'designer', 'guides');
   return findKbByTopics(topics, max);
 }
 
@@ -426,6 +556,10 @@ function buildMarkdownReport(context) {
     visitorId: status.visitorId || 'not set',
     accountId: status.accountId == null ? 'not set' : status.accountId,
     resourceHitCount: (status.resourceHits && status.resourceHits.length) || 0,
+    redirectCount: status.redirectCount || 0,
+    urlSanitizationPatterns: (status.urlSanitization && status.urlSanitization.inlinePatterns) || [],
+    urlObservedStrips: (status.urlSanitization && status.urlSanitization.observedStrips) || 0,
+    urlLoadTimeStrip: !!(status.urlSanitization && (status.urlSanitization.navQueryStripped || status.urlSanitization.navPendoTokenStripped)),
     capturedLineCount: (captured && captured.length) || 0
   };
   if (status.visitorMetadata) meta.visitorMetadata = status.visitorMetadata;
@@ -475,6 +609,7 @@ function buildMarkdownReport(context) {
       cspIssue: adviceList.some(a => a.supportKey === 'csp'),
       noResourceHits: status.resourceHits && status.resourceHits.length === 0,
       apiKeyMissing: !apiKeyFound,
+      urlSanitized: adviceList.some(a => a.supportKey === 'vds'),
     };
     const reading = selectRelatedReading(signals, 6);
     if (reading && reading.length) {
@@ -540,6 +675,7 @@ function downloadBlob(filename, mime, text) {
 }
 
 // ========== Pendo debugger / VDS (run in page via executeScript) ==========
+/** Runs in the page MAIN world; calls (window.pendo || window.Pendo).enableDebugging(); returns { ok, message? }. */
 function enableDebuggingInPage() {
   const pendo = (typeof window !== 'undefined' && (window.pendo || window.Pendo)) || null;
   if (!pendo || typeof pendo.enableDebugging !== 'function') return { ok: false, message: 'Pendo not found or enableDebugging not available on this page.' };
@@ -575,6 +711,7 @@ async function evaluateInLauncherWorld(tabId, launcherId, expression) {
     };
     chrome.debugger.onEvent.addListener(handler);
     await chrome.debugger.sendCommand(target, 'Runtime.enable');
+    // Brief pause so Runtime.executionContextCreated events populate before we pick the Launcher context.
     await new Promise(r => setTimeout(r, 60));
     chrome.debugger.onEvent.removeListener(handler);
 
@@ -669,9 +806,12 @@ async function runInPage() {
       accountId: null,
       visitorMetadata: null,
       accountMetadata: null,
+      configKeys: null,
+      configSource: null,
       resourceHits: []
     };
 
+    /** Pull the subscription API-key UUID from a Pendo agent CDN resource URL when agent state did not expose it. */
     function extractKeyFromUrl(url) {
       try {
         const m = url.match(/agent\/(?:static|production|beta)\/([a-f0-9\-]{8,})/i);
@@ -692,6 +832,7 @@ async function runInPage() {
         if (!status.visitorId && agent.getVisitorId) { try { status.visitorId = agent.getVisitorId(); } catch {} }
         if (!status.accountId && agent.getAccountId) { try { status.accountId = agent.getAccountId(); } catch {} }
 
+        /** Shallow-clone metadata for cross-world return; cap key count/length so large objects don't bloat the injection payload. */
         function safeCloneFields(src, maxKeys, maxLen) {
           if (!src || typeof src !== 'object') return null;
           try {
@@ -725,6 +866,76 @@ async function runInPage() {
         status.accountMetadata = safeCloneFields(accountSrc);
       }
     } catch {}
+
+    // Detect the options passed to pendo.initialize().
+    // The async snippet stubs queue calls onto pendo._q as ['initialize', { ...config }],
+    // but the loaded agent drains that queue once it replays the call — so on-demand
+    // validation usually sees an empty _q. We therefore read the queue first (fast path
+    // when validating before the agent finishes loading), then fall back to parsing the
+    // inline install snippet's pendo.initialize({ ... }) object literal for its top-level keys.
+    function extractInitConfigKeys(text) {
+      if (typeof text !== 'string' || !text) return null;
+      const call = /\bpendo\s*\.\s*initialize\s*\(/.exec(text);
+      if (!call) return null;
+      let i = call.index + call[0].length;
+      while (i < text.length && /\s/.test(text[i])) i++;
+      if (text[i] !== '{') return null; // config passed as a variable/expression — keys not statically readable
+      const keys = [];
+      let depth = 0, str = null, expectKey = false;
+      for (; i < text.length; i++) {
+        const ch = text[i];
+        if (str) {
+          if (ch === '\\') { i++; continue; }
+          if (ch === str) str = null;
+          continue;
+        }
+        if (ch === '/' && text[i + 1] === '/') { i += 2; while (i < text.length && text[i] !== '\n') i++; continue; }
+        if (ch === '/' && text[i + 1] === '*') { i += 2; while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) i++; i++; continue; }
+        if (ch === '"' || ch === "'" || ch === '`') {
+          if (depth === 1 && expectKey) {
+            let k = '', j = i + 1;
+            for (; j < text.length; j++) { const c = text[j]; if (c === '\\') { j++; continue; } if (c === ch) break; k += c; }
+            let n = j + 1; while (n < text.length && /\s/.test(text[n])) n++;
+            if (text[n] === ':') { keys.push(k); expectKey = false; }
+            i = j; continue;
+          }
+          str = ch; continue;
+        }
+        if (ch === '{' || ch === '[' || ch === '(') { depth++; if (ch === '{' && depth === 1) expectKey = true; continue; }
+        if (ch === '}' || ch === ']' || ch === ')') { depth--; if (depth === 0) break; continue; }
+        if (depth === 1) {
+          if (ch === ',') { expectKey = true; continue; }
+          if (expectKey && /[A-Za-z_$]/.test(ch)) {
+            let k = ch, j = i + 1;
+            for (; j < text.length; j++) { const c = text[j]; if (/[\w$]/.test(c)) k += c; else break; }
+            let n = j; while (n < text.length && /\s/.test(text[n])) n++;
+            if (text[n] === ':') { keys.push(k); expectKey = false; }
+            i = j - 1; continue;
+          }
+        }
+      }
+      return keys.length ? keys : null;
+    }
+    try {
+      const q = (agent && Array.isArray(agent._q)) ? agent._q : null;
+      if (q) {
+        let cfg = null;
+        for (const entry of q) {
+          if (Array.isArray(entry) && entry[0] === 'initialize' && entry[1] && typeof entry[1] === 'object') cfg = entry[1];
+        }
+        if (cfg) { status.configKeys = Object.keys(cfg); status.configSource = 'snippet-queue'; }
+      }
+    } catch {}
+    if (!status.configKeys) {
+      try {
+        const scripts = Array.from(document.scripts || []);
+        for (const s of scripts) {
+          if (s.src || !s.textContent || !/pendo\s*\.\s*initialize\s*\(/.test(s.textContent)) continue;
+          const keys = extractInitConfigKeys(s.textContent);
+          if (keys && keys.length) { status.configKeys = keys; status.configSource = 'inline-script'; break; }
+        }
+      } catch {}
+    }
 
     try {
       const res = performance.getEntriesByType('resource') || [];
@@ -767,6 +978,7 @@ async function runInPage() {
     const keyRegex = /\b[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\b/i;
     const apiKeyFound = keyRegex.test(all) || !!status.detectedApiKey;
 
+    // Treat validateInstall console output as err/warn even when the agent logged it at 'log' level.
     const hasError = captured.some(m => m.level === 'error' || /error|failed|not found|blocked/i.test(m.text));
     const hasWarn = captured.some(m => m.level === 'warn' || /warn|missing|no visitor|not initiali[sz]ed/i.test(m.text));
 
@@ -853,6 +1065,109 @@ async function runInPage() {
           advice.push({ text: "Visitor metadata is populated but account metadata is empty. Consider passing account-level fields (name, plan, industry) for richer segmentation.", source: 'builtin', supportKey: 'configureMetadata', supportKeys: ['configureMetadata', 'chooseIdsMetadata'] });
         }
       }
+      // Load-time redirect detection (Navigation Timing). A same-origin redirect
+      // during load strips query parameters, which is the documented cause of the
+      // Visual Design Studio dropping Pendo's "pendo-designer" URL token.
+      let redirectCount = 0;
+      try {
+        const navEntries = (typeof performance !== 'undefined' && performance.getEntriesByType && performance.getEntriesByType('navigation')) || [];
+        if (navEntries[0] && typeof navEntries[0].redirectCount === 'number') redirectCount = navEntries[0].redirectCount;
+        if (!redirectCount && typeof performance !== 'undefined' && performance.navigation && performance.navigation.redirectCount) redirectCount = performance.navigation.redirectCount;
+      } catch {}
+      status.redirectCount = redirectCount;
+      if (status.pendoPresent && redirectCount > 0) {
+        advice.push({ text: "This page redirected during load, which can strip query parameters from the URL. If the Visual Design Studio won't launch over your app, the application may be sanitizing the URL and dropping Pendo's \"pendo-designer\" token. Enable \"Disable Designer Launch URL Token\" in the app's Tagging & Guide Settings, or launch the designer manually with pendo.designerv2.launchInAppDesigner().", source: 'builtin', supportKey: 'vds' });
+      }
+      // --- Client-side URL-sanitization detection (DOM + runtime) ---
+      // Complements the redirect signal: detects JS that strips the query string
+      // (and thus Pendo's "pendo-designer" VDS token) on the client.
+      try {
+        const urlSan = { historyApiPatched: false, inlinePatterns: [], inlineScripts: 0, externalScripts: 0, observedStrips: 0, navQueryStripped: false, navPendoTokenStripped: false };
+        // Context: are the History API methods still native, or wrapped by the app?
+        try {
+          const fnStr = (fn) => { try { return Function.prototype.toString.call(fn); } catch { return ''; } };
+          const isNative = (fn) => /\{\s*\[native code\]\s*\}/.test(fnStr(fn));
+          urlSan.historyApiPatched = !(isNative(history.pushState) && isNative(history.replaceState));
+        } catch {}
+        // Runtime instrumentation: idempotent observe-only wrapper that records future
+        // calls dropping the query string; reads strips recorded earlier this session.
+        // Only patch the host page's History API when Pendo is present — the VDS advisory
+        // this powers is irrelevant otherwise, and we must not mutate unrelated pages.
+        try {
+          if (status.pendoPresent && !window.__pendoValidateHistoryHooked) {
+            window.__pendoValidateUrlStrips = [];
+            const histMethods = ['pushState', 'replaceState'];
+            histMethods.forEach((name) => {
+              const orig = history[name];
+              if (typeof orig !== 'function') return;
+              history[name] = function () {
+                const before = location.search;
+                const ret = orig.apply(this, arguments);
+                try {
+                  const after = location.search;
+                  if (before && before.length > 1 && (!after || after.length <= 1)) {
+                    window.__pendoValidateUrlStrips.push({ method: name, before, hadPendoToken: /pendo-?designer|[?&]pendo/i.test(before) });
+                  }
+                } catch {}
+                return ret;
+              };
+            });
+            window.__pendoValidateHistoryHooked = true;
+          }
+          urlSan.observedStrips = (window.__pendoValidateUrlStrips || []).length;
+        } catch {}
+        // Inline DOM scan: high-confidence query-stripping patterns in inline scripts.
+        try {
+          const scripts = Array.from(document.scripts || []);
+          urlSan.externalScripts = scripts.filter(s => s.src).length;
+          const inlineScripts = scripts.filter(s => !s.src && s.textContent);
+          urlSan.inlineScripts = inlineScripts.length;
+          const src = inlineScripts.map(s => s.textContent).join('\n');
+          const patterns = [
+            // Only flag History calls that navigate to location.pathname WITHOUT re-appending
+            // the query string (location.search / *.search), which would otherwise preserve it.
+            { name: 'replaceState/pushState to pathname', re: /\.(?:replace|push)State\((?![^;)]*\.search)[^;)]*location\.pathname/ },
+            { name: 'location.search cleared',            re: /location\.search\s*=\s*(['"`])\1/ },
+            { name: 'searchParams.delete',                re: /searchParams\.delete\s*\(/ },
+            { name: 'pendo-designer reference',           re: /pendo-?designer/i },
+            { name: 'sanitize/strip URL',                 re: /(sanitiz|strip|clean)\w*\s*(url|query|param)/i },
+          ];
+          for (const p of patterns) { try { if (p.re.test(src)) urlSan.inlinePatterns.push(p.name); } catch {} }
+        } catch {}
+        // Load-time query strip (Navigation Timing). The originally-requested document URL
+        // retains its query even after the app rewrites it client-side, so comparing it to
+        // the current location detects a strip that happened during load — before the
+        // observe-only history hook was installed, and from external bundles the inline scan
+        // cannot read. Gated on redirectCount === 0 so HTTP redirects (handled above) are not
+        // double-counted.
+        try {
+          const navEntries = (typeof performance !== 'undefined' && performance.getEntriesByType && performance.getEntriesByType('navigation')) || [];
+          const navName = (navEntries[0] && navEntries[0].name) || '';
+          // Defaults (false) are set in the urlSan initializer above, so the else/catch
+          // paths need no reassignment — they simply leave the upfront defaults in place.
+          if (navName && redirectCount === 0) {
+            const navSearch = (new URL(navName)).search || '';
+            const curSearch = (typeof location !== 'undefined' && location.search) || '';
+            const tokenRe = /pendo-?designer|[?&]pendo/i;
+            urlSan.navQueryStripped = navSearch.length > 1 && curSearch.length <= 1;
+            urlSan.navPendoTokenStripped = tokenRe.test(navName) && !tokenRe.test((typeof location !== 'undefined' && location.href) || '');
+          }
+        } catch {}
+        status.urlSanitization = urlSan;
+        const hasClientSignal = urlSan.inlinePatterns.length > 0 || urlSan.observedStrips > 0 || urlSan.navQueryStripped || urlSan.navPendoTokenStripped;
+        if (status.pendoPresent && hasClientSignal) {
+          const detail = urlSan.navPendoTokenStripped
+            ? 'the "pendo-designer" URL token present when the page was requested is no longer in the address bar — it was stripped during load'
+            : urlSan.navQueryStripped
+              ? 'the query string present when the page was requested was dropped during load'
+              : urlSan.observedStrips > 0
+                ? 'the query string was observed being removed from the URL'
+                : ('inline scripts contain: ' + urlSan.inlinePatterns.join(', '));
+          advice.push({ text: `Client-side code on this page modifies the URL (${detail}). This can strip Pendo's "pendo-designer" token and prevent the Visual Design Studio from launching. If VDS won't open, enable "Disable Designer Launch URL Token" in the app's Tagging & Guide Settings.`, source: 'builtin', supportKey: 'vds' });
+        } else if (status.pendoPresent && urlSan.inlineScripts > 0) {
+          checks.push('No URL-sanitization patterns found in inline scripts (external bundles not scanned).');
+        }
+      } catch {}
     } catch {}
 
     if (status.validatePresent && !hasError && !hasWarn && captured.length > 0) {
@@ -884,7 +1199,7 @@ async function runInPage() {
   }
 
   const EMPTY_RESULT = {
-    status: { pendoPresent: false, validatePresent: false, version: null, detectedApiKey: null, visitorId: null, accountId: null, visitorMetadata: null, accountMetadata: null, resourceHits: [] },
+    status: { pendoPresent: false, validatePresent: false, version: null, detectedApiKey: null, visitorId: null, accountId: null, visitorMetadata: null, accountMetadata: null, configKeys: null, configSource: null, resourceHits: [] },
     captured: [], advice: [], checks: [], cspMeta: '', apiKeyFound: false, hasError: true, hasWarn: false
   };
 
@@ -898,7 +1213,7 @@ async function runInPage() {
   });
 
   const basePageUrl = tab && tab.url ? tab.url : 'unknown';
-  if (pageResult) appendQualityAdviceToResult(pageResult, basePageUrl);
+  if (pageResult) { appendQualityAdviceToResult(pageResult, basePageUrl); appendConfigFlagsAdviceToResult(pageResult); }
 
   const snippetOnPage = !!(pageResult && pageResult.status && pageResult.status.pendoPresent);
 
@@ -911,8 +1226,9 @@ async function runInPage() {
       func: captureAndInspect,
       args: ['launcher']
     });
-    if (p15result) appendQualityAdviceToResult(p15result, basePageUrl);
+    if (p15result) { appendQualityAdviceToResult(p15result, basePageUrl); appendConfigFlagsAdviceToResult(p15result); }
     if (p15result && p15result.status && p15result.status.pendoPresent) {
+      // With a snippet present, only window.Pendo (capital P) counts as a Launcher detection — avoids double-counting the snippet's own window.pendo.
       if (!snippetOnPage || p15result.status.pendoGlobal === 'Pendo') {
         launcherInPageResult = p15result;
       }
@@ -937,6 +1253,7 @@ async function runInPage() {
 
   if (launcherInPage) {
     const lStatus = launcherInPageResult.status;
+    // "Launcher validated" = the agent ran validateInstall and returned at least visitor identity or metadata on this tab.
     const launcherDataValidated = !!(lStatus.pendoPresent && lStatus.validatePresent && (lStatus.visitorId || lStatus.visitorMetadata));
     return {
       ...launcherInPageResult,
@@ -961,7 +1278,9 @@ async function runInPage() {
     const cdpResult = await runValidationInLauncherWorld(tab.id, installedLauncher);
     if (cdpResult && cdpResult.result && cdpResult.result.status && cdpResult.result.status.pendoPresent) {
       appendQualityAdviceToResult(cdpResult.result, basePageUrl);
+      appendConfigFlagsAdviceToResult(cdpResult.result);
       const lStatus = cdpResult.result.status;
+      // "Launcher validated" = the agent ran validateInstall and returned at least visitor identity or metadata on this tab.
       const launcherDataValidated = !!(lStatus.pendoPresent && lStatus.validatePresent && (lStatus.visitorId || lStatus.visitorMetadata));
       return {
         ...cdpResult.result,
@@ -1029,6 +1348,7 @@ const DEPRECATED_AI_MODELS = new Set([
   'gemini-3-flash-preview',
 ]);
 
+/** Resolve a stored aiModel to the provider default; silently migrate deprecated Gemini model IDs. */
 function resolveAiModel(provider, aiModel) {
   const p = provider || 'openai';
   const custom = String(aiModel || '').trim();
@@ -1113,6 +1433,7 @@ function buildAiPrompt(context) {
       cspIssue: !!(context.cspMeta || '').length || (context.captured || []).some(l => /csp|content.security/i.test(l.text)),
       noResourceHits: context.status.resourceHits && context.status.resourceHits.length === 0,
       apiKeyMissing: !context.apiKeyFound,
+      urlSanitized: !!(context.status.pendoPresent && ((context.status.redirectCount || 0) > 0 || (context.status.urlSanitization && (context.status.urlSanitization.inlinePatterns.length || context.status.urlSanitization.observedStrips || context.status.urlSanitization.navQueryStripped || context.status.urlSanitization.navPendoTokenStripped)))),
     };
     const kbEntries = selectRelatedReading(signals, 6);
     if (kbEntries && kbEntries.length) {
@@ -1137,7 +1458,7 @@ function buildAiPrompt(context) {
 
   lines.push('');
   lines.push('Respond ONLY with a JSON array. Each element: {"text":"one plain sentence","supportKey":"chooseIdsMetadata"}');
-  lines.push('Rules: text must be one plain sentence with no markdown, no URLs, no numbering. supportKey must be one of: installGuide, chooseIdsMetadata, configureMetadata, csp, spa, gtm, segment, iframe, sandbox, agentSettings, agentDebug, troubleshooting, hostnameAllowlist, multiDomain, launcherPlan, signedMetadata, installComponents.');
+  lines.push('Rules: text must be one plain sentence with no markdown, no URLs, no numbering. supportKey must be one of: installGuide, chooseIdsMetadata, configureMetadata, csp, spa, gtm, segment, iframe, sandbox, agentSettings, agentDebug, troubleshooting, hostnameAllowlist, multiDomain, launcherPlan, signedMetadata, installComponents, vds, agentConfig.');
   lines.push('Max 3 items. Skip anything already covered in "Existing advice" above.');
   return lines.join('\n');
 }
@@ -1209,6 +1530,7 @@ function parseAiAdviceResponse(content, existingAdvice) {
       if (normalized.includes(ex) || ex.includes(normalized)) { isDuplicate = true; break; }
       const exTokens = ex.split(/\s+/);
       const overlap = tokens.filter(t => exTokens.includes(t)).length;
+      // >70% token overlap with an existing item is treated as a duplicate paraphrase and dropped.
       if (overlap / Math.max(tokens.length, 1) > 0.7) { isDuplicate = true; break; }
     }
     if (isDuplicate) continue;
@@ -1271,6 +1593,7 @@ async function requestAiAdvice(context) {
       clearTimeout(timer);
       let bg;
       try {
+        // Route Claude requests through the background service worker to avoid extension-page fetch/CORS limits.
         bg = await chrome.runtime.sendMessage({
           type: 'pendo-validate-ai-fetch',
           endpoint,
@@ -1569,6 +1892,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // ── Tab strip ────────────────────────────────────────────────────────────
 
+  /** Mirror the active panel tab in Pendo self-instrumentation's page URL; failures are swallowed so telemetry never blocks tab switching. */
   function notifyPendoTabChange(id) {
     const pendo = window.pendo;
     if (!pendo || !pendo.location || typeof pendo.location.setUrl !== 'function') return;
@@ -2151,6 +2475,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         launcherPresent: !!launcherPresent,
         agentVersionOld: false,
         apiKeyMissing: !apiKeyFound,
+        urlSanitized: adviceList.some(a => a.supportKey === 'vds'),
       };
       renderRelatedReading(readingSignals);
 
@@ -2343,6 +2668,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   // ── Theme preference ─────────────────────────────────────────────────────
+  /** Force light/dark by setting data-theme on <html>; remove the attribute to follow the system preference. */
   function applyTheme(pref) {
     if (pref === 'light' || pref === 'dark') {
       document.documentElement.dataset.theme = pref;
