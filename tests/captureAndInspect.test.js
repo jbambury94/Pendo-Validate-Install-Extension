@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { captureAndInspect } from './helpers.js'
+import { captureAndInspect, assessConfigFlags } from './helpers.js'
 
 beforeEach(() => {
   delete window.pendo
@@ -532,6 +532,68 @@ describe('captureAndInspect — client-side URL sanitization', () => {
     expect(result.status.urlSanitization.externalScripts).toBe(1)
     expect(result.status.urlSanitization.inlineScripts).toBe(1)
   })
+
+  it('does not patch the host History API when Pendo is absent', () => {
+    document.head.innerHTML = '<script>history.replaceState({}, "", location.pathname)</script>'
+    captureAndInspect()
+    expect(window.__pendoValidateHistoryHooked).not.toBe(true)
+  })
+
+  it('patches the History API only once Pendo is present', () => {
+    window.pendo = { validateInstall: vi.fn(), apiKey: 'k', _: { state: { visitorId: 'v', accountId: 'a' } } }
+    captureAndInspect()
+    expect(window.__pendoValidateHistoryHooked).toBe(true)
+  })
+
+  it('does not flag replaceState that re-appends location.search (query preserved)', () => {
+    document.head.innerHTML = '<script>history.replaceState({}, "", location.pathname + location.search)</script>'
+    window.pendo = { validateInstall: vi.fn(), apiKey: 'k', _: { state: { visitorId: 'v', accountId: 'a' } } }
+    const result = captureAndInspect()
+    expect(result.status.urlSanitization.inlinePatterns).not.toContain('replaceState/pushState to pathname')
+    expect(result.advice.some(a => a.supportKey === 'vds')).toBe(false)
+  })
+
+  it('flags replaceState to bare location.pathname (query dropped)', () => {
+    document.head.innerHTML = '<script>history.replaceState({}, "", location.pathname)</script>'
+    window.pendo = { validateInstall: vi.fn(), apiKey: 'k', _: { state: { visitorId: 'v', accountId: 'a' } } }
+    const result = captureAndInspect()
+    expect(result.status.urlSanitization.inlinePatterns).toContain('replaceState/pushState to pathname')
+    expect(result.advice.some(a => a.supportKey === 'vds')).toBe(true)
+  })
+
+  it("does not flag the benign url.split('?')[0] read idiom", () => {
+    document.head.innerHTML = '<script>const base = location.href.split("?")[0]; console.log(base)</script>'
+    window.pendo = { validateInstall: vi.fn(), apiKey: 'k', _: { state: { visitorId: 'v', accountId: 'a' } } }
+    const result = captureAndInspect()
+    expect(result.status.urlSanitization.inlinePatterns).toEqual([])
+    expect(result.advice.some(a => a.supportKey === 'vds')).toBe(false)
+  })
+
+  it('flags a load-time strip via Navigation Timing (query present at request, gone now)', () => {
+    global.performance = { getEntriesByType: vi.fn((type) => type === 'navigation' ? [{ name: 'https://app.example.com/dashboard?pendo-designer=abc123', redirectCount: 0 }] : []) }
+    window.pendo = { validateInstall: vi.fn(), apiKey: 'k', _: { state: { visitorId: 'v', accountId: 'a' } } }
+    const result = captureAndInspect()
+    expect(result.status.urlSanitization.navPendoTokenStripped).toBe(true)
+    expect(result.status.urlSanitization.navQueryStripped).toBe(true)
+    expect(result.advice.some(a => a.supportKey === 'vds' && /stripped during load/.test(a.text))).toBe(true)
+  })
+
+  it('does not flag when the originally-requested URL had no query string', () => {
+    global.performance = { getEntriesByType: vi.fn((type) => type === 'navigation' ? [{ name: 'https://app.example.com/dashboard', redirectCount: 0 }] : []) }
+    window.pendo = { validateInstall: vi.fn(), apiKey: 'k', _: { state: { visitorId: 'v', accountId: 'a' } } }
+    const result = captureAndInspect()
+    expect(result.status.urlSanitization.navQueryStripped).toBe(false)
+    expect(result.status.urlSanitization.navPendoTokenStripped).toBe(false)
+    expect(result.advice.some(a => a.supportKey === 'vds')).toBe(false)
+  })
+
+  it('defers to the redirect signal (no client-side nav-strip flag) when redirectCount > 0', () => {
+    global.performance = { getEntriesByType: vi.fn((type) => type === 'navigation' ? [{ name: 'https://app.example.com/dashboard?pendo-designer=abc', redirectCount: 1 }] : []) }
+    window.pendo = { validateInstall: vi.fn(), apiKey: 'k', _: { state: { visitorId: 'v', accountId: 'a' } } }
+    const result = captureAndInspect()
+    expect(result.status.urlSanitization.navQueryStripped).toBe(false)
+    expect(result.status.urlSanitization.navPendoTokenStripped).toBe(false)
+  })
 })
 
 describe('captureAndInspect — init config detection (snippet queue)', () => {
@@ -572,5 +634,57 @@ describe('captureAndInspect — init config detection (snippet queue)', () => {
   it('ignores a non-array _q', () => {
     window.pendo = { validateInstall: vi.fn(), _q: 'nope' }
     expect(captureAndInspect().status.configKeys).toBeNull()
+  })
+})
+
+describe('captureAndInspect — init config detection (inline script fallback)', () => {
+  it('parses pendo.initialize() flags from the inline install snippet when _q is drained', () => {
+    document.head.innerHTML = `<script>
+      pendo.initialize({
+        visitor: { id: 'v', email: 'x@y.com' },
+        account: { id: 'a' },
+        excludeAllText: true,
+        guides: { delay: false },
+      });
+    </script>`
+    window.pendo = { validateInstall: vi.fn(), _q: [] } // queue already drained by the loaded agent
+    const result = captureAndInspect()
+    expect(result.status.configSource).toBe('inline-script')
+    expect(result.status.configKeys).toEqual(['visitor', 'account', 'excludeAllText', 'guides'])
+  })
+
+  it('surfaces the non-standard flags as advice via assessConfigFlags', () => {
+    document.head.innerHTML = `<script>pendo.initialize({ visitor: { id: 'v' }, account: { id: 'a' }, excludeAllText: true })</script>`
+    window.pendo = { validateInstall: vi.fn(), _q: [] }
+    const flags = assessConfigFlags(captureAndInspect().status)
+    expect(flags.detected).toBe(true)
+    expect(flags.flags.map(f => f.key)).toContain('excludeAllText')
+  })
+
+  it('prefers the live _q queue over the inline script when both are present', () => {
+    document.head.innerHTML = `<script>pendo.initialize({ visitor: { id: 'v' }, fromInline: true })</script>`
+    window.pendo = { validateInstall: vi.fn(), _q: [['initialize', { visitor: { id: 'v' }, fromQueue: true }]] }
+    const result = captureAndInspect()
+    expect(result.status.configSource).toBe('snippet-queue')
+    expect(result.status.configKeys).toContain('fromQueue')
+    expect(result.status.configKeys).not.toContain('fromInline')
+  })
+
+  it('captures only top-level keys, skipping nested objects and function values', () => {
+    document.head.innerHTML = `<script>pendo.initialize({ visitor: { id: 'v', meta: { role: 'x' } }, sanitizeUrl: function (u) { return u; }, disableGuides: false })</script>`
+    window.pendo = { validateInstall: vi.fn() }
+    expect(captureAndInspect().status.configKeys).toEqual(['visitor', 'sanitizeUrl', 'disableGuides'])
+  })
+
+  it('does not capture config when the init argument is a variable, not a literal', () => {
+    document.head.innerHTML = `<script>pendo.initialize(window.__pendoCfg)</script>`
+    window.pendo = { validateInstall: vi.fn() }
+    expect(captureAndInspect().status.configKeys).toBeNull()
+  })
+
+  it('ignores keys that appear only inside comments', () => {
+    document.head.innerHTML = `<script>pendo.initialize({ /* excludeAllText: true */ visitor: { id: 'v' } })</script>`
+    window.pendo = { validateInstall: vi.fn() }
+    expect(captureAndInspect().status.configKeys).toEqual(['visitor'])
   })
 })

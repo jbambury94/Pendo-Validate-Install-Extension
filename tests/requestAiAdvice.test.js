@@ -354,6 +354,23 @@ describe('buildAiPrompt', () => {
     expect(prompt).not.toContain('Reference excerpts')
     expect(prompt).toContain('Respond ONLY with a JSON array')
   })
+
+  it('advertises the vds and agentConfig supportKeys the builtin advice can emit', () => {
+    const prompt = buildAiPrompt(baseContext)
+    const rulesLine = prompt.split('\n').find(l => l.startsWith('Rules: '))
+    expect(rulesLine).toBeTruthy()
+    expect(rulesLine).toContain('vds')
+    expect(rulesLine).toContain('agentConfig')
+  })
+
+  it('only lists supportKeys that resolve to a real PENDO_SUPPORT URL', () => {
+    const prompt = buildAiPrompt(baseContext)
+    const rulesLine = prompt.split('\n').find(l => l.startsWith('Rules: '))
+    const keys = rulesLine.split('one of:')[1].replace(/\.\s*$/, '').split(',').map(s => s.trim())
+    for (const key of keys) {
+      expect(PENDO_SUPPORT[key], `missing PENDO_SUPPORT entry for "${key}"`).toBeTruthy()
+    }
+  })
 })
 
 describe('buildAiPrompt — KB excerpt enrichment', () => {
