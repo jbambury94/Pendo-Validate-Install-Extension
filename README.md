@@ -107,9 +107,9 @@ Your key is stored locally in `chrome.storage.local` and is only sent when valid
 ## For developers
 
 - Release notes — see [CHANGELOG.md](CHANGELOG.md).
-- Run the test suite: `npm install && npm test` (Vitest + jsdom, 447 tests across 20 suites).
+- Run the test suite: `npm install && npm test` (Vitest + jsdom, 496 tests across 21 suites).
 - Build the release zips: `npm run build` (all three browsers) or `npm run build:chrome` / `build:edge` / `build:firefox`. Output lands in `dist/`; the per-browser manifest transforms live in `scripts/browser-targets.mjs`.
-- Releases are automated: pushing a `v*` tag runs tests, builds all three zips, and attaches them to a GitHub Release (`.github/workflows/release.yml`).
+- Releases are automated: pushing a `v*` tag runs tests, builds all three zips, and attaches them to a GitHub Release (`.github/workflows/release.yml`). The tagged commit must be on `Stable` — the workflow verifies this and fails fast otherwise — so merge to `Stable` first, then tag that commit (`git tag v1.8.2 && git push origin v1.8.2`).
 - UI element / `data-action` reference — see [extension/popup-actions.md](extension/popup-actions.md).
 
 ---
