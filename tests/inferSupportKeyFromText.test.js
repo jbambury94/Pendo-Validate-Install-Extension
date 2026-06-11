@@ -68,6 +68,18 @@ describe('inferSupportKeyFromText', () => {
     expect(inferSupportKeyFromText('the application is sanitizing the URL on load')).toBe('vds')
   })
 
+  it('matches "URL sanitization" (reverse order) → vds', () => {
+    expect(inferSupportKeyFromText('URL sanitization strips the pendo token')).toBe('vds')
+  })
+
+  it('does NOT match "sanitize" in a non-URL context as vds (api key wins)', () => {
+    expect(inferSupportKeyFromText('sanitize API key values before logging')).toBe('installComponents')
+  })
+
+  it('does NOT match unrelated "sanitization" as vds', () => {
+    expect(inferSupportKeyFromText('input sanitization for XSS protection')).toBeNull()
+  })
+
   it('matches "jwt" → signedMetadata', () => {
     expect(inferSupportKeyFromText('Use JWT for signed metadata')).toBe('signedMetadata')
   })

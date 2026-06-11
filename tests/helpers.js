@@ -78,7 +78,7 @@ export function inferSupportKeyFromText(text) {
   if (!text) return null
   const s = String(text)
   const rules = [
-    { re: /visual\s+design\s+studio|pendo-designer|launchInAppDesigner|designer\s+launch\s+url\s+token|url\s+token|sanitiz/i, key: 'vds' },
+    { re: /visual\s+design\s+studio|pendo-designer|launchInAppDesigner|designer\s+launch\s+url\s+token|url\s+token|sanitiz\w*\s+(?:\w+\s+){0,2}(?:url|quer\w*)|(?:url|quer\w*)\s+(?:\w+\s+){0,2}sanitiz/i, key: 'vds' },
     { re: /no\s+matching\s+api\s+key/i,                                               key: 'installComponents' },
     { re: /api\s+key/i,                                                               key: 'installComponents' },
     { re: /VISITOR[-\s_]?UNIQUE[-\s_]?ID|treated as "?anonymous"?|not identified/i,    key: 'chooseIdsMetadata' },
