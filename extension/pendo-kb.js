@@ -325,6 +325,19 @@ const PENDO_KB = [
       'Use the Debug option to launch the SDK debugger against a specific URL.'
     ],
     supportKey: 'agentSettings'
+  },
+  {
+    slug: 'launch-vds',
+    title: 'Help launching the Visual Design Studio',
+    url: 'https://support.pendo.io/hc/en-us/articles/360031864732-Help-launching-the-Visual-Design-Studio',
+    topics: ['vds', 'designer', 'guides', 'troubleshooting'],
+    summary: 'Why the Visual Design Studio may not launch, including apps that redirect and strip the pendo-designer URL token.',
+    bullets: [
+      'If your app redirects on load and drops the ?pendo-designer query parameter, enable "Disable Designer Launch URL Token" in the app\'s Tagging & Guide Settings.',
+      'Launch the designer manually from the browser console with pendo.designerv2.launchInAppDesigner().',
+      'Allow browser local storage and cookies; ad blockers, COEP, and Safari ITP (13+) can also block the Visual Design Studio.'
+    ],
+    supportKey: 'vds'
   }
 ];
 

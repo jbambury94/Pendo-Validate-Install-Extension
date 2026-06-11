@@ -56,6 +56,18 @@ describe('inferSupportKeyFromText', () => {
     expect(inferSupportKeyFromText('Add a metadata field for email')).toBe('chooseIdsMetadata')
   })
 
+  it('matches "Visual Design Studio" → vds', () => {
+    expect(inferSupportKeyFromText("The Visual Design Studio won't launch")).toBe('vds')
+  })
+
+  it('matches "pendo-designer" token → vds', () => {
+    expect(inferSupportKeyFromText('the app dropped the pendo-designer query parameter')).toBe('vds')
+  })
+
+  it('matches "sanitizing the URL" → vds', () => {
+    expect(inferSupportKeyFromText('the application is sanitizing the URL on load')).toBe('vds')
+  })
+
   it('matches "jwt" → signedMetadata', () => {
     expect(inferSupportKeyFromText('Use JWT for signed metadata')).toBe('signedMetadata')
   })

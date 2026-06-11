@@ -26,6 +26,7 @@ export const PENDO_SUPPORT = {
   hostnameAllowlist:'https://support.pendo.io/hc/en-us/articles/16101373319707',
   launcherPlan:     'https://support.pendo.io/hc/en-us/articles/21163862516507',
   troubleshooting:  'https://support.pendo.io/hc/en-us/articles/10033806003483',
+  vds:              'https://support.pendo.io/hc/en-us/articles/360031864732-Help-launching-the-Visual-Design-Studio',
 }
 
 export const SUPPORT_LABELS = {
@@ -49,6 +50,7 @@ export const SUPPORT_LABELS = {
   hostnameAllowlist: 'Hostname allowlist',
   launcherPlan: 'Launcher planning guide',
   troubleshooting: 'Pendo not displaying',
+  vds: 'Launching the Visual Design Studio',
 }
 
 export const ERR_SUPPORT_KEYS = new Set(['installGuide', 'installComponents', 'agentSettings'])
@@ -64,6 +66,7 @@ export function inferSupportKeyFromText(text) {
   if (!text) return null
   const s = String(text)
   const rules = [
+    { re: /visual\s+design\s+studio|pendo-designer|launchInAppDesigner|designer\s+launch\s+url\s+token|url\s+token|sanitiz/i, key: 'vds' },
     { re: /no\s+matching\s+api\s+key/i,                                               key: 'installComponents' },
     { re: /api\s+key/i,                                                               key: 'installComponents' },
     { re: /VISITOR[-\s_]?UNIQUE[-\s_]?ID|treated as "?anonymous"?|not identified/i,    key: 'chooseIdsMetadata' },
@@ -152,6 +155,7 @@ export function selectRelatedReading(signals, max, findKbByTopicsFn) {
   if (signals.launcherPresent)                     topics.push('launcher')
   if (signals.agentVersionOld)                     topics.push('agent', 'configuration')
   if (signals.apiKeyMissing)                       topics.push('api-key', 'install')
+  if (signals.urlSanitized)                        topics.push('vds', 'designer', 'guides')
   return findKbByTopicsFn(topics, max)
 }
 
@@ -199,6 +203,7 @@ export function buildMarkdownReport(context, selectRelatedReadingFn) {
     visitorId: status.visitorId || 'not set',
     accountId: status.accountId == null ? 'not set' : status.accountId,
     resourceHitCount: (status.resourceHits && status.resourceHits.length) || 0,
+    redirectCount: status.redirectCount || 0,
     capturedLineCount: (captured && captured.length) || 0,
   }
   if (status.visitorMetadata) meta.visitorMetadata = status.visitorMetadata
@@ -248,6 +253,7 @@ export function buildMarkdownReport(context, selectRelatedReadingFn) {
       cspIssue: adviceList.some(a => a.supportKey === 'csp'),
       noResourceHits: status.resourceHits && status.resourceHits.length === 0,
       apiKeyMissing: !apiKeyFound,
+      urlSanitized: adviceList.some(a => a.supportKey === 'vds'),
     }
     const reading = selectRelatedReadingFn(signals, 6)
     if (reading && reading.length) {
@@ -442,6 +448,7 @@ export function buildAiPrompt(context, selectRelatedReadingFn) {
       cspIssue: !!(context.cspMeta || '').length || (context.captured || []).some(l => /csp|content.security/i.test(l.text)),
       noResourceHits: context.status.resourceHits && context.status.resourceHits.length === 0,
       apiKeyMissing: !context.apiKeyFound,
+      urlSanitized: !!(context.status.pendoPresent && (context.status.redirectCount || 0) > 0),
     }
     const kbEntries = selectRelatedReadingFn(signals, 6)
     if (kbEntries && kbEntries.length) {
@@ -1039,6 +1046,19 @@ export function captureAndInspect(variant = 'page') {
       if (hasVFields && !hasAFields && status.accountId != null) {
         advice.push({ text: "Visitor metadata is populated but account metadata is empty. Consider passing account-level fields (name, plan, industry) for richer segmentation.", source: 'builtin', supportKey: 'configureMetadata', supportKeys: ['configureMetadata', 'chooseIdsMetadata'] })
       }
+    }
+    // Load-time redirect detection (Navigation Timing). A same-origin redirect
+    // during load strips query parameters, which is the documented cause of the
+    // Visual Design Studio dropping Pendo's "pendo-designer" URL token.
+    let redirectCount = 0
+    try {
+      const navEntries = (typeof performance !== 'undefined' && performance.getEntriesByType && performance.getEntriesByType('navigation')) || []
+      if (navEntries[0] && typeof navEntries[0].redirectCount === 'number') redirectCount = navEntries[0].redirectCount
+      if (!redirectCount && typeof performance !== 'undefined' && performance.navigation && performance.navigation.redirectCount) redirectCount = performance.navigation.redirectCount
+    } catch {}
+    status.redirectCount = redirectCount
+    if (status.pendoPresent && redirectCount > 0) {
+      advice.push({ text: "This page redirected during load, which can strip query parameters from the URL. If the Visual Design Studio won't launch over your app, the application may be sanitizing the URL and dropping Pendo's \"pendo-designer\" token. Enable \"Disable Designer Launch URL Token\" in the app's Tagging & Guide Settings, or launch the designer manually with pendo.designerv2.launchInAppDesigner().", source: 'builtin', supportKey: 'vds' })
     }
   } catch {}
 

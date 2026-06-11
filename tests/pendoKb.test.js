@@ -110,6 +110,13 @@ describe('findKbByTopics', () => {
     const slugs = results.map(r => r.slug);
     expect(slugs).toContain('spa-install');
   });
+
+  it('returns the VDS article for vds/designer topics', () => {
+    const results = findKbByTopics(['vds', 'designer', 'guides'], 10);
+    expect(results.length).toBeGreaterThan(0);
+    const slugs = results.map(r => r.slug);
+    expect(slugs).toContain('launch-vds');
+  });
 });
 
 describe('selectRelatedReading', () => {
@@ -156,6 +163,13 @@ describe('selectRelatedReading', () => {
     expect(results.length).toBeGreaterThan(0);
     const allTopics = results.flatMap(r => r.topics);
     expect(allTopics).toContain('sandbox');
+  });
+
+  it('returns the VDS article when urlSanitized is true', () => {
+    const results = selectRelatedReading({ pendoPresent: true, urlSanitized: true }, 10, findKbByTopics);
+    expect(results.length).toBeGreaterThan(0);
+    const slugs = results.map(r => r.slug);
+    expect(slugs).toContain('launch-vds');
   });
 
   it('returns identity/metadata articles when visitorId missing', () => {

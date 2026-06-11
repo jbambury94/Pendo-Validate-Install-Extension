@@ -446,3 +446,35 @@ describe('captureAndInspect — extended signals', () => {
     expect(result.advice.some(a => a.text.includes('No visitor metadata fields detected'))).toBe(true)
   })
 })
+
+describe('captureAndInspect — URL sanitization / redirect detection', () => {
+  it('adds VDS advice when the page redirected during load and pendo is present', () => {
+    window.pendo = { validateInstall: vi.fn(), apiKey: 'k', _: { state: { visitorId: 'v', accountId: 'a' } } }
+    global.performance = { getEntriesByType: vi.fn((type) => type === 'navigation' ? [{ redirectCount: 1 }] : []) }
+    const result = captureAndInspect()
+    expect(result.status.redirectCount).toBe(1)
+    expect(result.advice.some(a => a.supportKey === 'vds' && /Visual Design Studio/.test(a.text))).toBe(true)
+  })
+
+  it('does not add VDS advice when there were no redirects', () => {
+    window.pendo = { validateInstall: vi.fn(), apiKey: 'k', _: { state: { visitorId: 'v', accountId: 'a' } } }
+    global.performance = { getEntriesByType: vi.fn((type) => type === 'navigation' ? [{ redirectCount: 0 }] : []) }
+    const result = captureAndInspect()
+    expect(result.status.redirectCount).toBe(0)
+    expect(result.advice.some(a => a.supportKey === 'vds')).toBe(false)
+  })
+
+  it('does not add VDS advice when redirected but pendo is absent', () => {
+    global.performance = { getEntriesByType: vi.fn((type) => type === 'navigation' ? [{ redirectCount: 2 }] : []) }
+    const result = captureAndInspect()
+    expect(result.advice.some(a => a.supportKey === 'vds')).toBe(false)
+  })
+
+  it('falls back to legacy performance.navigation.redirectCount', () => {
+    window.pendo = { validateInstall: vi.fn(), apiKey: 'k', _: { state: { visitorId: 'v', accountId: 'a' } } }
+    global.performance = { getEntriesByType: vi.fn(() => []), navigation: { redirectCount: 1 } }
+    const result = captureAndInspect()
+    expect(result.status.redirectCount).toBe(1)
+    expect(result.advice.some(a => a.supportKey === 'vds')).toBe(true)
+  })
+})

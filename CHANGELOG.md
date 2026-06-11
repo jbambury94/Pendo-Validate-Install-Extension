@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.8.2
+- **Visual Design Studio URL-token sanitization warning.** When a Pendo snippet is present and the page redirected during load (Navigation Timing `redirectCount > 0`), the validator now warns that the application may be sanitizing the URL and dropping Pendo's `pendo-designer` token — the documented cause of the Visual Design Studio (VDS) failing to launch. The recommendation links to *Help launching the Visual Design Studio* and suggests enabling **Disable Designer Launch URL Token** in the app's Tagging & Guide Settings (or launching the designer manually via `pendo.designerv2.launchInAppDesigner()`). The warning only surfaces when a redirect is actually detected — it is not always-on.
+- **New `vds` support key + KB article.** Added the VDS article to `PENDO_SUPPORT`, `SUPPORT_LABELS`, the `inferSupportKeyFromText` rules, and the bundled knowledge base (now 25 articles, topics `vds` / `designer` / `guides`). It appears as Related reading when URL sanitization is detected, and `captureAndInspect()` now reports `status.redirectCount`, which is included in the Markdown report metadata.
+- **Tests.** New redirect/URL-sanitization cases in `tests/captureAndInspect.test.js`, a `vds` case in `tests/inferSupportKeyFromText.test.js`, KB coverage in `tests/pendoKb.test.js`, and the manifest version assertion bumped to 1.8.2; helpers synced in `tests/helpers.js`. 456 tests across 20 suites.
+
 ## 1.8.1
 - **Launcher debugger fix.** When validation detects Pendo via the Launcher content-script world (Phase 1.75 / CDP), the **Debugger** button now calls `pendo.enableDebugging()` in that same isolated context instead of only the page MAIN world (where no agent exists).
 - **CDP helper refactor.** Extracted `evaluateInLauncherWorld()` shared by validation and debugger; validation stores `validationPath`, `validationTabId`, and `launcherExtensionId` for routing.
