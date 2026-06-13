@@ -12,6 +12,10 @@ web-ext-artifacts/
 .cursor/rules/version-on-commit.mdc
 .cursor/plans
 
+# Local-only Cursor skills + helper script (kept out of the remote)
+.cursor/skills/
+scripts/bump-version.mjs
+
 # Dependencies
 node_modules/
 
