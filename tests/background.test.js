@@ -185,3 +185,131 @@ describe('background.js — AI fetch proxy', () => {
     expect(opts.body).toBe('{"model":"test"}')
   })
 })
+
+describe('background.js — Firefox privileged-API bridge', () => {
+  let handler
+  const sender = { id: 'anything' }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    chrome.runtime.lastError = null
+    chrome.runtime.onMessage.addListener.mockImplementation((fn) => { handler = fn })
+
+    const { readFileSync } = require('fs')
+    const { join } = require('path')
+    const src = readFileSync(join(__dirname, '..', 'extension', 'background.js'), 'utf8')
+    const wrappedSrc = src.replace('chrome.action.onClicked.addListener', '/* skip */ void ')
+
+    const fn = new Function('chrome', 'fetch', 'setTimeout', 'clearTimeout', 'AbortController', wrappedSrc)
+    fn(chrome, vi.fn(), setTimeout, clearTimeout, AbortController)
+  })
+
+  it('pendo-validate-tabs-query forwards to chrome.tabs.query and returns the tabs', async () => {
+    const tabs = [{ id: 7, active: true }]
+    chrome.tabs.query.mockResolvedValue(tabs)
+
+    const sendResponse = vi.fn()
+    const queryInfo = { active: true, currentWindow: true }
+    const ret = handler({ type: 'pendo-validate-tabs-query', queryInfo }, sender, sendResponse)
+
+    expect(ret).toBe(true)
+    await vi.waitFor(() => expect(sendResponse).toHaveBeenCalled())
+    expect(chrome.tabs.query).toHaveBeenCalledWith(queryInfo)
+    expect(sendResponse).toHaveBeenCalledWith({ ok: true, tabs })
+  })
+
+  it('pendo-validate-tabs-query reports failure when the query rejects', async () => {
+    chrome.tabs.query.mockRejectedValue(new Error('no tabs'))
+
+    const sendResponse = vi.fn()
+    handler({ type: 'pendo-validate-tabs-query', queryInfo: {} }, sender, sendResponse)
+
+    await vi.waitFor(() => expect(sendResponse).toHaveBeenCalled())
+    expect(sendResponse).toHaveBeenCalledWith({ ok: false, error: 'no tabs' })
+  })
+
+  it('pendo-validate-execute-script injects capture-inspect.js, then invokes it', async () => {
+    const results = [{ result: { status: { pendoPresent: true } } }]
+    chrome.scripting.executeScript.mockResolvedValue(results)
+
+    const sendResponse = vi.fn()
+    const target = { tabId: 7 }
+    const ret = handler(
+      { type: 'pendo-validate-execute-script', injectedScript: 'capture-inspect', target, world: 'MAIN', args: ['page'] },
+      sender,
+      sendResponse,
+    )
+
+    expect(ret).toBe(true)
+    await vi.waitFor(() => expect(sendResponse).toHaveBeenCalled())
+    expect(chrome.scripting.executeScript).toHaveBeenCalledTimes(2)
+    expect(chrome.scripting.executeScript).toHaveBeenNthCalledWith(1, { target, world: 'MAIN', files: ['capture-inspect.js'] })
+    const invokeCall = chrome.scripting.executeScript.mock.calls[1][0]
+    expect(invokeCall.target).toEqual(target)
+    expect(invokeCall.world).toBe('MAIN')
+    expect(invokeCall.args).toEqual(['page'])
+    expect(typeof invokeCall.func).toBe('function')
+    expect(sendResponse).toHaveBeenCalledWith({ ok: true, results })
+  })
+
+  it('pendo-validate-execute-script injects enable-debugging.js, then invokes it', async () => {
+    const results = [{ result: { ok: true } }]
+    chrome.scripting.executeScript.mockResolvedValue(results)
+
+    const sendResponse = vi.fn()
+    const target = { tabId: 9 }
+    handler({ type: 'pendo-validate-execute-script', injectedScript: 'enable-debugging', target }, sender, sendResponse)
+
+    await vi.waitFor(() => expect(sendResponse).toHaveBeenCalled())
+    expect(chrome.scripting.executeScript).toHaveBeenNthCalledWith(1, { target, world: 'MAIN', files: ['enable-debugging.js'] })
+    expect(sendResponse).toHaveBeenCalledWith({ ok: true, results })
+  })
+
+  it('pendo-validate-execute-script rejects an unknown injectedScript', async () => {
+    const sendResponse = vi.fn()
+    handler({ type: 'pendo-validate-execute-script', injectedScript: 'bogus', target: { tabId: 1 } }, sender, sendResponse)
+
+    await vi.waitFor(() => expect(sendResponse).toHaveBeenCalled())
+    expect(chrome.scripting.executeScript).not.toHaveBeenCalled()
+    expect(sendResponse).toHaveBeenCalledWith({ ok: false, error: 'Unknown injectedScript: bogus' })
+  })
+
+  it('pendo-validate-execute-script reports failure when injection throws', async () => {
+    chrome.scripting.executeScript.mockRejectedValue(new Error('inject blocked'))
+
+    const sendResponse = vi.fn()
+    handler(
+      { type: 'pendo-validate-execute-script', injectedScript: 'capture-inspect', target: { tabId: 1 }, args: ['page'] },
+      sender,
+      sendResponse,
+    )
+
+    await vi.waitFor(() => expect(sendResponse).toHaveBeenCalled())
+    expect(sendResponse).toHaveBeenCalledWith({ ok: false, error: 'inject blocked' })
+  })
+
+  it('pendo-validate-management-get-all returns the installed extension list', async () => {
+    const extensions = [{ id: 'abc', enabled: true, name: 'Pendo Launcher' }]
+    chrome.management.getAll.mockImplementation((cb) => cb(extensions))
+
+    const sendResponse = vi.fn()
+    const ret = handler({ type: 'pendo-validate-management-get-all' }, sender, sendResponse)
+
+    expect(ret).toBe(true)
+    await vi.waitFor(() => expect(sendResponse).toHaveBeenCalled())
+    expect(sendResponse).toHaveBeenCalledWith({ ok: true, extensions })
+  })
+
+  it('pendo-validate-management-get-all surfaces chrome.runtime.lastError', async () => {
+    chrome.management.getAll.mockImplementation((cb) => {
+      chrome.runtime.lastError = { message: 'denied' }
+      cb(null)
+    })
+
+    const sendResponse = vi.fn()
+    handler({ type: 'pendo-validate-management-get-all' }, sender, sendResponse)
+
+    await vi.waitFor(() => expect(sendResponse).toHaveBeenCalled())
+    expect(sendResponse).toHaveBeenCalledWith({ ok: false, error: 'denied' })
+  })
+})

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { evaluateInLauncherWorld, enableDebuggingViaLauncherCdp } from './helpers.js'
+import vm from 'node:vm'
+import { evaluateInLauncherWorld, enableDebuggingViaLauncherCdp, buildLauncherInvokeExpression } from './helpers.js'
 
 const TAB_ID = 42
 const LAUNCHER_ID = 'abc123launcher'
@@ -141,5 +142,48 @@ describe('enableDebuggingViaLauncherCdp', () => {
       ok: false,
       message: 'Pendo Launcher agent context not found on this tab. Re-run validation first.',
     })
+  })
+})
+
+// ── buildLauncherInvokeExpression ───────────────────────────────────────────────
+
+describe('buildLauncherInvokeExpression', () => {
+  it('guards the injected source so a top-level binding is not redeclared on re-eval', () => {
+    // Emulates the Launcher's persistent isolated world: a top-level `const` would
+    // throw "Identifier has already been declared" if the raw source were re-evaluated.
+    const src = [
+      'const __sampleMarker = 1;',
+      'function __sampleInjected(variant = "page") { return "ran:" + variant + ":" + __sampleMarker }',
+      'void (globalThis.__sampleInjected = __sampleInjected);',
+    ].join('\n')
+    const expression = buildLauncherInvokeExpression(src, '__sampleInjected', JSON.stringify('launcher'))
+    const context = vm.createContext({})
+
+    expect(vm.runInContext(expression, context)).toBe('ran:launcher:1')
+    // Re-evaluating in the SAME persistent context must not throw and must still invoke.
+    expect(() => vm.runInContext(expression, context)).not.toThrow()
+    expect(vm.runInContext(expression, context)).toBe('ran:launcher:1')
+  })
+
+  it('re-evaluating the raw (unguarded) source in a persistent context throws', () => {
+    // Documents the bug the guard prevents: re-running the source verbatim redeclares it.
+    const rawExpression = [
+      'const __rawMarker = 1;',
+      'globalThis.__rawMarker = __rawMarker;',
+    ].join('\n')
+    const context = vm.createContext({})
+
+    expect(() => vm.runInContext(rawExpression, context)).not.toThrow()
+    expect(() => vm.runInContext(rawExpression, context)).toThrow()
+  })
+
+  it('invokes with no arguments when argsExpr is omitted', () => {
+    const src = 'void (globalThis.__sampleNoArg = () => "called");'
+    const expression = buildLauncherInvokeExpression(src, '__sampleNoArg')
+    const context = vm.createContext({})
+
+    expect(expression).toContain("typeof globalThis.__sampleNoArg !== 'function'")
+    expect(expression.trimEnd().endsWith('globalThis.__sampleNoArg();')).toBe(true)
+    expect(vm.runInContext(expression, context)).toBe('called')
   })
 })

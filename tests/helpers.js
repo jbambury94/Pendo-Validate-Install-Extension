@@ -543,6 +543,16 @@ export function enableDebuggingInPage() {
 }
 
 /**
+ * Build a CDP Runtime.evaluate expression that defines an injected script's global
+ * exactly once, then invokes it. Kept in sync with extension/popup.js. The typeof guard
+ * makes re-evaluation in the Launcher's persistent isolated world idempotent (no
+ * redeclaration of top-level bindings on repeat validations).
+ */
+export function buildLauncherInvokeExpression(src, globalName, argsExpr = '') {
+  return `if (typeof globalThis.${globalName} !== 'function') {\n${src}\n}\nglobalThis.${globalName}(${argsExpr});`
+}
+
+/**
  * Evaluate a JS expression inside the Pendo Launcher extension's content-script world via CDP.
  * Returns { ok: true, value } or { ok: false, reason, message? }.
  */
@@ -837,7 +847,7 @@ export async function requestAiAdvice(context) {
 /**
  * captureAndInspect — extracted from the inner function inside runInPage().
  * Designed to run in a browser page context; uses window, document, console, performance.
- * Keep in sync with the production copy in extension/popup.js.
+ * Keep in sync with extension/capture-inspect.js.
  */
 export function captureAndInspect(variant = 'page') {
   const captured = []

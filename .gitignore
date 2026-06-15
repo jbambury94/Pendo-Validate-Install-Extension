@@ -29,3 +29,6 @@ CLAUDE.md
 
 # Local dev harness (not shipped; served by dev/serve.mjs, incl. TLS certs in dev/harness/certs/)
 dev/
+
+# Local screenshot docs placeholder
+docs/screenshots/README.md
