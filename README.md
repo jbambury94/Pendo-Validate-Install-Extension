@@ -107,7 +107,7 @@ Your key is stored locally in `chrome.storage.local` and is only sent when valid
 ## For developers
 
 - Release notes — see [CHANGELOG.md](CHANGELOG.md).
-- Run the test suite: `npm install && npm test` (Vitest + jsdom, 496 tests across 21 suites).
+- Run the test suite: `npm install && npm test` (Vitest + jsdom, 510 tests across 22 suites).
 - Build the release zips: `npm run build` (all three browsers) or `npm run build:chrome` / `build:edge` / `build:firefox`. Output lands in `dist/`; the per-browser manifest transforms live in `scripts/browser-targets.mjs`.
 - UI element / `data-action` reference — see [extension/popup-actions.md](extension/popup-actions.md).
 
