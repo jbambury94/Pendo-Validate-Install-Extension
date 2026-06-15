@@ -1,7 +1,7 @@
 # Privacy Policy — Pendo Validate Install
 
 **Last updated:** 11 June 2026
-**Extension version:** 1.8.2
+**Extension version:** 1.8.3
 
 ---
 

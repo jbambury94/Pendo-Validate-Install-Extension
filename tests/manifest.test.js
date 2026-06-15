@@ -15,7 +15,7 @@ describe('manifest permissions', () => {
 })
 
 describe('manifest web_accessible_resources', () => {
-  it('exposes every file popup.html loads inside the overlay iframe', () => {
+  it('exposes every runtime asset the overlay iframe loads', () => {
     const resources = manifest.web_accessible_resources[0].resources
     expect(resources).toEqual(
       expect.arrayContaining([
@@ -26,12 +26,16 @@ describe('manifest web_accessible_resources', () => {
         'pendo-kb.js',
         'pendo-loader.js',
         'vendor/pendo.js',
+        // Fetched via runtime.getURL() from the panel context (CDP evaluate + AI prompt enrichment).
+        'capture-inspect.js',
+        'enable-debugging.js',
+        'pendo-install-quality.md',
       ]),
     )
   })
 })
 describe('manifest version', () => {
   it('version matches the current release', () => {
-    expect(manifest.version).toBe('1.8.2')
+    expect(manifest.version).toBe('1.8.3')
   })
 })

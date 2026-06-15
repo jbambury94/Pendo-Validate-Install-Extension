@@ -12,6 +12,10 @@ web-ext-artifacts/
 .cursor/rules/version-on-commit.mdc
 .cursor/plans
 
+# Local-only Cursor skills + helper script (kept out of the remote)
+.cursor/skills/
+scripts/bump-version.mjs
+
 # Dependencies
 node_modules/
 
@@ -25,3 +29,6 @@ CLAUDE.md
 
 # Local dev harness (not shipped; served by dev/serve.mjs, incl. TLS certs in dev/harness/certs/)
 dev/
+
+# Local screenshot docs placeholder
+docs/screenshots/README.md
