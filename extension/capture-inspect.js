@@ -1,6 +1,6 @@
-/** Injected into page MAIN world via scripting.executeScript. Keep in sync with tests/helpers.js captureAndInspect. Idempotent on re-injection (Phase 1 + 1.5 share the same MAIN world). */
+/** Injected into page MAIN world via scripting.executeScript. Keep in sync with tests/helpers.js captureAndInspect. Idempotent on re-injection (Phase 1 + 1.5 share the same MAIN world). Assigned as a function expression (not a top-level declaration) so it never creates a page-global `captureAndInspect` binding that could collide with the host page. */
 if (typeof globalThis.__pendoValidateCaptureAndInspect !== 'function') {
-function captureAndInspect(variant = 'page') {
+globalThis.__pendoValidateCaptureAndInspect = function captureAndInspect(variant = 'page') {
   const captured = []
   const original = { log: console.log, warn: console.warn, error: console.error, info: console.info }
   function push(level, args) {
@@ -404,7 +404,5 @@ function captureAndInspect(variant = 'page') {
   }
 
   return { status, captured, advice, checks, cspMeta, apiKeyFound, hasError, hasWarn }
-}
-
-void (globalThis.__pendoValidateCaptureAndInspect = captureAndInspect);
+};
 }

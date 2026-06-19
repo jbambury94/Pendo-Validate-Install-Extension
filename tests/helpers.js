@@ -67,6 +67,48 @@ export const SUPPORT_LABELS = {
 
 export const ERR_SUPPORT_KEYS = new Set(['installGuide', 'installComponents', 'agentSettings'])
 
+// ========== Extension messaging bridge (mirrored from popup.js) ==========
+// popup.js captures chrome/browser once at module load; here we read them lazily so a test
+// can toggle global.chrome / global.browser per case. The selection logic is identical:
+// prefer the promise-based browser.* namespace, fall back to callback-based chrome.*.
+function _bridgeChromeApi() { return typeof chrome !== 'undefined' ? chrome : null }
+function _bridgeBrowserApi() { return typeof browser !== 'undefined' ? browser : null }
+
+export function _extRuntime() {
+  return _bridgeBrowserApi()?.runtime ?? _bridgeChromeApi()?.runtime ?? null
+}
+
+export function _localPrivilegedApi() {
+  const b = _bridgeBrowserApi()
+  const c = _bridgeChromeApi()
+  if (b?.tabs?.query && b?.scripting?.executeScript) return b
+  if (c?.tabs?.query && c?.scripting?.executeScript) return c
+  return null
+}
+
+export async function sendExtMessage(message) {
+  const browserRuntime = _bridgeBrowserApi()?.runtime
+  if (browserRuntime?.sendMessage) return browserRuntime.sendMessage(message)
+
+  const chromeRuntime = _bridgeChromeApi()?.runtime
+  if (!chromeRuntime?.sendMessage) throw new Error('Extension messaging unavailable')
+  return new Promise((resolve, reject) => {
+    chromeRuntime.sendMessage(message, (response) => {
+      const err = chromeRuntime.lastError
+      if (err) reject(new Error(err.message))
+      else resolve(response)
+    })
+  })
+}
+
+export async function tabsQuery(queryInfo) {
+  const api = _localPrivilegedApi()
+  if (api?.tabs && typeof api.tabs.query === 'function') return api.tabs.query(queryInfo)
+  const res = await sendExtMessage({ type: 'pendo-validate-tabs-query', queryInfo })
+  if (!res?.ok) throw new Error(res?.error || 'tabs.query failed')
+  return res.tabs
+}
+
 export function stripEmbeddedHelpUrl(text) {
   if (!text) return text
   return String(text)

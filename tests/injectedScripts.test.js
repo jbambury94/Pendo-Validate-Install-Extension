@@ -53,3 +53,41 @@ describe('injected extension scripts — MAIN world idempotency', () => {
     expect(() => injectIntoContext(unguarded, context)).toThrow()
   })
 })
+
+describe('injected extension scripts — host-page global collision', () => {
+  it('top-level function declaration collides with a host-page lexical binding (documents the bug)', () => {
+    // A prior page script declares a lexical `captureAndInspect`; the old injection style
+    // declared `function captureAndInspect` at the top level, which redeclares it.
+    const oldStyle = [
+      'if (typeof globalThis.__sampleCapture !== "function") {',
+      'function captureAndInspect() { return 1 }',
+      'void (globalThis.__sampleCapture = captureAndInspect);',
+      '}',
+    ].join('\n')
+    const context = vm.createContext({ globalThis: {} })
+    context.globalThis = context
+
+    injectIntoContext('let captureAndInspect = () => 2', context)
+    expect(() => injectIntoContext(oldStyle, context)).toThrow()
+  })
+
+  it('capture-inspect.js injects cleanly when the host page already has a lexical captureAndInspect', () => {
+    const src = readExtensionScript('capture-inspect.js')
+    const context = vm.createContext({ globalThis: {} })
+    context.globalThis = context
+
+    injectIntoContext('let captureAndInspect = () => 1', context)
+    expect(() => injectIntoContext(src, context)).not.toThrow()
+    expect(typeof context.__pendoValidateCaptureAndInspect).toBe('function')
+  })
+
+  it('enable-debugging.js injects cleanly when the host page already has a lexical enableDebuggingInPage', () => {
+    const src = readExtensionScript('enable-debugging.js')
+    const context = vm.createContext({ globalThis: {} })
+    context.globalThis = context
+
+    injectIntoContext('let enableDebuggingInPage = () => 1', context)
+    expect(() => injectIntoContext(src, context)).not.toThrow()
+    expect(typeof context.__pendoValidateEnableDebugging).toBe('function')
+  })
+})

@@ -6,17 +6,19 @@
  */
 
 // Firefox embeds popup.html as a web_accessible_resource iframe where tabs/scripting
-// are unavailable; route privileged calls through the background script (chrome.runtime works).
+// are unavailable; route privileged calls through the background script. Firefox exposes
+// both namespaces, but only browser.* is promise-based (chrome.* is callback-based there and
+// resolves to undefined when awaited), so prefer browser.* wherever we await a result.
 const _chromeApi = typeof chrome !== 'undefined' ? chrome : null;
 const _browserApi = typeof browser !== 'undefined' ? browser : null;
 
 function _extRuntime() {
-  return _chromeApi?.runtime || _browserApi?.runtime || null;
+  return _browserApi?.runtime ?? _chromeApi?.runtime ?? null;
 }
 
 function _localPrivilegedApi() {
-  if (_chromeApi?.tabs?.query && _chromeApi?.scripting?.executeScript) return _chromeApi;
   if (_browserApi?.tabs?.query && _browserApi?.scripting?.executeScript) return _browserApi;
+  if (_chromeApi?.tabs?.query && _chromeApi?.scripting?.executeScript) return _chromeApi;
   return null;
 }
 
@@ -31,9 +33,21 @@ function _hasLocalScriptingApi() {
 }
 
 async function sendExtMessage(message) {
-  const runtime = _extRuntime();
-  if (!runtime?.sendMessage) throw new Error('Extension messaging unavailable');
-  return runtime.sendMessage(message);
+  // Prefer the promise-based browser.runtime (Firefox). Otherwise promisify the
+  // chrome.runtime callback form, which Chromium MV3 also supports — awaiting
+  // chrome.runtime.sendMessage directly on Firefox yields undefined, not the response.
+  const browserRuntime = _browserApi?.runtime;
+  if (browserRuntime?.sendMessage) return browserRuntime.sendMessage(message);
+
+  const chromeRuntime = _chromeApi?.runtime;
+  if (!chromeRuntime?.sendMessage) throw new Error('Extension messaging unavailable');
+  return new Promise((resolve, reject) => {
+    chromeRuntime.sendMessage(message, (response) => {
+      const err = chromeRuntime.lastError;
+      if (err) reject(new Error(err.message));
+      else resolve(response);
+    });
+  });
 }
 
 async function tabsQuery(queryInfo) {
@@ -1300,7 +1314,7 @@ async function requestAiAdvice(context) {
       let bg;
       try {
         // Route Claude requests through the background service worker to avoid extension-page fetch/CORS limits.
-        bg = await chrome.runtime.sendMessage({
+        bg = await sendExtMessage({
           type: 'pendo-validate-ai-fetch',
           endpoint,
           headers,
