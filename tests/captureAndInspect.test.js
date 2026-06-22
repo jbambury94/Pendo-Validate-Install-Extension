@@ -196,6 +196,19 @@ describe('captureAndInspect — API key detection', () => {
     window.pendo = { validateInstall: vi.fn() }
     expect(captureAndInspect().status.resourceHits).toHaveLength(1)
   })
+
+  it('still detects a self-hosted agent via the agent/static path when the host lacks "pendo"', () => {
+    // Guards the cheap pre-filter: the agent/(static|production) branch must keep working
+    // for self-hosted agents served from a non-pendo domain.
+    const key = 'abcdef12-1234-1234-1234-abcdef123456'
+    global.performance = {
+      getEntriesByType: vi.fn(() => [{ name: `https://assets.example.com/agent/static/${key}/agent.js`, initiatorType: 'script' }]),
+    }
+    window.pendo = { validateInstall: vi.fn() }
+    const result = captureAndInspect()
+    expect(result.status.resourceHits).toHaveLength(1)
+    expect(result.status.detectedApiKey).toBe(key)
+  })
 })
 
 describe('captureAndInspect — advice and checks generation', () => {
@@ -281,6 +294,54 @@ describe('captureAndInspect — variant messages', () => {
   it('adds warn message when launcher variant but no validateInstall', () => {
     window.Pendo = {}
     const result = captureAndInspect('launcher')
+    expect(result.captured.some(l => l.level === 'warn' && l.text.includes('validateInstall()'))).toBe(true)
+  })
+})
+
+describe('captureAndInspect — combined variant (merged Phase 1 + 1.5)', () => {
+  it('validates the snippet (window.pendo) as primary and reports both global flags', () => {
+    window.pendo = { validateInstall: vi.fn(), apiKey: 'k', _: { state: { visitorId: 'v', accountId: 'a' } } }
+    const result = captureAndInspect('combined')
+    expect(result.status.pendoPresent).toBe(true)
+    expect(result.status.pendoGlobal).toBe('pendo')
+    expect(result.status.snippetGlobalPresent).toBe(true)
+    expect(result.status.launcherGlobalPresent).toBe(false)
+    expect(window.pendo.validateInstall).toHaveBeenCalledOnce()
+  })
+
+  it('validates the Launcher (window.Pendo) as primary when no snippet is present', () => {
+    window.Pendo = { validateInstall: vi.fn() }
+    const result = captureAndInspect('combined')
+    expect(result.status.pendoPresent).toBe(true)
+    expect(result.status.pendoGlobal).toBe('Pendo')
+    expect(result.status.snippetGlobalPresent).toBe(false)
+    expect(result.status.launcherGlobalPresent).toBe(true)
+    expect(window.Pendo.validateInstall).toHaveBeenCalledOnce()
+    expect(result.captured[0]).toMatchObject({ level: 'info', text: expect.stringContaining('Pendo Launcher window') })
+  })
+
+  it('prefers the snippet and does not emit the Launcher message when both globals exist', () => {
+    window.pendo = { validateInstall: vi.fn() }
+    window.Pendo = { validateInstall: vi.fn() }
+    const result = captureAndInspect('combined')
+    expect(result.status.pendoGlobal).toBe('pendo')
+    expect(result.status.snippetGlobalPresent).toBe(true)
+    expect(result.status.launcherGlobalPresent).toBe(true)
+    expect(window.pendo.validateInstall).toHaveBeenCalledOnce()
+    expect(window.Pendo.validateInstall).not.toHaveBeenCalled()
+    expect(result.captured.some(l => /Pendo Launcher window/.test(l.text))).toBe(false)
+  })
+
+  it('reports both flags false when neither global is present', () => {
+    const result = captureAndInspect('combined')
+    expect(result.status.pendoPresent).toBe(false)
+    expect(result.status.snippetGlobalPresent).toBe(false)
+    expect(result.status.launcherGlobalPresent).toBe(false)
+  })
+
+  it('warns when the Launcher is primary but validateInstall is unavailable', () => {
+    window.Pendo = {}
+    const result = captureAndInspect('combined')
     expect(result.captured.some(l => l.level === 'warn' && l.text.includes('validateInstall()'))).toBe(true)
   })
 })
@@ -593,6 +654,36 @@ describe('captureAndInspect — client-side URL sanitization', () => {
     const result = captureAndInspect()
     expect(result.status.urlSanitization.navQueryStripped).toBe(false)
     expect(result.status.urlSanitization.navPendoTokenStripped).toBe(false)
+  })
+})
+
+describe('captureAndInspect — inline script scan cap', () => {
+  beforeEach(() => {
+    window.__pendoValidateHistoryHooked = false
+    window.__pendoValidateUrlStrips = []
+  })
+
+  it('counts every inline script even when its content exceeds the per-script scan budget', () => {
+    const huge = 'var x=1;'.repeat(3000) // ~24 KB, over the 16 KB per-script cap
+    document.head.innerHTML = `<script>${huge}</script><script>var y=2</script>`
+    window.pendo = { validateInstall: vi.fn(), apiKey: 'k', _: { state: { visitorId: 'v', accountId: 'a' } } }
+    const result = captureAndInspect()
+    expect(result.status.urlSanitization.inlineScripts).toBe(2)
+  })
+
+  it('does not scan past the per-script byte cap for sanitization patterns', () => {
+    const padding = '/* pad */\n'.repeat(2500) // ~25 KB of benign text before the pattern
+    document.head.innerHTML = `<script>${padding}location.search = ""</script>`
+    window.pendo = { validateInstall: vi.fn(), apiKey: 'k', _: { state: { visitorId: 'v', accountId: 'a' } } }
+    const result = captureAndInspect()
+    expect(result.status.urlSanitization.inlinePatterns).not.toContain('location.search cleared')
+  })
+
+  it('still flags a sanitization pattern that sits within the per-script byte cap', () => {
+    document.head.innerHTML = `<script>/* small */ location.search = ""</script>`
+    window.pendo = { validateInstall: vi.fn(), apiKey: 'k', _: { state: { visitorId: 'v', accountId: 'a' } } }
+    const result = captureAndInspect()
+    expect(result.status.urlSanitization.inlinePatterns).toContain('location.search cleared')
   })
 })
 

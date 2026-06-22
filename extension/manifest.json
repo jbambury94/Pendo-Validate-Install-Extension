@@ -35,15 +35,11 @@
         "popup.html",
         "popup.css",
         "popup.js",
-        "capture-inspect.js",
-        "enable-debugging.js",
         "theme-init.js",
         "pendo-kb.js",
-        "pendo-install-quality.md",
         "pendo-loader.js",
         "vendor/pendo.js",
-        "fonts/*.woff2",
-        "icons/*.png"
+        "fonts/*.woff2"
       ],
       "matches": ["<all_urls>"]
     }

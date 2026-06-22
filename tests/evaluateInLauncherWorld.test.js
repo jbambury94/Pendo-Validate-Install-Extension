@@ -82,6 +82,41 @@ describe('evaluateInLauncherWorld', () => {
     expect(chrome.debugger.detach).toHaveBeenCalledWith(TARGET)
   })
 
+  it('resolves as soon as the launcher context appears, without waiting for the safety-net timer', async () => {
+    // Runtime.enable emits the context synchronously, so the whole chain settles via
+    // microtasks — no need to advance the fake timers. Asserts the fixed-delay wait is gone.
+    const result = await evaluateInLauncherWorld(TAB_ID, LAUNCHER_ID, '1+1')
+    expect(result).toEqual({ ok: true, value: 99 })
+  })
+
+  it('does not time out while Runtime.enable is still pending', async () => {
+    // Context is emitted only when enable completes after 400ms; a timer armed at t=0
+    // would fire at 250ms and falsely return no-launcher-context.
+    let eventHandler = null
+    global.chrome.debugger = {
+      attach: vi.fn().mockResolvedValue(undefined),
+      detach: vi.fn().mockResolvedValue(undefined),
+      sendCommand: vi.fn(async (_target, method) => {
+        if (method === 'Runtime.enable' && eventHandler) {
+          await vi.advanceTimersByTimeAsync(400)
+          eventHandler({ tabId: TAB_ID }, 'Runtime.executionContextCreated', {
+            context: { id: 7, origin: LAUNCHER_ORIGIN },
+          })
+        }
+        if (method === 'Runtime.evaluate') return { result: { value: 99 } }
+        return {}
+      }),
+      onEvent: {
+        addListener: vi.fn((fn) => { eventHandler = fn }),
+        removeListener: vi.fn((fn) => { if (eventHandler === fn) eventHandler = null }),
+      },
+    }
+
+    const promise = evaluateInLauncherWorld(TAB_ID, LAUNCHER_ID, '1+1')
+    await vi.runAllTimersAsync()
+    expect(await promise).toEqual({ ok: true, value: 99 })
+  })
+
   it('returns eval-exception when Runtime.evaluate reports exceptionDetails', async () => {
     installDebuggerMock({
       contexts: [{ id: 7, origin: LAUNCHER_ORIGIN }],
