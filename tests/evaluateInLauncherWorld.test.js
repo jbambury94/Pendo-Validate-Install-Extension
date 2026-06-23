@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { evaluateInLauncherWorld, enableDebuggingViaLauncherCdp } from './helpers.js'
+import vm from 'node:vm'
+import { evaluateInLauncherWorld, enableDebuggingViaLauncherCdp, buildLauncherInvokeExpression } from './helpers.js'
 
 const TAB_ID = 42
 const LAUNCHER_ID = 'abc123launcher'
@@ -81,6 +82,41 @@ describe('evaluateInLauncherWorld', () => {
     expect(chrome.debugger.detach).toHaveBeenCalledWith(TARGET)
   })
 
+  it('resolves as soon as the launcher context appears, without waiting for the safety-net timer', async () => {
+    // Runtime.enable emits the context synchronously, so the whole chain settles via
+    // microtasks — no need to advance the fake timers. Asserts the fixed-delay wait is gone.
+    const result = await evaluateInLauncherWorld(TAB_ID, LAUNCHER_ID, '1+1')
+    expect(result).toEqual({ ok: true, value: 99 })
+  })
+
+  it('does not time out while Runtime.enable is still pending', async () => {
+    // Context is emitted only when enable completes after 400ms; a timer armed at t=0
+    // would fire at 250ms and falsely return no-launcher-context.
+    let eventHandler = null
+    global.chrome.debugger = {
+      attach: vi.fn().mockResolvedValue(undefined),
+      detach: vi.fn().mockResolvedValue(undefined),
+      sendCommand: vi.fn(async (_target, method) => {
+        if (method === 'Runtime.enable' && eventHandler) {
+          await vi.advanceTimersByTimeAsync(400)
+          eventHandler({ tabId: TAB_ID }, 'Runtime.executionContextCreated', {
+            context: { id: 7, origin: LAUNCHER_ORIGIN },
+          })
+        }
+        if (method === 'Runtime.evaluate') return { result: { value: 99 } }
+        return {}
+      }),
+      onEvent: {
+        addListener: vi.fn((fn) => { eventHandler = fn }),
+        removeListener: vi.fn((fn) => { if (eventHandler === fn) eventHandler = null }),
+      },
+    }
+
+    const promise = evaluateInLauncherWorld(TAB_ID, LAUNCHER_ID, '1+1')
+    await vi.runAllTimersAsync()
+    expect(await promise).toEqual({ ok: true, value: 99 })
+  })
+
   it('returns eval-exception when Runtime.evaluate reports exceptionDetails', async () => {
     installDebuggerMock({
       contexts: [{ id: 7, origin: LAUNCHER_ORIGIN }],
@@ -141,5 +177,48 @@ describe('enableDebuggingViaLauncherCdp', () => {
       ok: false,
       message: 'Pendo Launcher agent context not found on this tab. Re-run validation first.',
     })
+  })
+})
+
+// ── buildLauncherInvokeExpression ───────────────────────────────────────────────
+
+describe('buildLauncherInvokeExpression', () => {
+  it('guards the injected source so a top-level binding is not redeclared on re-eval', () => {
+    // Emulates the Launcher's persistent isolated world: a top-level `const` would
+    // throw "Identifier has already been declared" if the raw source were re-evaluated.
+    const src = [
+      'const __sampleMarker = 1;',
+      'function __sampleInjected(variant = "page") { return "ran:" + variant + ":" + __sampleMarker }',
+      'void (globalThis.__sampleInjected = __sampleInjected);',
+    ].join('\n')
+    const expression = buildLauncherInvokeExpression(src, '__sampleInjected', JSON.stringify('launcher'))
+    const context = vm.createContext({})
+
+    expect(vm.runInContext(expression, context)).toBe('ran:launcher:1')
+    // Re-evaluating in the SAME persistent context must not throw and must still invoke.
+    expect(() => vm.runInContext(expression, context)).not.toThrow()
+    expect(vm.runInContext(expression, context)).toBe('ran:launcher:1')
+  })
+
+  it('re-evaluating the raw (unguarded) source in a persistent context throws', () => {
+    // Documents the bug the guard prevents: re-running the source verbatim redeclares it.
+    const rawExpression = [
+      'const __rawMarker = 1;',
+      'globalThis.__rawMarker = __rawMarker;',
+    ].join('\n')
+    const context = vm.createContext({})
+
+    expect(() => vm.runInContext(rawExpression, context)).not.toThrow()
+    expect(() => vm.runInContext(rawExpression, context)).toThrow()
+  })
+
+  it('invokes with no arguments when argsExpr is omitted', () => {
+    const src = 'void (globalThis.__sampleNoArg = () => "called");'
+    const expression = buildLauncherInvokeExpression(src, '__sampleNoArg')
+    const context = vm.createContext({})
+
+    expect(expression).toContain("typeof globalThis.__sampleNoArg !== 'function'")
+    expect(expression.trimEnd().endsWith('globalThis.__sampleNoArg();')).toBe(true)
+    expect(vm.runInContext(expression, context)).toBe('called')
   })
 })

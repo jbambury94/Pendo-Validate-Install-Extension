@@ -1,13 +1,13 @@
-# Privacy Policy — Pendo Validate Install
+# Privacy Policy — Pendo Install Validator
 
 **Last updated:** 11 June 2026
-**Extension version:** 1.8.2
+**Extension version:** 1.8.4
 
 ---
 
 ## What the extension does
 
-Pendo Validate Install is a browser extension for Chrome, Edge, and Firefox that checks whether the Pendo Web SDK is correctly installed on a web page. It inspects the active tab's JavaScript environment, captures console output from `pendo.validateInstall()`, and presents the results in a floating panel.
+Pendo Install Validator is a browser extension for Chrome, Edge, and Firefox that checks whether the Pendo Web SDK is correctly installed on a web page. It inspects the active tab's JavaScript environment, captures console output from `pendo.validateInstall()`, and presents the results in a floating panel.
 
 > **Firefox build:** the Firefox package omits the `debugger`, `identity`, and `identity.email` permissions (Firefox does not implement those APIs). On Firefox the visitor ID is therefore always the anonymous UUID — the `@pendo.io` profile-email identification described below applies to Chrome and Edge only — and the CDP-based Launcher introspection is skipped.
 

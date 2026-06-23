@@ -7,6 +7,67 @@
  * pendo-validate-toggle to show/hide the overlay panel.
  */
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === 'pendo-validate-tabs-query') {
+    (async () => {
+      try {
+        const tabs = await chrome.tabs.query(message.queryInfo);
+        sendResponse({ ok: true, tabs });
+      } catch (e) {
+        sendResponse({ ok: false, error: e?.message || String(e) });
+      }
+    })();
+    return true;
+  }
+
+  if (message?.type === 'pendo-validate-execute-script') {
+    (async () => {
+      try {
+        const { target, world = 'MAIN', args = [], injectedScript, invokeOnly = false } = message;
+        // invokeOnly skips the (idempotent) file injection when the panel already saw the
+        // global defined in this world, so the file isn't re-parsed on repeat runs.
+        if (injectedScript === 'capture-inspect') {
+          if (!invokeOnly) await chrome.scripting.executeScript({ target, world, files: ['capture-inspect.js'] });
+          const results = await chrome.scripting.executeScript({
+            target,
+            world,
+            func: (variant) => globalThis.__pendoValidateCaptureAndInspect(variant),
+            args,
+          });
+          sendResponse({ ok: true, results });
+        } else if (injectedScript === 'enable-debugging') {
+          if (!invokeOnly) await chrome.scripting.executeScript({ target, world, files: ['enable-debugging.js'] });
+          const results = await chrome.scripting.executeScript({
+            target,
+            world,
+            func: () => globalThis.__pendoValidateEnableDebugging(),
+            args: [],
+          });
+          sendResponse({ ok: true, results });
+        } else {
+          sendResponse({ ok: false, error: `Unknown injectedScript: ${injectedScript}` });
+        }
+      } catch (e) {
+        sendResponse({ ok: false, error: e?.message || String(e) });
+      }
+    })();
+    return true;
+  }
+
+  if (message?.type === 'pendo-validate-management-get-all') {
+    try {
+      chrome.management.getAll((extensions) => {
+        if (chrome.runtime.lastError) {
+          sendResponse({ ok: false, error: chrome.runtime.lastError.message });
+          return;
+        }
+        sendResponse({ ok: true, extensions });
+      });
+    } catch (e) {
+      sendResponse({ ok: false, error: e?.message || String(e) });
+    }
+    return true;
+  }
+
   if (message?.type !== 'pendo-validate-ai-fetch') return;
   if (sender.id !== chrome.runtime.id) return;
 

@@ -21,6 +21,9 @@ global.chrome = {
   permissions: {
     contains: vi.fn(),
   },
+  management: {
+    getAll: vi.fn(),
+  },
   identity: {
     getProfileUserInfo: vi.fn((_opts, cb) => cb({ email: '', id: '' })),
   },
