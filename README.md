@@ -16,7 +16,6 @@
   <img src="https://img.shields.io/badge/AI-OpenAI%20%7C%20Claude%20%7C%20Gemini-lightgrey" alt="AI: OpenAI | Claude | Gemini" />
 </p>
 
-<!-- Mockup — replace with a real Chrome capture when available. See docs/screenshots/README.md -->
 <p align="center">
   <img src="docs/screenshots/hero.png" width="800" alt="Pendo Install Validator floating panel on a web page" />
 </p>
@@ -42,7 +41,6 @@ Debugging a Pendo installation today means juggling browser DevTools, running `p
 
 ## Install in 30 seconds
 
-<!-- Mockup — replace with a real Chrome capture. See docs/screenshots/README.md -->
 <p align="center">
   <img src="docs/screenshots/install.png" width="600" alt="Loading the extension from chrome://extensions" />
 </p>
@@ -69,7 +67,6 @@ Then pin the extension icon in the toolbar for quick access.
 2. Click the extension icon in the toolbar — a floating, draggable, resizable panel appears on the page.
 3. Hit **Validate Pendo Install**.
 
-<!-- Mockup — replace with a real Chrome capture. See docs/screenshots/README.md -->
 <p align="center">
   <img src="docs/screenshots/panel-status.png" width="480" alt="Status tab showing checks, identity, and metadata" />
 </p>

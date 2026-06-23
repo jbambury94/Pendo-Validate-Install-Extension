@@ -2180,6 +2180,93 @@ function initPopup() {
     logsListEl.replaceChildren();
   }
 
+  /**
+   * Render a completed validation result into the Status tab (hero, quick stats, check
+   * groups, related reading, identity/metadata cards, page snapshot/facts), set lastContext,
+   * and enable Export. Returns the normalized adviceList/checksToRender so the caller can run
+   * the optional AI follow-up. Kept separate from the run orchestration so the localhost-only
+   * screenshot hook can render fixture data without a live validation.
+   */
+  function renderValidationResult(res) {
+    const { status, captured, advice, checks, cspMeta, apiKeyFound, hasError, hasWarn, origin, pageUrl, snippetOnPage, launcherPresent, launcherAttempted, launcherDataValidated, validatedIn } = res;
+
+    const hero = deriveHeroState(res);
+    setStatusHero(hero);
+    const now = new Date();
+    renderStatusHeroTime(now);
+
+    let checksToRender = (checks || []).slice();
+    if (validatedIn === 'launcher' || validatedIn === 'launcher-beta') {
+      checksToRender.push('Pendo Launcher (browser extension) present and validated.');
+    }
+    let adviceList = advice || [];
+    if (snippetOnPage === false && launcherPresent === false && launcherAttempted) {
+      adviceList = adviceList.concat([{ text: 'Ensure the snippet is installed on this page, or open the Pendo Launcher (or Beta) extension in a tab.', source: 'builtin', supportKey: 'installGuide' }]);
+    }
+
+    const buckets = classifyAdvice(adviceList, captured, checksToRender);
+    renderCheckGroups(buckets);
+
+    const hasVFields = status.visitorMetadata && typeof status.visitorMetadata === 'object' && Object.keys(status.visitorMetadata).some(k => k !== 'id');
+    const hasAFields = status.accountMetadata && typeof status.accountMetadata === 'object' && Object.keys(status.accountMetadata).some(k => k !== 'id');
+    const readingSignals = {
+      pendoPresent: status.pendoPresent,
+      validatePresent: status.validatePresent,
+      visitorId: status.visitorId,
+      accountId: status.accountId,
+      hasVisitorMeta: !!hasVFields,
+      hasAccountMeta: !!hasAFields,
+      cspIssue: adviceList.some(a => a.supportKey === 'csp'),
+      noResourceHits: status.resourceHits && status.resourceHits.length === 0,
+      isSpa: false,
+      isIframe: false,
+      hasGtm: false,
+      isSandbox: false,
+      launcherPresent: !!launcherPresent,
+      agentVersionOld: false,
+      apiKeyMissing: !apiKeyFound,
+      urlSanitized: adviceList.some(a => a.supportKey === 'vds'),
+    };
+    renderRelatedReading(readingSignals);
+
+    renderQuickStats({
+      errCount: buckets.err.length,
+      warnCount: buckets.warn.length,
+      okCount: buckets.ok.length,
+      logCount: captured.length
+    });
+
+    renderIdentityCard({
+      visitorId: status.visitorId,
+      accountId: status.accountId,
+      detectedApiKey: status.detectedApiKey
+    });
+    renderMetadataCard({
+      visitorMetadata: status.visitorMetadata,
+      accountMetadata: status.accountMetadata
+    });
+
+    renderPageSnapshot(res);
+    renderPageFacts(res);
+
+    lastContext = {
+      pageUrl: pageUrl || 'unknown',
+      timestamp: toIso(now),
+      status, captured, advice: adviceList, checks: checksToRender, cspMeta: cspMeta || '', apiKeyFound, origin: validatedIn || origin || 'page',
+      hasError: !!hasError, hasWarn: !!hasWarn,
+      snippetOnPage, launcherPresent, launcherAttempted, launcherDataValidated: !!launcherDataValidated, validatedIn: validatedIn || 'page', launcherUrl: res.launcherUrl,
+      validationPath: res.validationPath || (validatedIn === 'page' ? 'page' : 'unknown'),
+      validationTabId: res.validationTabId,
+      launcherExtensionId: res.launcherExtensionId
+    };
+    renderLogs();
+
+    exportMenuBtn.disabled = false;
+    exportMenuBtn.title = 'Export results';
+
+    return { adviceList, checksToRender, captured };
+  }
+
   runBtn?.addEventListener('click', async () => {
     const runId = ++validationSeq;
     activateTab('status');
@@ -2200,81 +2287,8 @@ function initPopup() {
 
       if (runId !== validationSeq) return;
 
-      const { status, captured, advice, checks, cspMeta, apiKeyFound, hasError, hasWarn, origin, pageUrl, snippetOnPage, launcherPresent, launcherAttempted, launcherDataValidated, validatedIn } = res;
-
-      const hero = deriveHeroState(res);
-      setStatusHero(hero);
-      const now = new Date();
-      renderStatusHeroTime(now);
-
-      let checksToRender = (checks || []).slice();
-      if (validatedIn === 'launcher' || validatedIn === 'launcher-beta') {
-        checksToRender.push('Pendo Launcher (browser extension) present and validated.');
-      }
-      let adviceList = advice || [];
-      if (snippetOnPage === false && launcherPresent === false && launcherAttempted) {
-        adviceList = adviceList.concat([{ text: 'Ensure the snippet is installed on this page, or open the Pendo Launcher (or Beta) extension in a tab.', source: 'builtin', supportKey: 'installGuide' }]);
-      }
-
-      const buckets = classifyAdvice(adviceList, captured, checksToRender);
-      renderCheckGroups(buckets);
-
-      const hasVFields = status.visitorMetadata && typeof status.visitorMetadata === 'object' && Object.keys(status.visitorMetadata).some(k => k !== 'id');
-      const hasAFields = status.accountMetadata && typeof status.accountMetadata === 'object' && Object.keys(status.accountMetadata).some(k => k !== 'id');
-      const readingSignals = {
-        pendoPresent: status.pendoPresent,
-        validatePresent: status.validatePresent,
-        visitorId: status.visitorId,
-        accountId: status.accountId,
-        hasVisitorMeta: !!hasVFields,
-        hasAccountMeta: !!hasAFields,
-        cspIssue: adviceList.some(a => a.supportKey === 'csp'),
-        noResourceHits: status.resourceHits && status.resourceHits.length === 0,
-        isSpa: false,
-        isIframe: false,
-        hasGtm: false,
-        isSandbox: false,
-        launcherPresent: !!launcherPresent,
-        agentVersionOld: false,
-        apiKeyMissing: !apiKeyFound,
-        urlSanitized: adviceList.some(a => a.supportKey === 'vds'),
-      };
-      renderRelatedReading(readingSignals);
-
-      renderQuickStats({
-        errCount: buckets.err.length,
-        warnCount: buckets.warn.length,
-        okCount: buckets.ok.length,
-        logCount: captured.length
-      });
-
-      renderIdentityCard({
-        visitorId: status.visitorId,
-        accountId: status.accountId,
-        detectedApiKey: status.detectedApiKey
-      });
-      renderMetadataCard({
-        visitorMetadata: status.visitorMetadata,
-        accountMetadata: status.accountMetadata
-      });
-
-      renderPageSnapshot(res);
-      renderPageFacts(res);
-
-      lastContext = {
-        pageUrl: pageUrl || 'unknown',
-        timestamp: toIso(now),
-        status, captured, advice: adviceList, checks: checksToRender, cspMeta: cspMeta || '', apiKeyFound, origin: validatedIn || origin || 'page',
-        hasError: !!hasError, hasWarn: !!hasWarn,
-        snippetOnPage, launcherPresent, launcherAttempted, launcherDataValidated: !!launcherDataValidated, validatedIn: validatedIn || 'page', launcherUrl: res.launcherUrl,
-        validationPath: res.validationPath || (validatedIn === 'page' ? 'page' : 'unknown'),
-        validationTabId: res.validationTabId,
-        launcherExtensionId: res.launcherExtensionId
-      };
-      renderLogs();
-
-      exportMenuBtn.disabled = false;
-      exportMenuBtn.title = 'Export results';
+      const { status, captured, hasError, hasWarn } = res;
+      let { adviceList, checksToRender } = renderValidationResult(res);
 
       const failureDetected = !status.validatePresent || hasError || hasWarn;
       if (failureDetected) {
@@ -2488,6 +2502,21 @@ function initPopup() {
 
   // Show the empty state on the Status tab until a run completes.
   if (runState === 'idle') statusEmpty.hidden = false;
+
+  // Screenshot capture hook — only when served from the local capture server (plain http on
+  // localhost), never from the chrome-extension:// origin the real extension runs under, so it
+  // has zero production impact. The capture script injects fixture data via this global; the
+  // fixture payloads themselves live only in the gitignored dev/screenshots tooling.
+  const isLocalCapture = location.protocol === 'http:'
+    && (location.hostname === 'localhost' || location.hostname === '127.0.0.1');
+  if (isLocalCapture) {
+    globalThis.__pendoValidateApplyFixture = (res, opts = {}) => {
+      if (opts.theme) applyTheme(opts.theme);
+      resetStatusUi();
+      renderValidationResult(res);
+      document.documentElement.dataset.screenshotReady = 'true';
+    };
+  }
 }
 
 if (document.readyState === 'loading') {
