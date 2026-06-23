@@ -15,27 +15,46 @@ describe('manifest permissions', () => {
 })
 
 describe('manifest web_accessible_resources', () => {
-  it('exposes every runtime asset the overlay iframe loads', () => {
-    const resources = manifest.web_accessible_resources[0].resources
+  const resources = manifest.web_accessible_resources[0].resources
+
+  it('exposes the overlay iframe document and the sub-resources it loads from the extension origin', () => {
     expect(resources).toEqual(
       expect.arrayContaining([
         'popup.html',
         'popup.css',
         'popup.js',
-        'theme-init.js',
-        'pendo-kb.js',
-        'pendo-loader.js',
-        'vendor/pendo.js',
-        // Fetched via runtime.getURL() from the panel context (CDP evaluate + AI prompt enrichment).
         'capture-inspect.js',
         'enable-debugging.js',
+        'theme-init.js',
+        'pendo-kb.js',
         'pendo-install-quality.md',
+        'pendo-loader.js',
+        'vendor/pendo.js',
+        'fonts/*.woff2',
       ]),
     )
+  })
+
+  it('does not expose the toolbar icon, which the browser loads from manifest.icons (not web pages)', () => {
+    expect(resources).not.toContain('icons/*.png')
   })
 })
 describe('manifest version', () => {
   it('version matches the current release', () => {
-    expect(manifest.version).toBe('1.8.3')
+    expect(manifest.version).toBe('1.8.4')
+  })
+})
+
+describe('manifest branding', () => {
+  it('uses the customer-facing extension name', () => {
+    expect(manifest.name).toBe('Pendo Install Validator')
+  })
+
+  it('exposes a short_name for cramped browser UI surfaces', () => {
+    expect(manifest.short_name).toBe('Pendo Validator')
+  })
+
+  it('sets the toolbar action tooltip', () => {
+    expect(manifest.action.default_title).toBe('Validate Pendo install')
   })
 })

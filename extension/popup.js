@@ -1,22 +1,24 @@
 /**
- * Pendo Validate — popup script.
+ * Pendo Install Validator — popup script.
  * Runs validation in the active tab (or Pendo Launcher fallback), shows status/advice/logs,
  * and supports export/copy. Render layer is grouped (status hero, quick stats, check groups,
  * identity/metadata cards, logs filter, page snapshot, export menu, toast).
  */
 
 // Firefox embeds popup.html as a web_accessible_resource iframe where tabs/scripting
-// are unavailable; route privileged calls through the background script (chrome.runtime works).
+// are unavailable; route privileged calls through the background script. Firefox exposes
+// both namespaces, but only browser.* is promise-based (chrome.* is callback-based there and
+// resolves to undefined when awaited), so prefer browser.* wherever we await a result.
 const _chromeApi = typeof chrome !== 'undefined' ? chrome : null;
 const _browserApi = typeof browser !== 'undefined' ? browser : null;
 
 function _extRuntime() {
-  return _chromeApi?.runtime || _browserApi?.runtime || null;
+  return _browserApi?.runtime ?? _chromeApi?.runtime ?? null;
 }
 
 function _localPrivilegedApi() {
-  if (_chromeApi?.tabs?.query && _chromeApi?.scripting?.executeScript) return _chromeApi;
   if (_browserApi?.tabs?.query && _browserApi?.scripting?.executeScript) return _browserApi;
+  if (_chromeApi?.tabs?.query && _chromeApi?.scripting?.executeScript) return _chromeApi;
   return null;
 }
 
@@ -31,9 +33,21 @@ function _hasLocalScriptingApi() {
 }
 
 async function sendExtMessage(message) {
-  const runtime = _extRuntime();
-  if (!runtime?.sendMessage) throw new Error('Extension messaging unavailable');
-  return runtime.sendMessage(message);
+  // Prefer the promise-based browser.runtime (Firefox). Otherwise promisify the
+  // chrome.runtime callback form, which Chromium MV3 also supports — awaiting
+  // chrome.runtime.sendMessage directly on Firefox yields undefined, not the response.
+  const browserRuntime = _browserApi?.runtime;
+  if (browserRuntime?.sendMessage) return browserRuntime.sendMessage(message);
+
+  const chromeRuntime = _chromeApi?.runtime;
+  if (!chromeRuntime?.sendMessage) throw new Error('Extension messaging unavailable');
+  return new Promise((resolve, reject) => {
+    chromeRuntime.sendMessage(message, (response) => {
+      const err = chromeRuntime.lastError;
+      if (err) reject(new Error(err.message));
+      else resolve(response);
+    });
+  });
 }
 
 async function tabsQuery(queryInfo) {
@@ -43,55 +57,77 @@ async function tabsQuery(queryInfo) {
   return res.tabs;
 }
 
-async function injectScriptFileAndRun(api, { target, world, file, func, args }) {
+async function injectScriptFileAndRun(api, { target, world, file, func, args, invokeOnly }) {
   // Firefox forbids func/args on the same executeScript call as files — inject, then invoke.
-  await api.scripting.executeScript({ target, world, files: [file] });
+  // invokeOnly skips the (idempotent) file step when the injected global already exists in
+  // this world — e.g. a repeat validation on the same tab — so the file isn't re-parsed.
+  if (!invokeOnly) await api.scripting.executeScript({ target, world, files: [file] });
   return api.scripting.executeScript({ target, world, func, args });
 }
+
+// File + invoke wrapper per injected script. Keep func bodies trivial: they only forward to
+// the global the file defines (so the heavy logic lives in one place — the .js file).
+const _INJECTED_SCRIPTS = {
+  // revision must match PENDO_VALIDATE_CAPTURE_INSPECT_REVISION in capture-inspect.js
+  'capture-inspect': { file: 'capture-inspect.js', revision: 2, func: (variant) => globalThis.__pendoValidateCaptureAndInspect(variant) },
+  'enable-debugging': { file: 'enable-debugging.js', func: () => globalThis.__pendoValidateEnableDebugging() },
+};
+
+function _isStaleCombinedCaptureResult(result, injectedScript, args) {
+  if (injectedScript !== 'capture-inspect' || args[0] !== 'combined') return false;
+  const status = result?.status;
+  if (!status || typeof status !== 'object') return false;
+  return !('snippetGlobalPresent' in status) || !('launcherGlobalPresent' in status);
+}
+
+// MAIN worlds known to already hold the injected global this panel session, keyed by
+// `${tabId}:${injectedScript}:${world}`. Repeat runs invoke directly; a navigation resets
+// the world, so the invoke-only attempt self-heals by falling back to a full re-injection.
+const _injectedWorlds = new Set();
 
 async function executeScript(details) {
   const target = details.target;
   const world = details.world || 'MAIN';
-  const args = details.args || [];
+  const spec = _INJECTED_SCRIPTS[details.injectedScript];
 
-  if (details.injectedScript === 'capture-inspect') {
-    const run = (api) => injectScriptFileAndRun(api, {
-      target,
-      world,
-      file: 'capture-inspect.js',
-      func: (variant) => globalThis.__pendoValidateCaptureAndInspect(variant),
-      args,
-    });
-    if (_hasLocalScriptingApi()) return run(_localPrivilegedApi());
-    const res = await sendExtMessage({
-      type: 'pendo-validate-execute-script',
-      injectedScript: 'capture-inspect',
-      target,
-      world,
-      args,
-    });
-    if (!res?.ok) throw new Error(res?.error || 'executeScript failed');
-    return res.results;
-  }
+  if (spec) {
+    const args = details.injectedScript === 'capture-inspect' ? (details.args || []) : [];
 
-  if (details.injectedScript === 'enable-debugging') {
-    const run = (api) => injectScriptFileAndRun(api, {
-      target,
-      world,
-      file: 'enable-debugging.js',
-      func: () => globalThis.__pendoValidateEnableDebugging(),
-      args: [],
-    });
-    if (_hasLocalScriptingApi()) return run(_localPrivilegedApi());
-    const res = await sendExtMessage({
-      type: 'pendo-validate-execute-script',
-      injectedScript: 'enable-debugging',
-      target,
-      world,
-      args: [],
-    });
-    if (!res?.ok) throw new Error(res?.error || 'executeScript failed');
-    return res.results;
+    const runOnce = async (invokeOnly) => {
+      if (_hasLocalScriptingApi()) {
+        return injectScriptFileAndRun(_localPrivilegedApi(), { target, world, file: spec.file, func: spec.func, args, invokeOnly });
+      }
+      const res = await sendExtMessage({
+        type: 'pendo-validate-execute-script',
+        injectedScript: details.injectedScript,
+        target,
+        world,
+        args,
+        invokeOnly,
+      });
+      if (!res?.ok) throw new Error(res?.error || 'executeScript failed');
+      return res.results;
+    };
+
+    const revision = spec.revision ?? 0;
+    const key = `${target?.tabId}:${details.injectedScript}:${world}:${revision}`;
+    if (_injectedWorlds.has(key)) {
+      try {
+        const results = await runOnce(true);
+        if (results && results[0] && results[0].result !== undefined) {
+          if (_isStaleCombinedCaptureResult(results[0].result, details.injectedScript, args)) {
+            _injectedWorlds.delete(key);
+          } else {
+            return results;
+          }
+        }
+      } catch {
+        // World was reset (navigation) or the global went missing — re-inject below.
+      }
+    }
+    const results = await runOnce(false);
+    _injectedWorlds.add(key);
+    return results;
   }
 
   if (_hasLocalScriptingApi()) return _localPrivilegedApi().scripting.executeScript(details);
@@ -637,7 +673,7 @@ function buildMarkdownReport(context) {
   else if (effectiveOrigin === 'launcher-beta') statusLine += ' (via Pendo Launcher Beta)';
 
   const lines = [];
-  lines.push(`# Pendo Validate Report`);
+  lines.push(`# Pendo Install Validator Report`);
   lines.push("");
   lines.push(`Share this file with support or use the links below for official Pendo guidance.`);
   lines.push("");
@@ -752,7 +788,7 @@ function buildPlainSummary(context) {
   else if (warnCount > 0) statusLine = 'Warnings found';
 
   const lines = [];
-  lines.push(`Pendo Validate — ${statusLine}`);
+  lines.push(`Pendo Install Validator — ${statusLine}`);
   lines.push(`Page: ${pageUrl || 'unknown'}`);
   lines.push(`Timestamp: ${timestamp}`);
   lines.push(`Validated in: ${validatedIn || 'page'}`);
@@ -784,13 +820,20 @@ function downloadBlob(filename, mime, text) {
 }
 
 // ========== Pendo debugger / VDS (run in page via executeScript) ==========
+// Extension script files are static at runtime; cache their text so repeated CDP runs and
+// the Debugger button don't re-fetch the same file.
+const _scriptTextCache = new Map();
 /** Load an extension script file as text (for CDP evaluate expressions). */
 async function loadExtensionScriptText(filename) {
+  const cached = _scriptTextCache.get(filename);
+  if (cached !== undefined) return cached;
   const runtime = _extRuntime();
   if (!runtime?.getURL) throw new Error('Extension runtime unavailable');
   const res = await fetch(runtime.getURL(filename));
   if (!res.ok) throw new Error(`Failed to load ${filename}`);
-  return res.text();
+  const text = await res.text();
+  _scriptTextCache.set(filename, text);
+  return text;
 }
 
 /**
@@ -822,21 +865,28 @@ async function evaluateInLauncherWorld(tabId, launcherId, expression) {
   }
 
   try {
-    const contexts = [];
-    const handler = (source, method, params) => {
-      if (source.tabId === tabId && method === 'Runtime.executionContextCreated') {
-        contexts.push(params.context);
-      }
-    };
-    chrome.debugger.onEvent.addListener(handler);
-    await chrome.debugger.sendCommand(target, 'Runtime.enable');
-    // Brief pause so Runtime.executionContextCreated events populate before we pick the Launcher context.
-    await new Promise(r => setTimeout(r, 60));
-    chrome.debugger.onEvent.removeListener(handler);
-
-    const launcherCtx = contexts.find(ctx =>
-      (ctx.origin || '').toLowerCase() === expectedOrigin
-    );
+    // Resolve as soon as the Launcher's execution context appears (Runtime.enable emits
+    // executionContextCreated for existing contexts). Arm the safety-net timer only after
+    // Runtime.enable settles — otherwise a slow enable can outlive the cap and yield a
+    // false no-launcher-context even when the Launcher world is present.
+    const launcherCtx = await new Promise((resolve, reject) => {
+      let settled = false, timer = null;
+      const cleanup = () => {
+        if (timer) clearTimeout(timer);
+        try { chrome.debugger.onEvent.removeListener(handler); } catch {}
+      };
+      const finish = (ctx) => { if (!settled) { settled = true; cleanup(); resolve(ctx || null); } };
+      const fail = (err) => { if (!settled) { settled = true; cleanup(); reject(err); } };
+      const handler = (source, method, params) => {
+        if (source.tabId !== tabId || method !== 'Runtime.executionContextCreated') return;
+        const ctx = params.context;
+        if ((ctx.origin || '').toLowerCase() === expectedOrigin) finish(ctx);
+      };
+      chrome.debugger.onEvent.addListener(handler);
+      chrome.debugger.sendCommand(target, 'Runtime.enable')
+        .then(() => { if (!settled) timer = setTimeout(() => finish(null), 250); })
+        .catch(fail);
+    });
     if (!launcherCtx) return { ok: false, reason: 'no-launcher-context' };
 
     const evalResult = await chrome.debugger.sendCommand(target, 'Runtime.evaluate', {
@@ -879,10 +929,12 @@ async function enableDebuggingViaLauncherCdp(tabId, launcher) {
 
 // ========== Page validation: inject and run in tab ==========
 /**
- * Three-phase validation:
- *   1. Run in active tab — checks window.pendo (standard snippet).
- *   1.5. If no snippet, re-run in same tab — checks window.Pendo (Launcher-injected agent).
- *   2. If still absent, search other open tabs for a web-based Pendo Launcher window and run there.
+ * Validation phases:
+ *   1 + 1.5. One MAIN-world injection (variant 'combined') detects the snippet (window.pendo)
+ *            and the Launcher-injected agent (window.Pendo) and runs validateInstall() once
+ *            on the primary agent — no second full pass on snippet-only pages.
+ *   1.75.    If neither is present and the Launcher extension is installed, run validation in
+ *            the Launcher's content-script world via CDP.
  * Returns: pageUrl (always the active tab URL), snippetOnPage, launcherPresent, launcherAttempted, validatedIn, launcherUrl (optional), plus status/captured/advice/checks.
  */
 async function runInPage() {
@@ -911,38 +963,25 @@ async function runInPage() {
 
   const [tab] = await tabsQuery({ active: true, currentWindow: true });
   if (!tab || !tab.id) throw new Error('No active tab found.');
+
+  // Phase 1 + 1.5 combined: a single MAIN-world injection detects both the snippet
+  // (window.pendo) and the Launcher-injected agent (window.Pendo) and runs
+  // validateInstall() once on the primary agent — avoiding a second full pass.
   const [{ result: pageResult }] = await executeScript({
     target: { tabId: tab.id },
     world: 'MAIN',
     injectedScript: 'capture-inspect',
-    args: ['page']
+    args: ['combined']
   });
 
   const basePageUrl = tab && tab.url ? tab.url : 'unknown';
   if (pageResult) { appendQualityAdviceToResult(pageResult, basePageUrl); appendConfigFlagsAdviceToResult(pageResult); }
 
-  const snippetOnPage = !!(pageResult && pageResult.status && pageResult.status.pendoPresent);
-
-  // Phase 1.5: Always check for the Launcher in the same tab. Launcher and snippet can coexist.
-  let launcherInPageResult = null;
-  try {
-    const [{ result: p15result }] = await executeScript({
-      target: { tabId: tab.id },
-      world: 'MAIN',
-      injectedScript: 'capture-inspect',
-      args: ['launcher']
-    });
-    if (p15result) { appendQualityAdviceToResult(p15result, basePageUrl); appendConfigFlagsAdviceToResult(p15result); }
-    if (p15result && p15result.status && p15result.status.pendoPresent) {
-      // With a snippet present, only window.Pendo (capital P) counts as a Launcher detection — avoids double-counting the snippet's own window.pendo.
-      if (!snippetOnPage || p15result.status.pendoGlobal === 'Pendo') {
-        launcherInPageResult = p15result;
-      }
-    }
-  } catch (e) {
-    console.warn('Phase 1.5 launcher-in-page check failed:', e);
-  }
-  const launcherInPage = launcherInPageResult !== null;
+  const pageStatus = (pageResult && pageResult.status) || {};
+  const snippetOnPage = !!pageStatus.snippetGlobalPresent;
+  // Only window.Pendo (capital P) counts as a Launcher detection; the snippet's own
+  // window.pendo is reported separately via snippetGlobalPresent.
+  const launcherInPage = !!pageStatus.launcherGlobalPresent;
 
   if (snippetOnPage) {
     return {
@@ -958,11 +997,11 @@ async function runInPage() {
   }
 
   if (launcherInPage) {
-    const lStatus = launcherInPageResult.status;
+    const lStatus = pageResult.status;
     // "Launcher validated" = the agent ran validateInstall and returned at least visitor identity or metadata on this tab.
     const launcherDataValidated = !!(lStatus.pendoPresent && lStatus.validatePresent && (lStatus.visitorId || lStatus.visitorMetadata));
     return {
-      ...launcherInPageResult,
+      ...pageResult,
       pageUrl: basePageUrl,
       snippetOnPage: false,
       launcherAttempted: true,
@@ -1300,7 +1339,7 @@ async function requestAiAdvice(context) {
       let bg;
       try {
         // Route Claude requests through the background service worker to avoid extension-page fetch/CORS limits.
-        bg = await chrome.runtime.sendMessage({
+        bg = await sendExtMessage({
           type: 'pendo-validate-ai-fetch',
           endpoint,
           headers,
@@ -1502,6 +1541,7 @@ function initPopup() {
   // ── State ───────────────────────────────────────────────────────────────
   let lastContext = null;
   let runState = 'idle'; // 'idle' | 'running' | 'done'
+  let validationSeq = 0; // incremented per Validate click; stale AI callbacks compare before mutating UI
   let logFilters = { error: true, warn: true, info: true };
   let logQuery = '';
   let toastTimer = null;
@@ -1979,9 +2019,21 @@ function initPopup() {
   /** Render the logs list using the current filter + query state. */
   function renderLogs() {
     const captured = (lastContext && lastContext.captured) || [];
-    const errCount = captured.filter(l => l.level === 'error').length;
-    const warnCount = captured.filter(l => l.level === 'warn').length;
-    const infoCount = captured.filter(l => l.level === 'info' || l.level === 'log').length;
+    const q = (logQuery || '').toLowerCase();
+
+    // Single pass: tally per-level counts and collect the visible lines together.
+    let errCount = 0, warnCount = 0, infoCount = 0;
+    const visible = [];
+    for (const l of captured) {
+      const lev = l.level === 'error' ? 'error' : l.level === 'warn' ? 'warn' : 'info';
+      if (lev === 'error') errCount++; else if (lev === 'warn') warnCount++; else infoCount++;
+      if (lev === 'error' && !logFilters.error) continue;
+      if (lev === 'warn' && !logFilters.warn) continue;
+      if (lev === 'info' && !logFilters.info) continue;
+      if (q && !(l.text || '').toLowerCase().includes(q)) continue;
+      visible.push(l);
+    }
+
     logCountErr.textContent = String(errCount);
     logCountWarn.textContent = String(warnCount);
     logCountInfo.textContent = String(infoCount);
@@ -1989,16 +2041,6 @@ function initPopup() {
     logFilterErr.setAttribute('aria-pressed', logFilters.error ? 'true' : 'false');
     logFilterWarn.setAttribute('aria-pressed', logFilters.warn ? 'true' : 'false');
     logFilterInfo.setAttribute('aria-pressed', logFilters.info ? 'true' : 'false');
-
-    const q = (logQuery || '').toLowerCase();
-    const visible = captured.filter(l => {
-      const lev = l.level === 'error' ? 'error' : l.level === 'warn' ? 'warn' : 'info';
-      if (lev === 'error' && !logFilters.error) return false;
-      if (lev === 'warn' && !logFilters.warn) return false;
-      if (lev === 'info' && !logFilters.info) return false;
-      if (q && !(l.text || '').toLowerCase().includes(q)) return false;
-      return true;
-    });
 
     logsListEl.replaceChildren();
     if (!captured.length) {
@@ -2054,7 +2096,13 @@ function initPopup() {
   logFilterErr.addEventListener('click', () => toggleFilter('error'));
   logFilterWarn.addEventListener('click', () => toggleFilter('warn'));
   logFilterInfo.addEventListener('click', () => toggleFilter('info'));
-  logsSearch.addEventListener('input', (e) => { logQuery = e.target.value; renderLogs(); });
+  // Debounce search: avoid rebuilding the whole log list on every keystroke for large output.
+  let logSearchTimer = null;
+  logsSearch.addEventListener('input', (e) => {
+    const value = e.target.value;
+    if (logSearchTimer) clearTimeout(logSearchTimer);
+    logSearchTimer = setTimeout(() => { logQuery = value; renderLogs(); }, 150);
+  });
 
   // ── Toast ────────────────────────────────────────────────────────────────
   function showToast(message) {
@@ -2133,6 +2181,7 @@ function initPopup() {
   }
 
   runBtn?.addEventListener('click', async () => {
+    const runId = ++validationSeq;
     activateTab('status');
     runState = 'running';
     setRunningVisual(true);
@@ -2143,9 +2192,13 @@ function initPopup() {
     try {
       const res = await runInPage();
       if (!res || !res.status) {
-        setStatusHero({ state: 'err', title: 'Failed', sub: 'Validation did not return a result.' });
+        if (runId === validationSeq) {
+          setStatusHero({ state: 'err', title: 'Failed', sub: 'Validation did not return a result.' });
+        }
         return;
       }
+
+      if (runId !== validationSeq) return;
 
       const { status, captured, advice, checks, cspMeta, apiKeyFound, hasError, hasWarn, origin, pageUrl, snippetOnPage, launcherPresent, launcherAttempted, launcherDataValidated, validatedIn } = res;
 
@@ -2225,9 +2278,14 @@ function initPopup() {
 
       const failureDetected = !status.validatePresent || hasError || hasWarn;
       if (failureDetected) {
+        // Core results are already rendered; end the running spinner before the (possibly
+        // slow) AI request so the button returns to idle instead of spinning up to timeoutMs.
+        runState = 'done';
+        setRunningVisual(false);
         const aiContext = Object.assign({}, lastContext);
         if (qualityGuideCache) aiContext._qualityGuide = qualityGuideCache;
         const aiAdvice = await requestAiAdvice(aiContext);
+        if (runId !== validationSeq) return;
         if (aiAdvice && aiAdvice.length) {
           adviceList = adviceList.concat(aiAdvice);
           lastContext.advice = adviceList;
@@ -2243,10 +2301,14 @@ function initPopup() {
       }
     } catch (e) {
       console.error(e);
-      setStatusHero({ state: 'err', title: 'Validation failed', sub: (e && e.message) || 'Unknown error.' });
+      if (runId === validationSeq) {
+        setStatusHero({ state: 'err', title: 'Validation failed', sub: (e && e.message) || 'Unknown error.' });
+      }
     } finally {
-      runState = 'done';
-      setRunningVisual(false);
+      if (runId === validationSeq) {
+        runState = 'done';
+        setRunningVisual(false);
+      }
     }
   });
 
@@ -2305,7 +2367,7 @@ function initPopup() {
     try {
       const md = buildMarkdownReport(lastContext);
       const host = (() => { try { return (new URL(lastContext.pageUrl)).host; } catch { return 'page'; } })().replace(/[^a-z0-9\.-]/gi, '_');
-      const fname = `pendo-validate-report_${host}_${Date.now()}.md`;
+      const fname = `pendo-install-validator-report_${host}_${Date.now()}.md`;
       downloadBlob(fname, 'text/markdown', md);
       showToast('Markdown report downloaded');
     } catch (e) { console.error(e); showToast('Export failed'); }

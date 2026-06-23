@@ -265,6 +265,27 @@ describe('background.js — Firefox privileged-API bridge', () => {
     expect(sendResponse).toHaveBeenCalledWith({ ok: true, results })
   })
 
+  it('pendo-validate-execute-script with invokeOnly skips the file injection and only invokes', async () => {
+    const results = [{ result: { status: { pendoPresent: true } } }]
+    chrome.scripting.executeScript.mockResolvedValue(results)
+
+    const sendResponse = vi.fn()
+    const target = { tabId: 7 }
+    handler(
+      { type: 'pendo-validate-execute-script', injectedScript: 'capture-inspect', target, world: 'MAIN', args: ['combined'], invokeOnly: true },
+      sender,
+      sendResponse,
+    )
+
+    await vi.waitFor(() => expect(sendResponse).toHaveBeenCalled())
+    expect(chrome.scripting.executeScript).toHaveBeenCalledTimes(1)
+    const onlyCall = chrome.scripting.executeScript.mock.calls[0][0]
+    expect(onlyCall.files).toBeUndefined()
+    expect(typeof onlyCall.func).toBe('function')
+    expect(onlyCall.args).toEqual(['combined'])
+    expect(sendResponse).toHaveBeenCalledWith({ ok: true, results })
+  })
+
   it('pendo-validate-execute-script rejects an unknown injectedScript', async () => {
     const sendResponse = vi.fn()
     handler({ type: 'pendo-validate-execute-script', injectedScript: 'bogus', target: { tabId: 1 } }, sender, sendResponse)

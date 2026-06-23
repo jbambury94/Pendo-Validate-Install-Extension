@@ -22,9 +22,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === 'pendo-validate-execute-script') {
     (async () => {
       try {
-        const { target, world = 'MAIN', args = [], injectedScript } = message;
+        const { target, world = 'MAIN', args = [], injectedScript, invokeOnly = false } = message;
+        // invokeOnly skips the (idempotent) file injection when the panel already saw the
+        // global defined in this world, so the file isn't re-parsed on repeat runs.
         if (injectedScript === 'capture-inspect') {
-          await chrome.scripting.executeScript({ target, world, files: ['capture-inspect.js'] });
+          if (!invokeOnly) await chrome.scripting.executeScript({ target, world, files: ['capture-inspect.js'] });
           const results = await chrome.scripting.executeScript({
             target,
             world,
@@ -33,7 +35,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           });
           sendResponse({ ok: true, results });
         } else if (injectedScript === 'enable-debugging') {
-          await chrome.scripting.executeScript({ target, world, files: ['enable-debugging.js'] });
+          if (!invokeOnly) await chrome.scripting.executeScript({ target, world, files: ['enable-debugging.js'] });
           const results = await chrome.scripting.executeScript({
             target,
             world,

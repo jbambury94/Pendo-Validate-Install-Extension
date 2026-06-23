@@ -1,6 +1,7 @@
-/** Injected into page MAIN world via scripting.executeScript. Keep in sync with tests/helpers.js captureAndInspect. Idempotent on re-injection (Phase 1 + 1.5 share the same MAIN world). */
-if (typeof globalThis.__pendoValidateCaptureAndInspect !== 'function') {
-function captureAndInspect(variant = 'page') {
+/** Injected into page MAIN world via scripting.executeScript. This file is the single source of truth for captureAndInspect — tests/helpers.js loads and runs it directly (via vm) rather than mirroring it. Re-assigns when revision changes so upgrades/re-injection replace a stale page global. Assigned as a function expression (not a top-level declaration) so it never creates a page-global `captureAndInspect` binding that could collide with the host page. Keep revision (2) in sync with popup.js _INJECTED_SCRIPTS['capture-inspect'].revision. */
+if (globalThis.__pendoValidateCaptureAndInspectRevision !== 2 || typeof globalThis.__pendoValidateCaptureAndInspect !== 'function') {
+globalThis.__pendoValidateCaptureAndInspectRevision = 2;
+globalThis.__pendoValidateCaptureAndInspect = function captureAndInspect(variant = 'page') {
   const captured = []
   const original = { log: console.log, warn: console.warn, error: console.error, info: console.info }
   function push(level, args) {
@@ -21,9 +22,19 @@ function captureAndInspect(variant = 'page') {
   console.error = (...a) => { push('error', a); original.error(...a) }
   console.info  = (...a) => { push('info',  a); original.info(...a) }
 
+  const snippetGlobalPresent = !!(typeof window !== 'undefined' && window.pendo)
+  const launcherGlobalPresent = !!(typeof window !== 'undefined' && window.Pendo)
+
   const isLauncher = variant === 'launcher' || variant === 'launcher-beta'
   let agent, pendoGlobal
-  if (isLauncher) {
+  if (variant === 'combined') {
+    // Single-injection detection: the snippet (window.pendo) is the primary agent when
+    // present, otherwise the Launcher-injected window.Pendo. validateInstall() then runs
+    // once instead of once per phase, while both globals are still reported via status.
+    if (snippetGlobalPresent) { agent = window.pendo; pendoGlobal = 'pendo' }
+    else if (launcherGlobalPresent) { agent = window.Pendo; pendoGlobal = 'Pendo' }
+    else { agent = null; pendoGlobal = null }
+  } else if (isLauncher) {
     if (window && window.Pendo) { agent = window.Pendo; pendoGlobal = 'Pendo' }
     else if (window && window.pendo) { agent = window.pendo; pendoGlobal = 'pendo' }
     else { agent = null; pendoGlobal = null }
@@ -31,11 +42,16 @@ function captureAndInspect(variant = 'page') {
     agent = (window && window.pendo) || null
     pendoGlobal = agent ? 'pendo' : null
   }
+  // When the combined pass validates the Launcher (no snippet on the page), treat it like
+  // the dedicated launcher variant for messaging/warnings.
+  const launcherPrimary = variant === 'combined' && pendoGlobal === 'Pendo'
   const validateFn = (agent && agent.validateInstall) || null
 
   const status = {
     pendoPresent: !!agent,
     pendoGlobal,
+    snippetGlobalPresent,
+    launcherGlobalPresent,
     validatePresent: typeof validateFn === 'function',
     version: null,
     detectedApiKey: null,
@@ -161,7 +177,10 @@ function captureAndInspect(variant = 'page') {
     try {
       const scripts = Array.from(document.scripts || [])
       for (const s of scripts) {
-        if (s.src || !s.textContent || !/pendo\s*\.\s*initialize\s*\(/.test(s.textContent)) continue
+        // indexOf('pendo') is a cheap necessary condition for the regex below — skip the
+        // full-text regex scan on inline bundles that can't contain pendo.initialize.
+        if (s.src || !s.textContent || s.textContent.indexOf('pendo') === -1) continue
+        if (!/pendo\s*\.\s*initialize\s*\(/.test(s.textContent)) continue
         const keys = extractInitConfigKeys(s.textContent)
         if (keys && keys.length) { status.configKeys = keys; status.configSource = 'inline-script'; break }
       }
@@ -172,6 +191,9 @@ function captureAndInspect(variant = 'page') {
     const res = performance.getEntriesByType('resource') || []
     res.forEach(r => {
       const name = r.name || ""
+      // Cheap necessary-condition pre-filter so the regexes below run only for the few
+      // entries that could be Pendo resources, not every asset on long-lived tabs.
+      if (name.indexOf('pendo') === -1 && name.indexOf('agent/static') === -1 && name.indexOf('agent/production') === -1) return
       if (/pendo(io)?\.com|pendo\.io|cdn\.pendo|pendo-io/.test(name) || /agent\/(static|production)/.test(name)) {
         status.resourceHits.push({ name, initiatorType: r.initiatorType || "unknown" })
         if (!status.detectedApiKey) {
@@ -195,7 +217,7 @@ function captureAndInspect(variant = 'page') {
       } catch (e) {
         captured.push({ level: 'error', text: e && e.message ? e.message : String(e) })
       }
-    } else if (isLauncher) {
+    } else if (isLauncher || launcherPrimary) {
       captured.push({ level: 'warn', text: 'Pendo Launcher found but validateInstall() is unavailable.' })
     }
   } catch (e) {
@@ -340,11 +362,25 @@ function captureAndInspect(variant = 'page') {
         urlSan.observedStrips = (window.__pendoValidateUrlStrips || []).length
       } catch {}
       try {
-        const scripts = Array.from(document.scripts || [])
-        urlSan.externalScripts = scripts.filter(s => s.src).length
-        const inlineScripts = scripts.filter(s => !s.src && s.textContent)
-        urlSan.inlineScripts = inlineScripts.length
-        const src = inlineScripts.map(s => s.textContent).join('\n')
+        // Single walk: count external/inline scripts and build a capped scan corpus so a
+        // huge inline bundle can't make the pattern regexes O(total inline bytes).
+        const MAX_PER_SCRIPT = 16384
+        const MAX_TOTAL = 262144
+        let externalScripts = 0, inlineScripts = 0, totalScanned = 0
+        const parts = []
+        for (const s of Array.from(document.scripts || [])) {
+          if (s.src) { externalScripts++; continue }
+          const text = s.textContent
+          if (!text) continue
+          inlineScripts++
+          if (totalScanned >= MAX_TOTAL) continue
+          const slice = text.length > MAX_PER_SCRIPT ? text.slice(0, MAX_PER_SCRIPT) : text
+          parts.push(slice)
+          totalScanned += slice.length
+        }
+        urlSan.externalScripts = externalScripts
+        urlSan.inlineScripts = inlineScripts
+        const src = parts.join('\n')
         const patterns = [
           { name: 'replaceState/pushState to pathname', re: /\.(?:replace|push)State\((?![^;)]*\.search)[^;)]*location\.pathname/ },
           { name: 'location.search cleared',            re: /location\.search\s*=\s*(['"`])\1/ },
@@ -397,14 +433,12 @@ function captureAndInspect(variant = 'page') {
   if (advice.length === 0 && checks.length > 0) checks.push("Installation looks healthy based on current checks.")
   else if (advice.length === 0) advice.push({ text: "Review the output below and compare with a known-good page. Check initialise timing and data mapping.", source: 'builtin', supportKey: 'spa' })
 
-  if (variant === 'launcher') {
+  if (variant === 'launcher' || launcherPrimary) {
     captured.unshift({ level: 'info', text: 'Validated via Pendo Launcher window.' })
   } else if (variant === 'launcher-beta') {
     captured.unshift({ level: 'info', text: 'Validated via Pendo Launcher (Beta) window.' })
   }
 
   return { status, captured, advice, checks, cspMeta, apiKeyFound, hasError, hasWarn }
-}
-
-void (globalThis.__pendoValidateCaptureAndInspect = captureAndInspect);
+};
 }

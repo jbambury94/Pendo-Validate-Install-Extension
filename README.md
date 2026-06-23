@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="extension/icons/icon128.png" width="96" alt="Pendo Validate Install icon" />
+  <img src="extension/icons/icon128.png" width="96" alt="Pendo Install Validator icon" />
 </p>
 
-<h1 align="center">Pendo Validate Install</h1>
+<h1 align="center">Pendo Install Validator</h1>
 
 <p align="center">
   A browser extension for Chrome, Edge, and Firefox that tells you in one click whether Pendo is installed correctly&nbsp;&mdash; and what to fix if it isn't.
@@ -12,13 +12,13 @@
   <img src="https://img.shields.io/badge/Chrome-MV3-blue" alt="Chrome MV3" />
   <img src="https://img.shields.io/badge/Edge-MV3-blue" alt="Edge MV3" />
   <img src="https://img.shields.io/badge/Firefox-MV3%20(128%2B)-orange" alt="Firefox MV3 (128+)" />
-  <img src="https://img.shields.io/badge/version-1.8.3-FF4876" alt="Version 1.8.3" />
+  <img src="https://img.shields.io/badge/version-1.8.4-FF4876" alt="Version 1.8.4" />
   <img src="https://img.shields.io/badge/AI-OpenAI%20%7C%20Claude%20%7C%20Gemini-lightgrey" alt="AI: OpenAI | Claude | Gemini" />
 </p>
 
 <!-- Mockup — replace with a real Chrome capture when available. See docs/screenshots/README.md -->
 <p align="center">
-  <img src="docs/screenshots/hero.png" width="800" alt="Pendo Validate Install floating panel on a web page" />
+  <img src="docs/screenshots/hero.png" width="800" alt="Pendo Install Validator floating panel on a web page" />
 </p>
 
 ---
@@ -114,5 +114,5 @@ Your key is stored locally in `chrome.storage.local` and is only sent when valid
 ---
 
 <p align="center">
-  <sub>v1.8.3 &middot; Manifest V3 &middot; Chrome + Edge + Firefox &middot; Built with the Pendo Web SDK</sub>
+  <sub>v1.8.4 &middot; Manifest V3 &middot; Chrome + Edge + Firefox &middot; Built with the Pendo Web SDK</sub>
 </p>
