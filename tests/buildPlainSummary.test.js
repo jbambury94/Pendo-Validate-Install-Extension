@@ -66,6 +66,10 @@ describe('buildPlainSummary — content', () => {
     expect(text).toContain('2026-05-27T12:00:00.000Z')
   })
 
+  it('prefixes the summary with the Pendo Install Validator name', () => {
+    expect(buildPlainSummary(baseContext)).toContain('Pendo Install Validator —')
+  })
+
   it('includes validatedIn value', () => {
     const ctx = { ...baseContext, validatedIn: 'launcher' }
     expect(buildPlainSummary(ctx)).toContain('Validated in: launcher')

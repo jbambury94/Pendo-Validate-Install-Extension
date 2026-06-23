@@ -89,6 +89,10 @@ describe('buildMarkdownReport — content sections', () => {
     expect(md).toContain('2026-04-27T12:00:00.000Z')
   })
 
+  it('uses the Pendo Install Validator report heading', () => {
+    expect(buildMarkdownReport(baseContext)).toContain('# Pendo Install Validator Report')
+  })
+
   it('includes Validated in URL line for launcher variant', () => {
     const ctx = { ...baseContext, validatedIn: 'launcher', launcherUrl: 'https://launcher.example.com', launcherAttempted: true }
     expect(buildMarkdownReport(ctx)).toContain('https://launcher.example.com')

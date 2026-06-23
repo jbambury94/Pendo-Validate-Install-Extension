@@ -1,4 +1,4 @@
-# Updating the Pendo Validate Install Extension
+# Updating the Pendo Install Validator Extension
 
 You're here because a notification told you there's a new version available. Unlike Chrome Web Store extensions, this one won't update itself — but it takes about 60 seconds. Here's how.
 
@@ -20,9 +20,11 @@ You're here because a notification told you there's a new version available. Unl
 ### Chrome / Edge
 
 1. Navigate to `chrome://extensions` (Chrome) or `edge://extensions` (Edge)
-2. Find **Pendo Validate Install** in the list
+2. Find **Pendo Install Validator** in the list
 3. Click the **refresh icon** (circular arrow) on the extension card
 4. Done. The updated version is now active
+
+> **Renamed in this release.** The extension is now called **Pendo Install Validator** (formerly *Pendo Validate Install* / *Pendo Validate Install Ext*). It is the same extension on the same card — refreshing it keeps all your settings (AI key, theme, visitor ID) intact.
 
 > If you extracted to a **different folder** than your previous install, click **Remove** on the old extension card first, then click **Load unpacked** and select the `extension/` folder from your newly extracted files.
 

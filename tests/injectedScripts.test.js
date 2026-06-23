@@ -30,6 +30,44 @@ describe('injected extension scripts — MAIN world idempotency', () => {
     expect(typeof context.__pendoValidateCaptureAndInspect).toBe('function')
   })
 
+  it('capture-inspect.js replaces a stale page global when revision changes', () => {
+    const src = readExtensionScript('capture-inspect.js')
+    const context = vm.createContext({ globalThis: {}, window: {}, document: { querySelectorAll: () => [] }, console, performance: { getEntriesByType: () => [] } })
+    context.globalThis = context
+    context.window = context
+
+    // Simulate a pre-revision global left on the page from an older extension build.
+    context.__pendoValidateCaptureAndInspect = () => ({
+      status: { pendoPresent: true, validatePresent: true },
+      captured: [], advice: [], checks: [], cspMeta: '', apiKeyFound: false, hasError: false, hasWarn: false,
+    })
+
+    injectIntoContext(src, context)
+    const result = context.__pendoValidateCaptureAndInspect('combined')
+    expect(result.status.snippetGlobalPresent).toBe(false)
+    expect(result.status.launcherGlobalPresent).toBe(false)
+    expect('snippetGlobalPresent' in result.status).toBe(true)
+    expect('launcherGlobalPresent' in result.status).toBe(true)
+  })
+
+  it('capture-inspect.js restores the function when revision matches but the global was cleared', () => {
+    const src = readExtensionScript('capture-inspect.js')
+    const context = vm.createContext({ globalThis: {}, window: {}, document: { querySelectorAll: () => [] }, console, performance: { getEntriesByType: () => [] } })
+    context.globalThis = context
+    context.window = context
+
+    injectIntoContext(src, context)
+    expect(typeof context.__pendoValidateCaptureAndInspect).toBe('function')
+
+    // Revision marker survives but the callable was removed (e.g. page script deleted it).
+    vm.runInContext('delete globalThis.__pendoValidateCaptureAndInspect', context)
+
+    expect(() => injectIntoContext(src, context)).not.toThrow()
+    expect(typeof context.__pendoValidateCaptureAndInspect).toBe('function')
+    const result = context.__pendoValidateCaptureAndInspect('combined')
+    expect('snippetGlobalPresent' in result.status).toBe(true)
+  })
+
   it('enable-debugging.js can be injected twice without redeclaration', () => {
     const src = readExtensionScript('enable-debugging.js')
     const context = vm.createContext({ globalThis: {} })

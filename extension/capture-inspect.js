@@ -1,5 +1,6 @@
-/** Injected into page MAIN world via scripting.executeScript. This file is the single source of truth for captureAndInspect — tests/helpers.js loads and runs it directly (via vm) rather than mirroring it. Idempotent on re-injection (Phase 1 + 1.5 share the same MAIN world). Assigned as a function expression (not a top-level declaration) so it never creates a page-global `captureAndInspect` binding that could collide with the host page. */
-if (typeof globalThis.__pendoValidateCaptureAndInspect !== 'function') {
+/** Injected into page MAIN world via scripting.executeScript. This file is the single source of truth for captureAndInspect — tests/helpers.js loads and runs it directly (via vm) rather than mirroring it. Re-assigns when revision changes so upgrades/re-injection replace a stale page global. Assigned as a function expression (not a top-level declaration) so it never creates a page-global `captureAndInspect` binding that could collide with the host page. Keep revision (2) in sync with popup.js _INJECTED_SCRIPTS['capture-inspect'].revision. */
+if (globalThis.__pendoValidateCaptureAndInspectRevision !== 2 || typeof globalThis.__pendoValidateCaptureAndInspect !== 'function') {
+globalThis.__pendoValidateCaptureAndInspectRevision = 2;
 globalThis.__pendoValidateCaptureAndInspect = function captureAndInspect(variant = 'page') {
   const captured = []
   const original = { log: console.log, warn: console.warn, error: console.error, info: console.info }

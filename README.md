@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="extension/icons/icon128.png" width="96" alt="Pendo Validate Install icon" />
+  <img src="extension/icons/icon128.png" width="96" alt="Pendo Install Validator icon" />
 </p>
 
-<h1 align="center">Pendo Validate Install</h1>
+<h1 align="center">Pendo Install Validator</h1>
 
 <p align="center">
   A browser extension for Chrome, Edge, and Firefox that tells you in one click whether Pendo is installed correctly&nbsp;&mdash; and what to fix if it isn't.
@@ -18,7 +18,7 @@
 
 <!-- Mockup — replace with a real Chrome capture when available. See docs/screenshots/README.md -->
 <p align="center">
-  <img src="docs/screenshots/hero.png" width="800" alt="Pendo Validate Install floating panel on a web page" />
+  <img src="docs/screenshots/hero.png" width="800" alt="Pendo Install Validator floating panel on a web page" />
 </p>
 
 ---

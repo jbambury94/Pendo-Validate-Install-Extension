@@ -234,7 +234,7 @@ export function buildMarkdownReport(context, selectRelatedReadingFn) {
   else if (effectiveOrigin === 'launcher-beta') statusLine += ' (via Pendo Launcher Beta)'
 
   const lines = []
-  lines.push(`# Pendo Validate Report`)
+  lines.push(`# Pendo Install Validator Report`)
   lines.push("")
   lines.push(`Share this file with support or use the links below for official Pendo guidance.`)
   lines.push("")
@@ -350,7 +350,7 @@ export function buildPlainSummary(context) {
   else if (warnCount > 0) statusLine = 'Warnings found'
 
   const lines = []
-  lines.push(`Pendo Validate — ${statusLine}`)
+  lines.push(`Pendo Install Validator — ${statusLine}`)
   lines.push(`Page: ${pageUrl || 'unknown'}`)
   lines.push(`Timestamp: ${timestamp}`)
   lines.push(`Validated in: ${validatedIn || 'page'}`)
@@ -910,8 +910,10 @@ const _captureInspectSrc = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), '..', 'extension', 'capture-inspect.js'),
   'utf8',
 )
+const _CAPTURE_INSPECT_REVISION = 2 // keep in sync with capture-inspect.js
 export function captureAndInspect(variant = 'page') {
-  if (typeof globalThis.__pendoValidateCaptureAndInspect !== 'function') {
+  if (globalThis.__pendoValidateCaptureAndInspectRevision !== _CAPTURE_INSPECT_REVISION
+    || typeof globalThis.__pendoValidateCaptureAndInspect !== 'function') {
     vm.runInThisContext(_captureInspectSrc)
   }
   return globalThis.__pendoValidateCaptureAndInspect(variant)

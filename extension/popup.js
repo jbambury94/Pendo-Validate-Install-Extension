@@ -1,5 +1,5 @@
 /**
- * Pendo Validate — popup script.
+ * Pendo Install Validator — popup script.
  * Runs validation in the active tab (or Pendo Launcher fallback), shows status/advice/logs,
  * and supports export/copy. Render layer is grouped (status hero, quick stats, check groups,
  * identity/metadata cards, logs filter, page snapshot, export menu, toast).
@@ -68,9 +68,17 @@ async function injectScriptFileAndRun(api, { target, world, file, func, args, in
 // File + invoke wrapper per injected script. Keep func bodies trivial: they only forward to
 // the global the file defines (so the heavy logic lives in one place — the .js file).
 const _INJECTED_SCRIPTS = {
-  'capture-inspect': { file: 'capture-inspect.js', func: (variant) => globalThis.__pendoValidateCaptureAndInspect(variant) },
+  // revision must match PENDO_VALIDATE_CAPTURE_INSPECT_REVISION in capture-inspect.js
+  'capture-inspect': { file: 'capture-inspect.js', revision: 2, func: (variant) => globalThis.__pendoValidateCaptureAndInspect(variant) },
   'enable-debugging': { file: 'enable-debugging.js', func: () => globalThis.__pendoValidateEnableDebugging() },
 };
+
+function _isStaleCombinedCaptureResult(result, injectedScript, args) {
+  if (injectedScript !== 'capture-inspect' || args[0] !== 'combined') return false;
+  const status = result?.status;
+  if (!status || typeof status !== 'object') return false;
+  return !('snippetGlobalPresent' in status) || !('launcherGlobalPresent' in status);
+}
 
 // MAIN worlds known to already hold the injected global this panel session, keyed by
 // `${tabId}:${injectedScript}:${world}`. Repeat runs invoke directly; a navigation resets
@@ -101,11 +109,18 @@ async function executeScript(details) {
       return res.results;
     };
 
-    const key = `${target?.tabId}:${details.injectedScript}:${world}`;
+    const revision = spec.revision ?? 0;
+    const key = `${target?.tabId}:${details.injectedScript}:${world}:${revision}`;
     if (_injectedWorlds.has(key)) {
       try {
         const results = await runOnce(true);
-        if (results && results[0] && results[0].result !== undefined) return results;
+        if (results && results[0] && results[0].result !== undefined) {
+          if (_isStaleCombinedCaptureResult(results[0].result, details.injectedScript, args)) {
+            _injectedWorlds.delete(key);
+          } else {
+            return results;
+          }
+        }
       } catch {
         // World was reset (navigation) or the global went missing — re-inject below.
       }
@@ -658,7 +673,7 @@ function buildMarkdownReport(context) {
   else if (effectiveOrigin === 'launcher-beta') statusLine += ' (via Pendo Launcher Beta)';
 
   const lines = [];
-  lines.push(`# Pendo Validate Report`);
+  lines.push(`# Pendo Install Validator Report`);
   lines.push("");
   lines.push(`Share this file with support or use the links below for official Pendo guidance.`);
   lines.push("");
@@ -773,7 +788,7 @@ function buildPlainSummary(context) {
   else if (warnCount > 0) statusLine = 'Warnings found';
 
   const lines = [];
-  lines.push(`Pendo Validate — ${statusLine}`);
+  lines.push(`Pendo Install Validator — ${statusLine}`);
   lines.push(`Page: ${pageUrl || 'unknown'}`);
   lines.push(`Timestamp: ${timestamp}`);
   lines.push(`Validated in: ${validatedIn || 'page'}`);
@@ -2177,9 +2192,13 @@ function initPopup() {
     try {
       const res = await runInPage();
       if (!res || !res.status) {
-        setStatusHero({ state: 'err', title: 'Failed', sub: 'Validation did not return a result.' });
+        if (runId === validationSeq) {
+          setStatusHero({ state: 'err', title: 'Failed', sub: 'Validation did not return a result.' });
+        }
         return;
       }
+
+      if (runId !== validationSeq) return;
 
       const { status, captured, advice, checks, cspMeta, apiKeyFound, hasError, hasWarn, origin, pageUrl, snippetOnPage, launcherPresent, launcherAttempted, launcherDataValidated, validatedIn } = res;
 
@@ -2282,7 +2301,9 @@ function initPopup() {
       }
     } catch (e) {
       console.error(e);
-      setStatusHero({ state: 'err', title: 'Validation failed', sub: (e && e.message) || 'Unknown error.' });
+      if (runId === validationSeq) {
+        setStatusHero({ state: 'err', title: 'Validation failed', sub: (e && e.message) || 'Unknown error.' });
+      }
     } finally {
       if (runId === validationSeq) {
         runState = 'done';
@@ -2346,7 +2367,7 @@ function initPopup() {
     try {
       const md = buildMarkdownReport(lastContext);
       const host = (() => { try { return (new URL(lastContext.pageUrl)).host; } catch { return 'page'; } })().replace(/[^a-z0-9\.-]/gi, '_');
-      const fname = `pendo-validate-report_${host}_${Date.now()}.md`;
+      const fname = `pendo-install-validator-report_${host}_${Date.now()}.md`;
       downloadBlob(fname, 'text/markdown', md);
       showToast('Markdown report downloaded');
     } catch (e) { console.error(e); showToast('Export failed'); }
