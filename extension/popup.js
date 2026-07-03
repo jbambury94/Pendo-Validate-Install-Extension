@@ -1488,6 +1488,8 @@ function initPopup() {
   let logFilters = { error: true, warn: true, info: true };
   let logQuery = '';
   let toastTimer = null;
+  let statusHeroTimeTimer = null;
+  const STATUS_HERO_TIME_INTERVAL_MS = 5_000;
   let qualityGuideCache = null;
 
   // Prefetch quality guide for AI prompt enrichment
@@ -1501,7 +1503,7 @@ function initPopup() {
 
   // Seed hero icon
   setStatusHero({ state: 'idle', title: 'Ready to validate', sub: 'Click Validate Pendo Install to begin.' });
-  renderStatusHeroTime(null);
+  startStatusHeroTimeRefresh(null);
 
   // ── Iframe / overlay wiring: close + drag + resize via postMessage ──────
   const inIframe = window !== window.parent;
@@ -1635,6 +1637,21 @@ function initPopup() {
   }
   function renderStatusHeroTime(date) {
     statusHeroTime.textContent = formatRelative(date);
+  }
+  function stopStatusHeroTimeRefresh() {
+    if (statusHeroTimeTimer) {
+      clearInterval(statusHeroTimeTimer);
+      statusHeroTimeTimer = null;
+    }
+  }
+  function startStatusHeroTimeRefresh(date) {
+    stopStatusHeroTimeRefresh();
+    if (!date) {
+      renderStatusHeroTime(null);
+      return;
+    }
+    renderStatusHeroTime(date);
+    statusHeroTimeTimer = setInterval(() => renderStatusHeroTime(date), STATUS_HERO_TIME_INTERVAL_MS);
   }
 
   /** Update the quick stats row and surface counts on the status/logs tab badges. */
@@ -2136,7 +2153,7 @@ function initPopup() {
     const hero = deriveHeroState(res);
     setStatusHero(hero);
     const now = new Date();
-    renderStatusHeroTime(now);
+    startStatusHeroTimeRefresh(now);
 
     let checksToRender = (checks || []).slice();
     if (validatedIn === 'launcher' || validatedIn === 'launcher-beta') {
@@ -2217,7 +2234,7 @@ function initPopup() {
     setRunningVisual(true);
     resetStatusUi();
     setStatusHero({ state: 'running', title: 'Validating…', sub: 'Running pendo.validateInstall() in the active tab.' });
-    renderStatusHeroTime(null);
+    startStatusHeroTimeRefresh(null);
 
     try {
       const res = await runInPage();

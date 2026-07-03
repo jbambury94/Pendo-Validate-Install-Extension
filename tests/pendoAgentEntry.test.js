@@ -32,4 +32,26 @@ describe('pendo-agent-entry (self-instrumentation)', () => {
   it('exposes the agent as window.pendo for popup.js', () => {
     expect(entrySrc).toMatch(/globalKey:\s*['"]pendo['"]/)
   })
+
+  it('catches initialize failures so telemetry never leaks unhandled rejections', () => {
+    expect(entrySrc).toMatch(/function runStartPendo\(\)/)
+    expect(entrySrc).toMatch(/startPendo\(\)\.catch\(/)
+    expect(entrySrc).toMatch(/runStartPendo\(\)/)
+  })
+})
+
+describe('popup.html Pendo load order', () => {
+  const popupHtml = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), '..', 'extension', 'popup.html'),
+    'utf8',
+  )
+
+  it('does not synchronously load the agent bundle in head', () => {
+    const head = popupHtml.match(/<head>[\s\S]*?<\/head>/i)?.[0] ?? ''
+    expect(head).not.toMatch(/pendo-agent\.bundle\.js/)
+  })
+
+  it('idle-loads the agent bundle after popup.js', () => {
+    expect(popupHtml).toMatch(/<script src="popup\.js"><\/script>[\s\S]*<script src="pendo-agent-loader\.js"><\/script>/)
+  })
 })

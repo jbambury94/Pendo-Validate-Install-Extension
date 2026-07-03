@@ -1,6 +1,6 @@
 {
   "name": "pendo-validate-install-extension",
-  "version": "1.8.4",
+  "version": "1.8.5",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,6 +9,7 @@
     "test:coverage": "vitest run --coverage",
     "build:agent": "node scripts/build-agent.mjs",
     "build:agent:refresh": "node scripts/build-agent.mjs --refresh",
+    "check:agent": "vitest run tests/pendoAgentBundle.test.js",
     "build": "npm run build:agent && node scripts/build.mjs all",
     "build:chrome": "npm run build:agent && node scripts/build.mjs chrome",
     "build:edge": "npm run build:agent && node scripts/build.mjs edge",

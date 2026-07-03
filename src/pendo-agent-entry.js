@@ -55,12 +55,18 @@ async function startPendo() {
   });
 }
 
+function runStartPendo() {
+  startPendo().catch((err) => {
+    console.warn('[Pendo Install Validator] Self-instrumentation failed to initialize:', err);
+  });
+}
+
 // The agent bundle is large; queue init to browser idle so the popup paints first.
 function scheduleStart() {
   if (typeof requestIdleCallback === 'function') {
-    requestIdleCallback(() => { startPendo(); }, { timeout: 2000 });
+    requestIdleCallback(() => { runStartPendo(); }, { timeout: 2000 });
   } else {
-    setTimeout(() => { startPendo(); }, 0);
+    setTimeout(() => { runStartPendo(); }, 0);
   }
 }
 

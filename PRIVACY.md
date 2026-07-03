@@ -1,7 +1,7 @@
 # Privacy Policy — Pendo Install Validator
 
 **Last updated:** 11 June 2026
-**Extension version:** 1.8.4
+**Extension version:** 1.8.5
 
 ---
 
@@ -88,7 +88,7 @@ Because `web_accessible_resources` in the manifest matches `<all_urls>` (require
 ## User controls
 
 - **Clear AI key.** Open Settings, delete the API key field, and click Save.
-- **Disable analytics.** There is currently no in-extension toggle to disable Pendo self-instrumentation. You can block requests to `data.pendo.io` and `app.pendo.io` via a network-level ad blocker or firewall rule.
+- **Disable analytics.** There is currently no in-extension toggle to disable Pendo self-instrumentation. You can block requests to `data.eu.pendo.io` and `app.eu.pendo.io` via a network-level ad blocker or firewall rule.
 - **Uninstall.** Removing the extension from `chrome://extensions` deletes all `chrome.storage.local` data (visitor UUID, theme, AI key) permanently. No residual data remains.
 
 ---

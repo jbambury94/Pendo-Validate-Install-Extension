@@ -4,10 +4,9 @@
     <meta charset="utf-8" />
     <title>Pendo Install Validator</title>
     <!-- Local fonts only: remote Google Fonts added network + render delay on every popup open -->
-    <!-- Head load order: theme-init.js runs synchronously pre-paint (FOUC prevention; external because MV3 CSP blocks inline scripts); then popup.css; the Pendo agent bundle self-defers init to browser idle -->
+    <!-- Head load order: theme-init.js runs synchronously pre-paint (FOUC prevention; external because MV3 CSP blocks inline scripts); then popup.css. The Pendo agent bundle is idle-loaded at end of body via pendo-agent-loader.js -->
     <script src="theme-init.js"></script>
     <link rel="stylesheet" href="popup.css">
-    <script src="vendor/pendo-agent.bundle.js"></script>
   </head>
   <body>
     <!-- IVA panel shell (drag/resize relayed to parent via postMessage in iframe mode) -->
@@ -252,6 +251,8 @@
     <script src="pendo-kb.js"></script>
     <!-- Popup logic: validation, advice, export, copy, render, tabs, drag/resize -->
     <script src="popup.js"></script>
+    <!-- Pendo self-instrumentation: idle-load the agent bundle after the panel is wired -->
+    <script src="pendo-agent-loader.js"></script>
   </body>
   <!-- Pendo Install Validator popup - John Bambury -->
 </html>
