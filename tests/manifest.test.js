@@ -28,8 +28,8 @@ describe('manifest web_accessible_resources', () => {
         'theme-init.js',
         'pendo-kb.js',
         'pendo-install-quality.md',
-        'pendo-loader.js',
-        'vendor/pendo.js',
+        'vendor/pendo-agent.bundle.js',
+        'pendo/*',
         'fonts/*.woff2',
       ]),
     )

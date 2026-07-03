@@ -32,7 +32,7 @@ No cookies are set. No data is written to files on disk.
 
 ### 1. Product analytics (Pendo self-instrumentation) — always on
 
-The extension bundles the Pendo Web SDK (`extension/vendor/pendo.js`) and initialises it each time the panel opens. The agent sends the following to **Pendo servers** (`data.pendo.io`, `app.pendo.io`):
+The extension bundles the Pendo Web SDK — built from the official [`@pendo/web-sdk`](https://www.npmjs.com/package/@pendo/web-sdk) package into `extension/vendor/pendo-agent.bundle.js`, with all agent/guide/designer assets self-hosted in `extension/pendo/` and no remotely-hosted code — and initialises it each time the panel opens. The agent sends the following to **Pendo servers** (`data.eu.pendo.io`, `app.eu.pendo.io`):
 
 - The persistent visitor ID described above (for `@pendo.io` Chrome profiles this is the work email; for everyone else it is a random UUID with no personal information).
 - Interaction events within the panel (button clicks, tab switches).

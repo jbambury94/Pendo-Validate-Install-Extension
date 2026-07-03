@@ -7,7 +7,7 @@ export default defineConfig({
     globals: true,
     coverage: {
       reporter: ['text', 'lcov'],
-      include: ['tests/helpers.js'],
+      include: ['tests/helpers.js', 'src/pendo-visitor.js'],
     },
   },
 })
