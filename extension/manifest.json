@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Pendo Install Validator",
   "short_name": "Pendo Validator",
-  "version": "1.8.4",
+  "version": "1.8.5",
   "description": "Validates Pendo Install (Snippet or Launcher), captures console, checks identity/CSP, and confirms whether an API key is present.",
   "permissions": [
     "scripting",
@@ -41,8 +41,8 @@
         "theme-init.js",
         "pendo-kb.js",
         "pendo-install-quality.md",
-        "pendo-loader.js",
-        "vendor/pendo.js",
+        "vendor/pendo-agent.bundle.js",
+        "pendo/*",
         "fonts/*.woff2"
       ],
       "matches": ["<all_urls>"]

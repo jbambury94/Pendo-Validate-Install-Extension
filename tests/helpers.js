@@ -8,7 +8,9 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import vm from 'node:vm'
 
-export const PENDO_VISITOR_ID_KEY = 'pendoVisitorId'
+// Visitor identity is a single source of truth in src/pendo-visitor.js (bundled into the
+// Pendo agent entry and re-exported here for the suite) rather than a hand-kept mirror.
+export { PENDO_VISITOR_ID_KEY, getProfileEmail, getOrCreateVisitorId, getIvaVersion } from '../src/pendo-visitor.js'
 
 export const PENDO_SUPPORT = {
   installGuide:     'https://support.pendo.io/hc/en-us/articles/360046272771',
@@ -538,42 +540,6 @@ export function buildAiPrompt(context, selectRelatedReadingFn) {
   lines.push('Rules: text must be one plain sentence with no markdown, no URLs, no numbering. supportKey must be one of: installGuide, chooseIdsMetadata, configureMetadata, csp, spa, gtm, segment, iframe, sandbox, agentSettings, agentDebug, troubleshooting, hostnameAllowlist, multiDomain, launcherPlan, signedMetadata, installComponents, vds, agentConfig.')
   lines.push('Max 3 items. Skip anything already covered in "Existing advice" above.')
   return lines.join('\n')
-}
-
-export function getProfileEmail() {
-  return new Promise((resolve) => {
-    try {
-      if (!chrome.identity || typeof chrome.identity.getProfileUserInfo !== 'function') return resolve('')
-      chrome.identity.getProfileUserInfo({ accountStatus: 'ANY' }, (info) => {
-        if (chrome.runtime.lastError) return resolve('')
-        resolve((info && info.email) ? String(info.email).trim().toLowerCase() : '')
-      })
-    } catch { resolve('') }
-  })
-}
-
-export async function getOrCreateVisitorId() {
-  const email = await getProfileEmail()
-  if (email && email.endsWith('@pendo.io')) return email
-
-  return new Promise((resolve) => {
-    try {
-      if (!chrome.storage || !chrome.storage.local) {
-        resolve(typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : '')
-        return
-      }
-      chrome.storage.local.get([PENDO_VISITOR_ID_KEY], (result) => {
-        let id = result && result[PENDO_VISITOR_ID_KEY]
-        if (!id || typeof id !== 'string') {
-          id = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : ''
-          if (id) chrome.storage.local.set({ [PENDO_VISITOR_ID_KEY]: id })
-        }
-        resolve(id)
-      })
-    } catch (e) {
-      resolve(typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : '')
-    }
-  })
 }
 
 export function enableDebuggingInPage() {

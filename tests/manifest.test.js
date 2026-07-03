@@ -28,8 +28,8 @@ describe('manifest web_accessible_resources', () => {
         'theme-init.js',
         'pendo-kb.js',
         'pendo-install-quality.md',
-        'pendo-loader.js',
-        'vendor/pendo.js',
+        'vendor/pendo-agent.bundle.js',
+        'pendo/*',
         'fonts/*.woff2',
       ]),
     )
@@ -41,7 +41,7 @@ describe('manifest web_accessible_resources', () => {
 })
 describe('manifest version', () => {
   it('version matches the current release', () => {
-    expect(manifest.version).toBe('1.8.4')
+    expect(manifest.version).toBe('1.8.5')
   })
 })
 

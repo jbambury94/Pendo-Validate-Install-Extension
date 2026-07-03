@@ -1,7 +1,7 @@
 # Privacy Policy — Pendo Install Validator
 
 **Last updated:** 11 June 2026
-**Extension version:** 1.8.4
+**Extension version:** 1.8.5
 
 ---
 
@@ -32,7 +32,7 @@ No cookies are set. No data is written to files on disk.
 
 ### 1. Product analytics (Pendo self-instrumentation) — always on
 
-The extension bundles the Pendo Web SDK (`extension/vendor/pendo.js`) and initialises it each time the panel opens. The agent sends the following to **Pendo servers** (`data.pendo.io`, `app.pendo.io`):
+The extension bundles the Pendo Web SDK — built from the official [`@pendo/web-sdk`](https://www.npmjs.com/package/@pendo/web-sdk) package into `extension/vendor/pendo-agent.bundle.js`, with all agent/guide/designer assets self-hosted in `extension/pendo/` and no remotely-hosted code — and initialises it each time the panel opens. The agent sends the following to **Pendo servers** (`data.eu.pendo.io`, `app.eu.pendo.io`):
 
 - The persistent visitor ID described above (for `@pendo.io` Chrome profiles this is the work email; for everyone else it is a random UUID with no personal information).
 - Interaction events within the panel (button clicks, tab switches).
@@ -88,7 +88,7 @@ Because `web_accessible_resources` in the manifest matches `<all_urls>` (require
 ## User controls
 
 - **Clear AI key.** Open Settings, delete the API key field, and click Save.
-- **Disable analytics.** There is currently no in-extension toggle to disable Pendo self-instrumentation. You can block requests to `data.pendo.io` and `app.pendo.io` via a network-level ad blocker or firewall rule.
+- **Disable analytics.** There is currently no in-extension toggle to disable Pendo self-instrumentation. You can block requests to `data.eu.pendo.io` and `app.eu.pendo.io` via a network-level ad blocker or firewall rule.
 - **Uninstall.** Removing the extension from `chrome://extensions` deletes all `chrome.storage.local` data (visitor UUID, theme, AI key) permanently. No residual data remains.
 
 ---

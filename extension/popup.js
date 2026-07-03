@@ -153,9 +153,6 @@ async function managementGetAll() {
   }
 }
 
-// ========== Pendo visitor ID (persistent UUID in extension storage) ==========
-const PENDO_VISITOR_ID_KEY = 'pendoVisitorId';
-
 /** Chrome Web Store extension IDs — Launcher tabs use chrome-extension://<id>/…; URL path rarely matches title/regex-only search. */
 const PENDO_LAUNCHER_EXTENSION_IDS = {
   stable: 'epnhoepnmfjdbjjfanpjklemanhkjgil',
@@ -184,64 +181,10 @@ function detectInstalledPendoLauncherExtension() {
   }).catch(() => null);
 }
 
-/** Read the signed-in Chrome profile email (passive, no OAuth prompt). */
-function getProfileEmail() {
-  return new Promise((resolve) => {
-    try {
-      if (!chrome.identity || typeof chrome.identity.getProfileUserInfo !== 'function') return resolve('');
-      chrome.identity.getProfileUserInfo({ accountStatus: 'ANY' }, (info) => {
-        if (chrome.runtime.lastError) return resolve('');
-        resolve((info && info.email) ? String(info.email).trim().toLowerCase() : '');
-      });
-    } catch { resolve(''); }
-  });
-}
-
-/** Get or create a persistent visitor UUID; store in chrome.storage.local and return it. */
-async function getOrCreateVisitorId() {
-  const email = await getProfileEmail();
-  if (email && email.endsWith('@pendo.io')) return email;
-
-  return new Promise((resolve) => {
-    try {
-      if (!chrome.storage || !chrome.storage.local) {
-        resolve(typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : '');
-        return;
-      }
-      chrome.storage.local.get([PENDO_VISITOR_ID_KEY], (result) => {
-        let id = result && result[PENDO_VISITOR_ID_KEY];
-        if (!id || typeof id !== 'string') {
-          id = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : '';
-          if (id) chrome.storage.local.set({ [PENDO_VISITOR_ID_KEY]: id });
-        }
-        resolve(id);
-      });
-    } catch (e) {
-      resolve(typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : '');
-    }
-  });
-}
-
-/** Read the IVA extension version from the manifest (for self-instrumentation metadata). */
-function getIvaVersion() {
-  try {
-    return (chrome.runtime && typeof chrome.runtime.getManifest === 'function')
-      ? (chrome.runtime.getManifest().version || '')
-      : '';
-  } catch { return ''; }
-}
-
-/** Initialize Pendo with stored visitor UUID (runs as soon as script loads). */
-(async function initPendoWithStoredVisitor() {
-  const visitorId = await getOrCreateVisitorId();
-  if (typeof window.pendo !== 'undefined' && visitorId) {
-    const visitor = { id: visitorId };
-    const ivaVersion = getIvaVersion();
-    if (ivaVersion) visitor.ivaVersion = ivaVersion;
-    if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(visitorId)) visitor.email = visitorId;
-    window.pendo.initialize({ visitor });
-  }
-})();
+// Pendo self-instrumentation (visitor identity resolution + pendo.initialize) now lives in
+// src/pendo-agent-entry.js, bundled to vendor/pendo-agent.bundle.js and loaded by popup.html.
+// It sets window.pendo via the @pendo/web-sdk globalKey option; notifyPendoTabChange() below
+// consumes that global once the agent has initialized.
 
 // ========== Misc helpers ==========
 function toIso(dt=new Date()) { return dt.toISOString(); }
@@ -1545,6 +1488,8 @@ function initPopup() {
   let logFilters = { error: true, warn: true, info: true };
   let logQuery = '';
   let toastTimer = null;
+  let statusHeroTimeTimer = null;
+  const STATUS_HERO_TIME_INTERVAL_MS = 5_000;
   let qualityGuideCache = null;
 
   // Prefetch quality guide for AI prompt enrichment
@@ -1558,7 +1503,7 @@ function initPopup() {
 
   // Seed hero icon
   setStatusHero({ state: 'idle', title: 'Ready to validate', sub: 'Click Validate Pendo Install to begin.' });
-  renderStatusHeroTime(null);
+  startStatusHeroTimeRefresh(null);
 
   // ── Iframe / overlay wiring: close + drag + resize via postMessage ──────
   const inIframe = window !== window.parent;
@@ -1692,6 +1637,21 @@ function initPopup() {
   }
   function renderStatusHeroTime(date) {
     statusHeroTime.textContent = formatRelative(date);
+  }
+  function stopStatusHeroTimeRefresh() {
+    if (statusHeroTimeTimer) {
+      clearInterval(statusHeroTimeTimer);
+      statusHeroTimeTimer = null;
+    }
+  }
+  function startStatusHeroTimeRefresh(date) {
+    stopStatusHeroTimeRefresh();
+    if (!date) {
+      renderStatusHeroTime(null);
+      return;
+    }
+    renderStatusHeroTime(date);
+    statusHeroTimeTimer = setInterval(() => renderStatusHeroTime(date), STATUS_HERO_TIME_INTERVAL_MS);
   }
 
   /** Update the quick stats row and surface counts on the status/logs tab badges. */
@@ -2193,7 +2153,7 @@ function initPopup() {
     const hero = deriveHeroState(res);
     setStatusHero(hero);
     const now = new Date();
-    renderStatusHeroTime(now);
+    startStatusHeroTimeRefresh(now);
 
     let checksToRender = (checks || []).slice();
     if (validatedIn === 'launcher' || validatedIn === 'launcher-beta') {
@@ -2274,7 +2234,7 @@ function initPopup() {
     setRunningVisual(true);
     resetStatusUi();
     setStatusHero({ state: 'running', title: 'Validating…', sub: 'Running pendo.validateInstall() in the active tab.' });
-    renderStatusHeroTime(null);
+    startStatusHeroTimeRefresh(null);
 
     try {
       const res = await runInPage();

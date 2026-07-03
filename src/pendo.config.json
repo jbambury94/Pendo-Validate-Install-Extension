@@ -1,0 +1,95 @@
+{
+    "apiKey": "928b3d0d-8a3b-48b1-bf35-a6af3565dcc5",
+    "allowedOriginServerHashes": [],
+    "allowedOriginServers": [
+        {
+            "value": "https://pendo-eu-static-4861629031055360.storage.googleapis.com",
+            "regexp": false
+        },
+        {
+            "value": "https://content-4861629031055360.static.eu.pendo.io",
+            "regexp": false
+        }
+    ],
+    "adoptAnalyticsForwarding": false,
+    "adoptPrioritizeAdoptGuides": false,
+    "agentAnalyticsApiIngestion": true,
+    "aiAgents": [],
+    "allowCrossOriginFrames": false,
+    "allowedText": null,
+    "cacheGuides": true,
+    "cacheGuidesPersistent": true,
+    "captureConsoleLogs": false,
+    "captureNetworkRequests": false,
+    "cookieDomain": "",
+    "contentHost": "content-4861629031055360.static.eu.pendo.io",
+    "dataHost": "data.eu.pendo.io",
+    "disableCookies": false,
+    "disableDesignerKeyboardShortcut": false,
+    "disableFeedbackAutoInit": false,
+    "disableGlobalCSS": false,
+    "disableGuidePseudoStyles": false,
+    "disablePendo": false,
+    "disablePersistence": false,
+    "dropAnonymous": false,
+    "enableDebugEvents": false,
+    "errorClickLogging": true,
+    "enableAllEmbeddedGuideEvents": true,
+    "enableCrossOriginIsolation": false,
+    "enableGuideTimeout": true,
+    "enableFullUtmReferrer": false,
+    "requestSegmentFlags": false,
+    "enableSignedMetadata": false,
+    "eventPropertyConfigurations": [],
+    "excludeAllText": false,
+    "extensionPersistLocalStorage": false,
+    "predictGuides": true,
+    "formValidation": true,
+    "frameIdentitySync": false,
+    "guideMarkdown": true,
+    "guideValidation": true,
+    "htmlAttributeBlacklist": null,
+    "htmlAttributes": {
+        "value": "/^(tabindex|contenteditable|data-action)$/i",
+        "regexp": true
+    },
+    "identityStorageSuffix": "",
+    "crossAppGuideStorageSuffix": "",
+    "initializeWhenVisible": false,
+    "interceptElementRemoval": false,
+    "intercomIdSync": false,
+    "isPendoFree": false,
+    "localStorageOnly": true,
+    "localStorageUnload": false,
+    "observeShadowRoots": false,
+    "pendoCore": true,
+    "pendoFeedback": false,
+    "performanceMetricsEnabled": true,
+    "preferBroadcastChannel": true,
+    "preferMutationObserver": true,
+    "preventCodeInjection": false,
+    "preventCookieRefresh": false,
+    "preventUnloadListener": true,
+    "promotedAgentMetadataConfigurations": [
+        {
+            "fieldName": "company",
+            "kind": "visitor"
+        },
+        {
+            "fieldName": "role",
+            "kind": "visitor"
+        }
+    ],
+    "recording": {
+        "enabled": true
+    },
+    "requireHTTPS": true,
+    "requireSignedMetadata": false,
+    "resourceCaching": true,
+    "restrictP1Access": true,
+    "sendEventsWithPostOnly": false,
+    "siblingSelectors": false,
+    "trainingPartner": false,
+    "guideSeenTimeoutLength": 0,
+    "vocPortal": true
+}
