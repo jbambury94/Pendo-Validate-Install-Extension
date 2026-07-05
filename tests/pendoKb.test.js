@@ -117,6 +117,13 @@ describe('findKbByTopics', () => {
     const slugs = results.map(r => r.slug);
     expect(slugs).toContain('launch-vds');
   });
+
+  it('returns the validate-install article for validation/best-practices topics', () => {
+    const results = findKbByTopics(['validation', 'best-practices'], 10);
+    expect(results.length).toBeGreaterThan(0);
+    const slugs = results.map(r => r.slug);
+    expect(slugs).toContain('validate-install');
+  });
 });
 
 describe('selectRelatedReading', () => {
@@ -252,5 +259,19 @@ describe('selectRelatedReading', () => {
     expect(results.length).toBeGreaterThan(0);
     const allTopics = results.flatMap(r => r.topics);
     expect(allTopics.some(t => t === 'api-key' || t === 'install')).toBe(true);
+  });
+
+  it('surfaces the validate-install article on a fully healthy install', () => {
+    const results = selectRelatedReading({
+      pendoPresent: true,
+      validatePresent: true,
+      visitorId: 'user-123',
+      accountId: 'acct-9',
+      hasVisitorMeta: true,
+      hasAccountMeta: true,
+    }, 6, findKbByTopics);
+    expect(results.length).toBeGreaterThan(0);
+    const slugs = results.map(r => r.slug);
+    expect(slugs).toContain('validate-install');
   });
 });

@@ -194,6 +194,7 @@ function toIso(dt=new Date()) { return dt.toISOString(); }
 const PENDO_SUPPORT = {
   installGuide: 'https://support.pendo.io/hc/en-us/articles/360046272771',
   installComponents: 'https://support.pendo.io/hc/en-us/articles/21362607464987-Components-of-the-install-script',
+  validateInstall: 'https://support.pendo.io/hc/en-us/articles/45557656003355-Validate-your-Pendo-installation',
   agentSettings: 'https://support.pendo.io/hc/en-us/articles/360031832152-Pendo-agent-settings',
   identifyVisitors: 'https://support.pendo.io/hc/en-us/articles/22764466082715-Identify-visitors-and-metadata-through-browser-scripting',
   chooseIdsMetadata: 'https://support.pendo.io/hc/en-us/articles/21326198721563-Choose-IDs-and-metadata',
@@ -225,6 +226,7 @@ const PENDO_SUPPORT = {
 const SUPPORT_LABELS = {
   installGuide: 'Install guide',
   installComponents: 'Snippet components',
+  validateInstall: 'Validate your install',
   agentSettings: 'Pendo agent settings',
   identifyVisitors: 'Identify visitors & metadata',
   chooseIdsMetadata: 'Choose IDs & metadata',
@@ -595,6 +597,8 @@ function selectRelatedReading(signals, max) {
   if (signals.agentVersionOld)                     topics.push('agent', 'configuration');
   if (signals.apiKeyMissing)                       topics.push('api-key', 'install');
   if (signals.urlSanitized)                        topics.push('vds', 'designer', 'guides');
+  // Positive confirmation: nothing to fix -> surface what a healthy install looks like.
+  if (!topics.length && signals.pendoPresent && signals.validatePresent) topics.push('validation', 'best-practices');
   return findKbByTopics(topics, max);
 }
 
@@ -698,6 +702,8 @@ function buildMarkdownReport(context) {
       noResourceHits: status.resourceHits && status.resourceHits.length === 0,
       apiKeyMissing: !apiKeyFound,
       urlSanitized: adviceList.some(a => a.supportKey === 'vds'),
+      hasVisitorMeta: !!(status.visitorMetadata && typeof status.visitorMetadata === 'object' && Object.keys(status.visitorMetadata).some(k => k !== 'id')),
+      hasAccountMeta: !!(status.accountMetadata && typeof status.accountMetadata === 'object' && Object.keys(status.accountMetadata).some(k => k !== 'id')),
     };
     const reading = selectRelatedReading(signals, 6);
     if (reading && reading.length) {
@@ -1146,7 +1152,7 @@ function buildAiPrompt(context) {
 
   lines.push('');
   lines.push('Respond ONLY with a JSON array. Each element: {"text":"one plain sentence","supportKey":"chooseIdsMetadata"}');
-  lines.push('Rules: text must be one plain sentence with no markdown, no URLs, no numbering. supportKey must be one of: installGuide, chooseIdsMetadata, configureMetadata, csp, spa, gtm, segment, iframe, sandbox, agentSettings, agentDebug, troubleshooting, hostnameAllowlist, multiDomain, launcherPlan, signedMetadata, installComponents, vds, agentConfig.');
+  lines.push('Rules: text must be one plain sentence with no markdown, no URLs, no numbering. supportKey must be one of: installGuide, validateInstall, chooseIdsMetadata, configureMetadata, csp, spa, gtm, segment, iframe, sandbox, agentSettings, agentDebug, troubleshooting, hostnameAllowlist, multiDomain, launcherPlan, signedMetadata, installComponents, vds, agentConfig.');
   lines.push('Max 3 items. Skip anything already covered in "Existing advice" above.');
   return lines.join('\n');
 }

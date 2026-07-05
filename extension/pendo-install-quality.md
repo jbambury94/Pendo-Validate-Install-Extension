@@ -3,6 +3,21 @@
 Definitions of a healthy Pendo installation, used by the validator to assess identity,
 metadata, and environment configuration.
 
+## What a healthy install looks like
+
+A fully healthy Pendo install shows all of the following together:
+
+- **Pendo present and initialized.** `window.pendo` exists and `pendo.validateInstall()` runs without errors or warnings.
+- **Current agent.** The Web SDK version is recent; very old agents miss features and fixes.
+- **Stable identity.** A stable, authenticated Visitor ID and (for multi-tenant apps) an Account ID — not placeholders, and not identical to each other.
+- **Enrichment metadata.** At least one meaningful visitor field (e.g. email, name, role) and, when accounts are used, at least one account field (e.g. name, plan).
+- **Data flowing.** Network calls to `data.pendo.io` are observed (resource hits present), so events and guide data are being exchanged.
+- **No CSP or network blocks.** No console errors about blocked Pendo domains; the required domains are allowlisted.
+- **Production data kept clean.** Staging/dev traffic uses prefixed IDs and an Exclude List so it does not pollute production analytics.
+
+To confirm interactively, run `pendo.validateInstall()`, `pendo.getVisitorId()`, and
+`pendo.getAccountId()` in the browser console on an authenticated page.
+
 ## Visitor ID
 
 **Good:** A stable, unique identifier assigned after user authentication (e.g. database
