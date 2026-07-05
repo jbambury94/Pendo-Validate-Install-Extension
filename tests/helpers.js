@@ -324,6 +324,7 @@ export function buildMarkdownReport(context, selectRelatedReadingFn) {
       urlSanitized: adviceList.some(a => a.supportKey === 'vds'),
       hasVisitorMeta: !!(status.visitorMetadata && typeof status.visitorMetadata === 'object' && Object.keys(status.visitorMetadata).some(k => k !== 'id')),
       hasAccountMeta: !!(status.accountMetadata && typeof status.accountMetadata === 'object' && Object.keys(status.accountMetadata).some(k => k !== 'id')),
+      launcherPresent: !!launcherPresent,
     }
     const reading = selectRelatedReadingFn(signals, 6)
     if (reading && reading.length) {
