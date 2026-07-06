@@ -412,6 +412,22 @@ describe('buildAiPrompt — KB excerpt enrichment', () => {
     const prompt = buildAiPrompt(ctx, (signals, max) => makeSrr(signals, max))
     expect(prompt).toContain('do not invent URLs')
   })
+
+  it('passes metadata signals so a healthy install surfaces the validate-install article', () => {
+    const ctx = {
+      ...baseContext,
+      status: {
+        ...baseContext.status,
+        visitorMetadata: { id: 'v1', email: 'a@b.com' },
+        accountMetadata: { id: 'a1', name: 'Acme' },
+      },
+    }
+    const prompt = buildAiPrompt(ctx, (signals, max) => makeSrr(signals, max))
+    // With hasVisitorMeta/hasAccountMeta wired in, no metadata topic is forced, so the healthy
+    // branch surfaces "Validate your Pendo installation". Before the fix the undefined metadata
+    // signals pushed the 'metadata' topic and this article never appeared.
+    expect(prompt).toContain('Validate your Pendo installation')
+  })
 })
 
 describe('buildAiPrompt — enrichment details', () => {

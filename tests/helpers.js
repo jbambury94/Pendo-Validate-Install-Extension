@@ -219,8 +219,12 @@ export function selectRelatedReading(signals, max, findKbByTopicsFn) {
   if (signals.agentVersionOld)                     topics.push('agent', 'configuration')
   if (signals.apiKeyMissing)                       topics.push('api-key', 'install')
   if (signals.urlSanitized)                        topics.push('vds', 'designer', 'guides')
-  // Positive confirmation: nothing to fix -> surface what a healthy install looks like.
-  if (!topics.length && signals.pendoPresent && signals.validatePresent) topics.push('validation', 'best-practices')
+  // Positive confirmation: nothing to fix AND a clean run (no errors/warnings) -> surface
+  // what a healthy install looks like. Gated on hasError/hasWarn so a warning that produced
+  // no topic (e.g. a generic validateInstall() warning) doesn't lead with "Validate your install".
+  if (!topics.length && signals.pendoPresent && signals.validatePresent && !signals.hasError && !signals.hasWarn) {
+    topics.push('validation', 'best-practices')
+  }
   return findKbByTopicsFn(topics, max)
 }
 
@@ -325,6 +329,8 @@ export function buildMarkdownReport(context, selectRelatedReadingFn) {
       hasVisitorMeta: !!(status.visitorMetadata && typeof status.visitorMetadata === 'object' && Object.keys(status.visitorMetadata).some(k => k !== 'id')),
       hasAccountMeta: !!(status.accountMetadata && typeof status.accountMetadata === 'object' && Object.keys(status.accountMetadata).some(k => k !== 'id')),
       launcherPresent: !!launcherPresent,
+      hasError,
+      hasWarn,
     }
     const reading = selectRelatedReadingFn(signals, 6)
     if (reading && reading.length) {
@@ -516,10 +522,15 @@ export function buildAiPrompt(context, selectRelatedReadingFn) {
       validatePresent: context.status.validatePresent,
       visitorId: context.status.visitorId,
       accountId: context.status.accountId,
+      hasVisitorMeta: !!(context.status.visitorMetadata && typeof context.status.visitorMetadata === 'object' && Object.keys(context.status.visitorMetadata).some(k => k !== 'id')),
+      hasAccountMeta: !!(context.status.accountMetadata && typeof context.status.accountMetadata === 'object' && Object.keys(context.status.accountMetadata).some(k => k !== 'id')),
       cspIssue: !!(context.cspMeta || '').length || (context.captured || []).some(l => /csp|content.security/i.test(l.text)),
       noResourceHits: context.status.resourceHits && context.status.resourceHits.length === 0,
       apiKeyMissing: !context.apiKeyFound,
       urlSanitized: !!(context.status.pendoPresent && ((context.status.redirectCount || 0) > 0 || (context.status.urlSanitization && (context.status.urlSanitization.inlinePatterns.length || context.status.urlSanitization.observedStrips || context.status.urlSanitization.navQueryStripped || context.status.urlSanitization.navPendoTokenStripped)))),
+      launcherPresent: !!context.launcherPresent,
+      hasError: (context.captured || []).some(l => l.level === 'error') || context.hasError === true,
+      hasWarn: (context.captured || []).some(l => l.level === 'warn') || context.hasWarn === true,
     }
     const kbEntries = selectRelatedReadingFn(signals, 6)
     if (kbEntries && kbEntries.length) {

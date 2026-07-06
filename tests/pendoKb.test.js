@@ -274,4 +274,32 @@ describe('selectRelatedReading', () => {
     const slugs = results.map(r => r.slug);
     expect(slugs).toContain('validate-install');
   });
+
+  it('does NOT surface the healthy validate-install article when a warning was logged', () => {
+    const results = selectRelatedReading({
+      pendoPresent: true,
+      validatePresent: true,
+      visitorId: 'user-123',
+      accountId: 'acct-9',
+      hasVisitorMeta: true,
+      hasAccountMeta: true,
+      hasWarn: true,
+    }, 6, findKbByTopics);
+    const slugs = results.map(r => r.slug);
+    expect(slugs).not.toContain('validate-install');
+  });
+
+  it('does NOT surface the healthy validate-install article when an error was logged', () => {
+    const results = selectRelatedReading({
+      pendoPresent: true,
+      validatePresent: true,
+      visitorId: 'user-123',
+      accountId: 'acct-9',
+      hasVisitorMeta: true,
+      hasAccountMeta: true,
+      hasError: true,
+    }, 6, findKbByTopics);
+    const slugs = results.map(r => r.slug);
+    expect(slugs).not.toContain('validate-install');
+  });
 });

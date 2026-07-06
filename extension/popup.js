@@ -597,8 +597,12 @@ function selectRelatedReading(signals, max) {
   if (signals.agentVersionOld)                     topics.push('agent', 'configuration');
   if (signals.apiKeyMissing)                       topics.push('api-key', 'install');
   if (signals.urlSanitized)                        topics.push('vds', 'designer', 'guides');
-  // Positive confirmation: nothing to fix -> surface what a healthy install looks like.
-  if (!topics.length && signals.pendoPresent && signals.validatePresent) topics.push('validation', 'best-practices');
+  // Positive confirmation: nothing to fix AND a clean run (no errors/warnings) -> surface
+  // what a healthy install looks like. Gated on hasError/hasWarn so a warning that produced
+  // no topic (e.g. a generic validateInstall() warning) doesn't lead with "Validate your install".
+  if (!topics.length && signals.pendoPresent && signals.validatePresent && !signals.hasError && !signals.hasWarn) {
+    topics.push('validation', 'best-practices');
+  }
   return findKbByTopics(topics, max);
 }
 
@@ -705,6 +709,8 @@ function buildMarkdownReport(context) {
       hasVisitorMeta: !!(status.visitorMetadata && typeof status.visitorMetadata === 'object' && Object.keys(status.visitorMetadata).some(k => k !== 'id')),
       hasAccountMeta: !!(status.accountMetadata && typeof status.accountMetadata === 'object' && Object.keys(status.accountMetadata).some(k => k !== 'id')),
       launcherPresent: !!launcherPresent,
+      hasError,
+      hasWarn,
     };
     const reading = selectRelatedReading(signals, 6);
     if (reading && reading.length) {
@@ -1125,10 +1131,15 @@ function buildAiPrompt(context) {
       validatePresent: context.status.validatePresent,
       visitorId: context.status.visitorId,
       accountId: context.status.accountId,
+      hasVisitorMeta: !!(context.status.visitorMetadata && typeof context.status.visitorMetadata === 'object' && Object.keys(context.status.visitorMetadata).some(k => k !== 'id')),
+      hasAccountMeta: !!(context.status.accountMetadata && typeof context.status.accountMetadata === 'object' && Object.keys(context.status.accountMetadata).some(k => k !== 'id')),
       cspIssue: !!(context.cspMeta || '').length || (context.captured || []).some(l => /csp|content.security/i.test(l.text)),
       noResourceHits: context.status.resourceHits && context.status.resourceHits.length === 0,
       apiKeyMissing: !context.apiKeyFound,
       urlSanitized: !!(context.status.pendoPresent && ((context.status.redirectCount || 0) > 0 || (context.status.urlSanitization && (context.status.urlSanitization.inlinePatterns.length || context.status.urlSanitization.observedStrips || context.status.urlSanitization.navQueryStripped || context.status.urlSanitization.navPendoTokenStripped)))),
+      launcherPresent: !!context.launcherPresent,
+      hasError: (context.captured || []).some(l => l.level === 'error') || context.hasError === true,
+      hasWarn: (context.captured || []).some(l => l.level === 'warn') || context.hasWarn === true,
     };
     const kbEntries = selectRelatedReading(signals, 6);
     if (kbEntries && kbEntries.length) {
@@ -2176,6 +2187,14 @@ function initPopup() {
 
     const hasVFields = status.visitorMetadata && typeof status.visitorMetadata === 'object' && Object.keys(status.visitorMetadata).some(k => k !== 'id');
     const hasAFields = status.accountMetadata && typeof status.accountMetadata === 'object' && Object.keys(status.accountMetadata).some(k => k !== 'id');
+    // Derive detection signals from the validation output (advice support keys + checks text)
+    // so the Related reading card reflects what was actually detected — capture-inspect surfaces
+    // these as advice items / checks rather than as booleans on status.
+    const adviceHasKey = (key) => adviceList.some(a => a && (a.supportKey === key || (Array.isArray(a.supportKeys) && a.supportKeys.includes(key))));
+    const checksText = checksToRender.join('\n');
+    const frameworkMatch = /SPA framework detected:\s*([a-z0-9]+)/i.exec(checksText);
+    const readingHasError = captured.some(l => l.level === 'error') || hasError === true;
+    const readingHasWarn = captured.some(l => l.level === 'warn') || hasWarn === true;
     const readingSignals = {
       pendoPresent: status.pendoPresent,
       validatePresent: status.validatePresent,
@@ -2183,16 +2202,19 @@ function initPopup() {
       accountId: status.accountId,
       hasVisitorMeta: !!hasVFields,
       hasAccountMeta: !!hasAFields,
-      cspIssue: adviceList.some(a => a.supportKey === 'csp'),
+      cspIssue: adviceHasKey('csp'),
       noResourceHits: status.resourceHits && status.resourceHits.length === 0,
-      isSpa: false,
-      isIframe: false,
-      hasGtm: false,
-      isSandbox: false,
+      isSpa: !!frameworkMatch,
+      frameworkHint: frameworkMatch ? frameworkMatch[1].toLowerCase() : undefined,
+      isIframe: adviceHasKey('iframe'),
+      hasGtm: /Google Tag Manager detected/i.test(checksText) || adviceHasKey('gtm'),
+      isSandbox: adviceHasKey('sandbox'),
       launcherPresent: !!launcherPresent,
-      agentVersionOld: false,
+      agentVersionOld: adviceHasKey('agentDebug'),
       apiKeyMissing: !apiKeyFound,
-      urlSanitized: adviceList.some(a => a.supportKey === 'vds'),
+      urlSanitized: adviceHasKey('vds'),
+      hasError: readingHasError,
+      hasWarn: readingHasWarn,
     };
     renderRelatedReading(readingSignals);
 
