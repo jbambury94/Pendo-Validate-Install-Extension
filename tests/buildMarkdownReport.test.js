@@ -251,4 +251,72 @@ describe('buildMarkdownReport — Related reading section', () => {
     expect(adviceIdx).toBeLessThan(readingIdx)
     expect(readingIdx).toBeLessThan(capturedIdx)
   })
+
+  it('includes Launcher related reading when launcherPresent is true (matches Status panel)', () => {
+    const ctx = {
+      ...baseContext,
+      status: {
+        ...baseContext.status,
+        resourceHits: undefined,
+        visitorMetadata: { id: 'visitor-1', role: 'admin' },
+        accountMetadata: { id: 'acct-1', plan: 'pro' },
+      },
+      launcherAttempted: true,
+      launcherPresent: true,
+      launcherDataValidated: true,
+      validatedIn: 'launcher',
+    }
+    const md = buildMarkdownReport(ctx, srrFn)
+    expect(md).toContain('## Related reading')
+    expect(md).toContain('Plan your browser extension implementation')
+    expect(md).not.toContain('Validate your Pendo installation')
+  })
+
+  it('derives the SPA signal from checks text (was hard-coded false before the fix)', () => {
+    const ctx = {
+      ...baseContext,
+      status: {
+        ...baseContext.status,
+        visitorMetadata: { id: 'visitor-1', role: 'admin' },
+        accountMetadata: { id: 'acct-1', plan: 'pro' },
+      },
+      checks: ['SPA framework detected: react'],
+    }
+    const md = buildMarkdownReport(ctx, srrFn)
+    expect(md).toContain('## Related reading')
+    expect(md).toContain('Install Pendo on a single-page web application')
+  })
+
+  it('derives the GTM signal from checks text (matches Status panel)', () => {
+    const ctx = {
+      ...baseContext,
+      status: {
+        ...baseContext.status,
+        visitorMetadata: { id: 'visitor-1', role: 'admin' },
+        accountMetadata: { id: 'acct-1', plan: 'pro' },
+      },
+      checks: ['Google Tag Manager detected'],
+    }
+    const md = buildMarkdownReport(ctx, srrFn)
+    expect(md).toContain('## Related reading')
+    expect(md).toContain('Install Pendo through the Google Tag Manager')
+  })
+
+  it('derives iframe/sandbox/agent signals from advice support keys (matches Status panel)', () => {
+    const ctx = {
+      ...baseContext,
+      status: {
+        ...baseContext.status,
+        visitorMetadata: { id: 'visitor-1', role: 'admin' },
+        accountMetadata: { id: 'acct-1', plan: 'pro' },
+      },
+      advice: [
+        { text: 'sandbox', supportKey: 'sandbox' },
+        { text: 'old agent', supportKey: 'agentDebug' },
+      ],
+    }
+    const md = buildMarkdownReport(ctx, srrFn)
+    expect(md).toContain('## Related reading')
+    expect(md).toContain('Pendo in multiple environments for development and testing')
+  })
 })

@@ -46,7 +46,7 @@ const PENDO_KB = [
     slug: 'plan-implementation',
     title: 'Plan your direct web implementation of Pendo using the install script',
     url: 'https://support.pendo.io/hc/en-us/articles/360045829772',
-    topics: ['install', 'identity', 'metadata', 'planning'],
+    topics: ['install', 'identity', 'metadata', 'planning', 'best-practices'],
     summary: 'Planning checklist: choose IDs, metadata, insert snippet, verify.',
     bullets: [
       'Choose Visitor ID and Account ID naming conventions before installing.',
@@ -70,7 +70,7 @@ const PENDO_KB = [
     slug: 'choose-ids-metadata',
     title: 'Choose IDs and metadata',
     url: 'https://support.pendo.io/hc/en-us/articles/21326198721563',
-    topics: ['identity', 'metadata', 'visitor', 'account'],
+    topics: ['identity', 'metadata', 'visitor', 'account', 'best-practices'],
     summary: 'How to select Visitor IDs, Account IDs, and enrichment metadata.',
     bullets: [
       'Visitor ID is typically an email or unique number; Account ID labels the organisation.',
@@ -338,6 +338,80 @@ const PENDO_KB = [
       'Allow browser local storage and cookies; ad blockers, COEP, and Safari ITP (13+) can also block the Visual Design Studio.'
     ],
     supportKey: 'vds'
+  },
+  {
+    slug: 'validate-install',
+    title: 'Validate your Pendo installation',
+    url: 'https://support.pendo.io/hc/en-us/articles/45557656003355-Validate-your-Pendo-installation',
+    topics: ['validation', 'best-practices', 'install', 'troubleshooting', 'debugging', 'agent'],
+    summary: 'Browser console commands that confirm a healthy install and show which Visitor and Account IDs are tracked.',
+    bullets: [
+      'Run pendo.validateInstall() in the console — a healthy result returns the Web SDK version, Visitor ID, Account ID, active tracking, and no warnings.',
+      'Use pendo.getVisitorId() and pendo.getAccountId() to confirm the correct IDs are being tracked for the current visitor.',
+      'Run these on a page where the Web SDK is installed and the visitor is authenticated.',
+      'If validateInstall() errors, the snippet is not loaded or pendo.initialize() has not run on this page.'
+    ],
+    supportKey: 'validateInstall'
+  },
+  {
+    slug: 'multi-page-install',
+    title: 'Install Pendo on a multi-page web application',
+    url: 'https://support.pendo.io/hc/en-us/articles/17606624107931-Install-Pendo-on-a-multi-page-web-application',
+    topics: ['install', 'snippet', 'multi-page'],
+    summary: 'Add the install script to a common template so Pendo loads and initializes on every page.',
+    bullets: [
+      'Place the single install-script block in a shared header or template so it runs on every page.',
+      'Define and test Visitor and Account IDs and metadata before installing; changing IDs later disrupts analytics and guides.',
+      'Verify with pendo.validateEnvironment() and confirm raw events appear in Subscription Settings.'
+    ]
+  },
+  {
+    slug: 'install-troubleshooting',
+    title: 'Troubleshoot installation for a Pendo implementation that uses the install script',
+    url: 'https://support.pendo.io/hc/en-us/articles/18031691072667-Troubleshoot-installation-for-a-Pendo-implementation-that-uses-the-install-script',
+    topics: ['troubleshooting', 'install', 'api-key', 'metadata', 'snippet'],
+    summary: 'Fixes for common install-script problems: no API key configured, data not appearing, metadata syntax.',
+    bullets: [
+      '"No Pendo API key configured" usually means a variable passed to pendo.initialize() is undefined at call time, or initialize() is not running on the page.',
+      'Data is batch-aggregated hourly and can take up to 15 minutes past the hour to appear in Pendo.',
+      'Custom metadata field names must start with a letter or underscore and contain no spaces.'
+    ]
+  },
+  {
+    slug: 'conditional-init',
+    title: 'Conditionally initialize Pendo',
+    url: 'https://support.pendo.io/hc/en-us/articles/6838229211675-Conditionally-initialize-Pendo',
+    topics: ['install', 'configuration', 'identity', 'troubleshooting'],
+    summary: 'Wrap pendo.initialize() in logic so it runs only once required values are defined, or only for specific visitors.',
+    bullets: [
+      'By default Pendo assumes every value passed to initialize() is already defined; guard the call when IDs or metadata load asynchronously.',
+      'A good install initializes with fully-populated IDs and metadata, avoiding split, anonymous, or duplicate visitors.',
+      'Use conditional logic to exclude visitors you cannot filter by Visitor ID, Account ID, or domain.'
+    ]
+  },
+  {
+    slug: 'supported-browsers',
+    title: 'Supported browsers',
+    url: 'https://support.pendo.io/hc/en-us/articles/26626087647515-Supported-browsers',
+    topics: ['planning', 'configuration', 'troubleshooting', 'vds'],
+    summary: 'Browser support differs across the Web SDK, the Pendo app, and the Visual Design Studio.',
+    bullets: [
+      'The Web SDK supports Internet Explorer 9+ (including Edge) and all versions of Chrome, Safari, and Firefox since 2010.',
+      'The Visual Design Studio is not supported in Safari 13.04+ — tag and build guides in Chrome, Edge, or Firefox.',
+      'New installs default to the Standards Web SDK build for the best security and performance; XHR and JSONP builds exist for legacy browsers.'
+    ]
+  },
+  {
+    slug: 'sri',
+    title: 'Subresource Integrity (SRI) for the Pendo Web SDK',
+    url: 'https://support.pendo.io/hc/en-us/articles/40288387043355-Subresource-Integrity-SRI-for-the-Pendo-Web-SDK',
+    topics: ['security', 'agent', 'configuration', 'csp'],
+    summary: 'Verify the Web SDK file has not been modified using an SRI integrity hash (self-hosting recommended).',
+    bullets: [
+      'SRI blocks the script if its hash does not match, so self-host pendo.js — Pendo-side updates to the CDN file would otherwise break the check and stop Pendo loading.',
+      'Generate a hash for the hosted file and add the integrity attribute to the script tag.',
+      'SRI cannot apply to dynamically-loaded staging agents; force the production SDK in staging as a workaround.'
+    ]
   }
 ];
 

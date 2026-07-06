@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.8.6
+- **Knowledge base refresh.** Audited the bundled `support.pendo.io` articles and added six current ones (31 total), led by *Validate your Pendo installation*.
+- **Smarter Related reading.** The Status panel, Markdown report, and AI prompt now derive suggestions from what validation actually detected (SPA, iframe, GTM, sandbox, old agent, CSP, Launcher, visitor/account metadata) via a shared `deriveDetectionSignals()` helper, and surface a "what good looks like" reference on a genuinely clean pass.
+- **Tests.** New knowledge-base, Markdown-report, and AI-advice coverage. 573 tests across 26 suites.
+
 ## 1.8.5
 - **Pendo self-instrumentation migrated to the official `@pendo/web-sdk` package.** The agent is no longer a manually `curl`-ed CDN bundle (`vendor/pendo.js`) loaded by a hand-written async-stub loader (`pendo-loader.js`). It is now built by esbuild from `src/pendo-agent-entry.js` — which imports `initialize`/`TextCapture` from the version-pinned `@pendo/web-sdk` — into `extension/vendor/pendo-agent.bundle.js`, and initialised with `assets.localOnly: true`. `localOnly` sets `preventCodeInjection`, so the agent (and the Visual Design Studio) loads **no remotely-hosted code** — closing the latent MV3/Chrome-Web-Store-review gap where the old bundle could fetch remote designer/guide code at runtime.
 - **Self-hosted agent, guide, and designer assets.** All runtime assets are served from the extension origin under `extension/pendo/` (populated by the `pendo copy`/`pendo designer` CLI); `manifest.json` `web_accessible_resources` now exposes `vendor/pendo-agent.bundle.js` and `pendo/*` instead of `pendo-loader.js`/`vendor/pendo.js`. Bundled SDK version 2.330.2 (was 2.327.0).

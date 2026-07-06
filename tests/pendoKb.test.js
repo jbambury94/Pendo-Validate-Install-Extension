@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { JSDOM } from 'jsdom';
-import { selectRelatedReading } from './helpers.js';
+import { selectRelatedReading, deriveDetectionSignals } from './helpers.js';
 
 let PENDO_KB, findKbByTopics, PENDO_KB_MIN_AGENT_VERSION;
 
@@ -116,6 +116,13 @@ describe('findKbByTopics', () => {
     expect(results.length).toBeGreaterThan(0);
     const slugs = results.map(r => r.slug);
     expect(slugs).toContain('launch-vds');
+  });
+
+  it('returns the validate-install article for validation/best-practices topics', () => {
+    const results = findKbByTopics(['validation', 'best-practices'], 10);
+    expect(results.length).toBeGreaterThan(0);
+    const slugs = results.map(r => r.slug);
+    expect(slugs).toContain('validate-install');
   });
 });
 
@@ -252,5 +259,91 @@ describe('selectRelatedReading', () => {
     expect(results.length).toBeGreaterThan(0);
     const allTopics = results.flatMap(r => r.topics);
     expect(allTopics.some(t => t === 'api-key' || t === 'install')).toBe(true);
+  });
+
+  it('surfaces the validate-install article on a fully healthy install', () => {
+    const results = selectRelatedReading({
+      pendoPresent: true,
+      validatePresent: true,
+      visitorId: 'user-123',
+      accountId: 'acct-9',
+      hasVisitorMeta: true,
+      hasAccountMeta: true,
+    }, 6, findKbByTopics);
+    expect(results.length).toBeGreaterThan(0);
+    const slugs = results.map(r => r.slug);
+    expect(slugs).toContain('validate-install');
+  });
+
+  it('does NOT surface the healthy validate-install article when a warning was logged', () => {
+    const results = selectRelatedReading({
+      pendoPresent: true,
+      validatePresent: true,
+      visitorId: 'user-123',
+      accountId: 'acct-9',
+      hasVisitorMeta: true,
+      hasAccountMeta: true,
+      hasWarn: true,
+    }, 6, findKbByTopics);
+    const slugs = results.map(r => r.slug);
+    expect(slugs).not.toContain('validate-install');
+  });
+
+  it('does NOT surface the healthy validate-install article when an error was logged', () => {
+    const results = selectRelatedReading({
+      pendoPresent: true,
+      validatePresent: true,
+      visitorId: 'user-123',
+      accountId: 'acct-9',
+      hasVisitorMeta: true,
+      hasAccountMeta: true,
+      hasError: true,
+    }, 6, findKbByTopics);
+    const slugs = results.map(r => r.slug);
+    expect(slugs).not.toContain('validate-install');
+  });
+});
+
+describe('deriveDetectionSignals', () => {
+  it('reads the SPA framework hint from checks text', () => {
+    const s = deriveDetectionSignals([], ['SPA framework detected: react']);
+    expect(s.isSpa).toBe(true);
+    expect(s.frameworkHint).toBe('react');
+  });
+
+  it('reads GTM from checks text', () => {
+    const s = deriveDetectionSignals([], ['Google Tag Manager detected']);
+    expect(s.hasGtm).toBe(true);
+  });
+
+  it('reads iframe / sandbox / segment / gtm from advice support keys', () => {
+    const s = deriveDetectionSignals([
+      { supportKey: 'iframe' },
+      { supportKey: 'sandbox' },
+      { supportKey: 'segment' },
+      { supportKey: 'gtm' },
+    ], []);
+    expect(s.isIframe).toBe(true);
+    expect(s.isSandbox).toBe(true);
+    expect(s.hasSegment).toBe(true);
+    expect(s.hasGtm).toBe(true);
+  });
+
+  it('detects an outdated agent when agentDebug is only in supportKeys[] (raw advice, not normalized)', () => {
+    const s = deriveDetectionSignals([
+      { supportKey: 'agentSettings', supportKeys: ['agentSettings', 'agentDebug'] },
+    ], []);
+    expect(s.agentVersionOld).toBe(true);
+  });
+
+  it('returns all-false/undefined for empty input', () => {
+    const s = deriveDetectionSignals(undefined, undefined);
+    expect(s.isSpa).toBe(false);
+    expect(s.frameworkHint).toBeUndefined();
+    expect(s.isIframe).toBe(false);
+    expect(s.hasGtm).toBe(false);
+    expect(s.hasSegment).toBe(false);
+    expect(s.isSandbox).toBe(false);
+    expect(s.agentVersionOld).toBe(false);
   });
 });
