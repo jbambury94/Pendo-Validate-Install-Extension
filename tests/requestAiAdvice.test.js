@@ -428,6 +428,21 @@ describe('buildAiPrompt — KB excerpt enrichment', () => {
     // signals pushed the 'metadata' topic and this article never appeared.
     expect(prompt).toContain('Validate your Pendo installation')
   })
+
+  it('derives detection signals from checks + raw advice so KB excerpts match the Status panel', () => {
+    const ctx = {
+      ...baseContext,
+      checks: ['SPA framework detected: react'],
+      advice: [
+        // Outdated-agent advice keys agentDebug only via supportKeys[]; the AI prompt reads raw
+        // advice, so this is reachable (it was omitted entirely before the fix).
+        { text: 'Agent is old.', source: 'builtin', supportKey: 'agentSettings', supportKeys: ['agentSettings', 'agentDebug'] },
+      ],
+    }
+    const prompt = buildAiPrompt(ctx, (signals, max) => makeSrr(signals, max))
+    expect(prompt).toContain('Reference excerpts from official Pendo documentation')
+    expect(prompt).toContain('Install Pendo on a single-page web application')
+  })
 })
 
 describe('buildAiPrompt — enrichment details', () => {

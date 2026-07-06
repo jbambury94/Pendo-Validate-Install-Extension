@@ -568,6 +568,31 @@ function appendConfigFlagsAdviceToResult(result) {
 
 // ========== Related reading selection ==========
 /**
+ * Derive detection signals (SPA framework, iframe, GTM, sandbox, outdated agent) from the raw
+ * validation output. capture-inspect surfaces these as advice support keys and checks text
+ * rather than as booleans on status, so this reads them back out. Shared by the Status panel,
+ * the Markdown report, and the AI prompt so all three agree on Related reading.
+ * @param {Array} advice - raw advice items (must retain supportKey/supportKeys, i.e. pre-normalize)
+ * @param {string[]} checks - passed checks (contains "SPA framework detected: <fw>", "Google Tag Manager detected." etc.)
+ * @returns {{isSpa:boolean, frameworkHint:(string|undefined), isIframe:boolean, hasGtm:boolean, isSandbox:boolean, agentVersionOld:boolean}}
+ */
+function deriveDetectionSignals(advice, checks) {
+  const adviceList = advice || [];
+  const adviceHasKey = (key) => adviceList.some(a => a && (a.supportKey === key || (Array.isArray(a.supportKeys) && a.supportKeys.includes(key))));
+  const checksText = (checks || []).join('\n');
+  const frameworkMatch = /SPA framework detected:\s*([a-z0-9]+)/i.exec(checksText);
+  return {
+    isSpa: !!frameworkMatch,
+    frameworkHint: frameworkMatch ? frameworkMatch[1].toLowerCase() : undefined,
+    isIframe: adviceHasKey('iframe'),
+    hasGtm: /Google Tag Manager detected/i.test(checksText) || adviceHasKey('gtm'),
+    hasSegment: adviceHasKey('segment'),
+    isSandbox: adviceHasKey('sandbox'),
+    agentVersionOld: adviceHasKey('agentDebug'),
+  };
+}
+
+/**
  * Map validation signals to KB topics, then return the most relevant
  * knowledge-base entries via findKbByTopics (from pendo-kb.js).
  * @param {object} signals - validation result fields used for topic inference
@@ -697,20 +722,29 @@ function buildMarkdownReport(context) {
   lines.push("");
 
   if (typeof selectRelatedReading === 'function') {
+    // Derive detection signals from the validation output (advice support keys + checks text)
+    // so the report's Related reading mirrors the Status panel — capture-inspect surfaces these
+    // as advice items / checks rather than as booleans on status.
+    // Search the RAW advice (not the normalized adviceList, which drops supportKeys[]) so keys
+    // carried only in supportKeys[] are matched — consistent with deriveDetectionSignals below.
+    const adviceHasKey = (key) => (advice || []).some(a => a && (a.supportKey === key || (Array.isArray(a.supportKeys) && a.supportKeys.includes(key))));
     const signals = {
       pendoPresent: status.pendoPresent,
       validatePresent: status.validatePresent,
       visitorId: status.visitorId,
       accountId: status.accountId,
-      cspIssue: adviceList.some(a => a.supportKey === 'csp'),
+      cspIssue: adviceHasKey('csp'),
       noResourceHits: status.resourceHits && status.resourceHits.length === 0,
       apiKeyMissing: !apiKeyFound,
-      urlSanitized: adviceList.some(a => a.supportKey === 'vds'),
+      urlSanitized: adviceHasKey('vds'),
       hasVisitorMeta: !!(status.visitorMetadata && typeof status.visitorMetadata === 'object' && Object.keys(status.visitorMetadata).some(k => k !== 'id')),
       hasAccountMeta: !!(status.accountMetadata && typeof status.accountMetadata === 'object' && Object.keys(status.accountMetadata).some(k => k !== 'id')),
       launcherPresent: !!launcherPresent,
       hasError,
       hasWarn,
+      // Detection signals read from the RAW advice (retains supportKeys) + checks, so the report
+      // mirrors the Status panel's Related reading.
+      ...deriveDetectionSignals(advice, checks),
     };
     const reading = selectRelatedReading(signals, 6);
     if (reading && reading.length) {
@@ -1126,6 +1160,9 @@ function buildAiPrompt(context) {
   }
 
   if (typeof selectRelatedReading === 'function') {
+    // Search the RAW advice (retains supportKeys[]) so the CSP signal mirrors the Status panel
+    // and Markdown report, which both use adviceHasKey('csp').
+    const adviceHasKey = (key) => (context.advice || []).some(a => a && (a.supportKey === key || (Array.isArray(a.supportKeys) && a.supportKeys.includes(key))));
     const signals = {
       pendoPresent: context.status.pendoPresent,
       validatePresent: context.status.validatePresent,
@@ -1133,13 +1170,16 @@ function buildAiPrompt(context) {
       accountId: context.status.accountId,
       hasVisitorMeta: !!(context.status.visitorMetadata && typeof context.status.visitorMetadata === 'object' && Object.keys(context.status.visitorMetadata).some(k => k !== 'id')),
       hasAccountMeta: !!(context.status.accountMetadata && typeof context.status.accountMetadata === 'object' && Object.keys(context.status.accountMetadata).some(k => k !== 'id')),
-      cspIssue: !!(context.cspMeta || '').length || (context.captured || []).some(l => /csp|content.security/i.test(l.text)),
+      cspIssue: adviceHasKey('csp'),
       noResourceHits: context.status.resourceHits && context.status.resourceHits.length === 0,
       apiKeyMissing: !context.apiKeyFound,
-      urlSanitized: !!(context.status.pendoPresent && ((context.status.redirectCount || 0) > 0 || (context.status.urlSanitization && (context.status.urlSanitization.inlinePatterns.length || context.status.urlSanitization.observedStrips || context.status.urlSanitization.navQueryStripped || context.status.urlSanitization.navPendoTokenStripped)))),
+      urlSanitized: adviceHasKey('vds'),
       launcherPresent: !!context.launcherPresent,
       hasError: (context.captured || []).some(l => l.level === 'error') || context.hasError === true,
       hasWarn: (context.captured || []).some(l => l.level === 'warn') || context.hasWarn === true,
+      // Detection signals read from the RAW advice (retains supportKeys) + checks, so the AI's
+      // KB excerpts mirror the Status panel's Related reading.
+      ...deriveDetectionSignals(context.advice, context.checks),
     };
     const kbEntries = selectRelatedReading(signals, 6);
     if (kbEntries && kbEntries.length) {
@@ -2191,10 +2231,6 @@ function initPopup() {
     // so the Related reading card reflects what was actually detected — capture-inspect surfaces
     // these as advice items / checks rather than as booleans on status.
     const adviceHasKey = (key) => adviceList.some(a => a && (a.supportKey === key || (Array.isArray(a.supportKeys) && a.supportKeys.includes(key))));
-    const checksText = checksToRender.join('\n');
-    const frameworkMatch = /SPA framework detected:\s*([a-z0-9]+)/i.exec(checksText);
-    const readingHasError = captured.some(l => l.level === 'error') || hasError === true;
-    const readingHasWarn = captured.some(l => l.level === 'warn') || hasWarn === true;
     const readingSignals = {
       pendoPresent: status.pendoPresent,
       validatePresent: status.validatePresent,
@@ -2204,17 +2240,12 @@ function initPopup() {
       hasAccountMeta: !!hasAFields,
       cspIssue: adviceHasKey('csp'),
       noResourceHits: status.resourceHits && status.resourceHits.length === 0,
-      isSpa: !!frameworkMatch,
-      frameworkHint: frameworkMatch ? frameworkMatch[1].toLowerCase() : undefined,
-      isIframe: adviceHasKey('iframe'),
-      hasGtm: /Google Tag Manager detected/i.test(checksText) || adviceHasKey('gtm'),
-      isSandbox: adviceHasKey('sandbox'),
       launcherPresent: !!launcherPresent,
-      agentVersionOld: adviceHasKey('agentDebug'),
       apiKeyMissing: !apiKeyFound,
       urlSanitized: adviceHasKey('vds'),
-      hasError: readingHasError,
-      hasWarn: readingHasWarn,
+      hasError: captured.some(l => l.level === 'error') || hasError === true,
+      hasWarn: captured.some(l => l.level === 'warn') || hasWarn === true,
+      ...deriveDetectionSignals(adviceList, checksToRender),
     };
     renderRelatedReading(readingSignals);
 

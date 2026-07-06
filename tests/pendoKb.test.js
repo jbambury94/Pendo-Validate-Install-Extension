@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { JSDOM } from 'jsdom';
-import { selectRelatedReading } from './helpers.js';
+import { selectRelatedReading, deriveDetectionSignals } from './helpers.js';
 
 let PENDO_KB, findKbByTopics, PENDO_KB_MIN_AGENT_VERSION;
 
@@ -301,5 +301,49 @@ describe('selectRelatedReading', () => {
     }, 6, findKbByTopics);
     const slugs = results.map(r => r.slug);
     expect(slugs).not.toContain('validate-install');
+  });
+});
+
+describe('deriveDetectionSignals', () => {
+  it('reads the SPA framework hint from checks text', () => {
+    const s = deriveDetectionSignals([], ['SPA framework detected: react']);
+    expect(s.isSpa).toBe(true);
+    expect(s.frameworkHint).toBe('react');
+  });
+
+  it('reads GTM from checks text', () => {
+    const s = deriveDetectionSignals([], ['Google Tag Manager detected']);
+    expect(s.hasGtm).toBe(true);
+  });
+
+  it('reads iframe / sandbox / segment / gtm from advice support keys', () => {
+    const s = deriveDetectionSignals([
+      { supportKey: 'iframe' },
+      { supportKey: 'sandbox' },
+      { supportKey: 'segment' },
+      { supportKey: 'gtm' },
+    ], []);
+    expect(s.isIframe).toBe(true);
+    expect(s.isSandbox).toBe(true);
+    expect(s.hasSegment).toBe(true);
+    expect(s.hasGtm).toBe(true);
+  });
+
+  it('detects an outdated agent when agentDebug is only in supportKeys[] (raw advice, not normalized)', () => {
+    const s = deriveDetectionSignals([
+      { supportKey: 'agentSettings', supportKeys: ['agentSettings', 'agentDebug'] },
+    ], []);
+    expect(s.agentVersionOld).toBe(true);
+  });
+
+  it('returns all-false/undefined for empty input', () => {
+    const s = deriveDetectionSignals(undefined, undefined);
+    expect(s.isSpa).toBe(false);
+    expect(s.frameworkHint).toBeUndefined();
+    expect(s.isIframe).toBe(false);
+    expect(s.hasGtm).toBe(false);
+    expect(s.hasSegment).toBe(false);
+    expect(s.isSandbox).toBe(false);
+    expect(s.agentVersionOld).toBe(false);
   });
 });
