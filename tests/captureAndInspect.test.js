@@ -401,6 +401,58 @@ describe('captureAndInspect — getSerializedMetadata', () => {
     expect(result.status.accountMetadata).toMatchObject({ industry: 'tech' })
   })
 
+  it('reads parentAccount from legacy agent._.options when getSerializedMetadata is absent', () => {
+    window.pendo = {
+      validateInstall: vi.fn(),
+      apiKey: 'k',
+      _: {
+        options: {
+          visitor: { id: 'v1' },
+          account: { id: 'a1' },
+          parentAccount: { id: 'p1', name: 'Parent Corp' },
+          apiKey: 'k',
+        },
+        state: { visitorId: 'v1', accountId: 'a1' },
+      },
+    }
+    const result = captureAndInspect()
+    expect(result.status.parentAccountId).toBe('p1')
+    expect(result.status.parentAccountMetadata).toMatchObject({ name: 'Parent Corp' })
+  })
+
+  it('reads parentAccount from getSerializedMetadata() when available', () => {
+    window.pendo = {
+      validateInstall: vi.fn(),
+      apiKey: 'k',
+      getSerializedMetadata: () => ({
+        visitor: { id: 'v1', email: 'a@b.c' },
+        account: { id: 'a1', name: 'Child Co' },
+        parentAccount: { id: 'p1', name: 'Parent Corp' },
+      }),
+      _: { state: { visitorId: 'v1', accountId: 'a1' } },
+    }
+    const result = captureAndInspect()
+    expect(result.status.parentAccountId).toBe('p1')
+    expect(result.status.parentAccountMetadata).toMatchObject({ name: 'Parent Corp' })
+    expect(result.checks).toContain('parentAccount present.')
+    expect(result.checks).toContain('Parent account metadata fields detected.')
+  })
+
+  it('does not warn when parentAccount is absent', () => {
+    window.pendo = {
+      validateInstall: vi.fn(),
+      apiKey: 'k',
+      getSerializedMetadata: () => ({
+        visitor: { id: 'v1' },
+        account: { id: 'a1', name: 'Acme' },
+      }),
+      _: { state: { visitorId: 'v1', accountId: 'a1' } },
+    }
+    const result = captureAndInspect()
+    expect(result.status.parentAccountId).toBeNull()
+    expect(result.advice.some(a => /parent account/i.test(a.text || ''))).toBe(false)
+  })
+
   it('skips agent._.options when agent._ is a function (underscore.js)', () => {
     const fn = () => {}
     fn.options = { visitor: { shouldIgnore: true } }
@@ -750,6 +802,14 @@ describe('captureAndInspect — init config detection (inline script fallback)',
     const flags = assessConfigFlags(captureAndInspect().status)
     expect(flags.detected).toBe(true)
     expect(flags.flags.map(f => f.key)).toContain('excludeAllText')
+  })
+
+  it('does not flag parentAccount as a non-standard config key', () => {
+    document.head.innerHTML = `<script>pendo.initialize({ visitor: { id: 'v' }, account: { id: 'a' }, parentAccount: { id: 'p' } })</script>`
+    window.pendo = { validateInstall: vi.fn(), _q: [] }
+    const flags = assessConfigFlags(captureAndInspect().status)
+    expect(flags.detected).toBe(true)
+    expect(flags.flags).toEqual([])
   })
 
   it('prefers the live _q queue over the inline script when both are present', () => {

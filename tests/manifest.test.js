@@ -41,7 +41,7 @@ describe('manifest web_accessible_resources', () => {
 })
 describe('manifest version', () => {
   it('version matches the current release', () => {
-    expect(manifest.version).toBe('1.8.6')
+    expect(manifest.version).toBe('1.8.7')
   })
 })
 

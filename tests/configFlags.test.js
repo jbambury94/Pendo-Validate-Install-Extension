@@ -14,8 +14,8 @@ describe('assessConfigFlags', () => {
     expect(assessConfigFlags(undefined)).toEqual({ detected: false, flags: [] })
   })
 
-  it('treats visitor/account/apiKey/publicAppId as standard (no flags)', () => {
-    const r = assessConfigFlags({ configKeys: ['visitor', 'account', 'apiKey', 'publicAppId'] })
+  it('treats visitor/account/parentAccount/apiKey/publicAppId as standard (no flags)', () => {
+    const r = assessConfigFlags({ configKeys: ['visitor', 'account', 'parentAccount', 'apiKey', 'publicAppId'] })
     expect(r.detected).toBe(true)
     expect(r.flags).toEqual([])
   })
@@ -61,7 +61,14 @@ describe('appendConfigFlagsAdviceToResult', () => {
     const result = baseResult(['visitor', 'account'])
     appendConfigFlagsAdviceToResult(result)
     expect(result.advice).toEqual([])
-    expect(result.checks).toContain('Standard configuration detected (visitor + account only).')
+    expect(result.checks).toContain('Standard configuration detected (visitor, account, and parentAccount).')
+  })
+
+  it('adds a passing check when parentAccount is included with standard keys', () => {
+    const result = baseResult(['visitor', 'account', 'parentAccount'])
+    appendConfigFlagsAdviceToResult(result)
+    expect(result.advice).toEqual([])
+    expect(result.checks).toContain('Standard configuration detected (visitor, account, and parentAccount).')
   })
 
   it('adds one grouped warning naming each flag + category and the deduped category links', () => {

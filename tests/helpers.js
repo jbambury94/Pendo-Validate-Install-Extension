@@ -221,6 +221,7 @@ export function selectRelatedReading(signals, max, findKbByTopicsFn) {
   if (signals.pendoPresent && !signals.validatePresent) topics.push('agent', 'troubleshooting')
   if (!signals.visitorId)                          topics.push('identity')
   if (signals.accountId == null)                   topics.push('identity', 'account')
+  if (signals.parentAccountId != null)           topics.push('parent-account', 'account', 'metadata')
   if (!signals.hasVisitorMeta)                     topics.push('metadata')
   if (!signals.hasAccountMeta && signals.hasVisitorMeta) topics.push('metadata', 'account')
   if (signals.cspIssue)                            topics.push('csp', 'security', 'network')
@@ -287,6 +288,7 @@ export function buildMarkdownReport(context, selectRelatedReadingFn) {
     detectedApiKey: status.detectedApiKey || 'unknown',
     visitorId: status.visitorId || 'not set',
     accountId: status.accountId == null ? 'not set' : status.accountId,
+    parentAccountId: status.parentAccountId == null ? 'not set' : status.parentAccountId,
     resourceHitCount: (status.resourceHits && status.resourceHits.length) || 0,
     redirectCount: status.redirectCount || 0,
     urlSanitizationPatterns: (status.urlSanitization && status.urlSanitization.inlinePatterns) || [],
@@ -296,6 +298,7 @@ export function buildMarkdownReport(context, selectRelatedReadingFn) {
   }
   if (status.visitorMetadata) meta.visitorMetadata = status.visitorMetadata
   if (status.accountMetadata) meta.accountMetadata = status.accountMetadata
+  if (status.parentAccountMetadata) meta.parentAccountMetadata = status.parentAccountMetadata
   if (cspMeta) meta.cspMeta = cspMeta
   if (launcherUrl) meta.validatedInUrl = launcherUrl
   lines.push("```json")
@@ -344,6 +347,7 @@ export function buildMarkdownReport(context, selectRelatedReadingFn) {
       validatePresent: status.validatePresent,
       visitorId: status.visitorId,
       accountId: status.accountId,
+      parentAccountId: status.parentAccountId,
       cspIssue: adviceHasKey('csp'),
       noResourceHits: status.resourceHits && status.resourceHits.length === 0,
       apiKeyMissing: !apiKeyFound,
@@ -394,6 +398,9 @@ export function buildPlainSummary(context) {
   lines.push(`Page: ${pageUrl || 'unknown'}`)
   lines.push(`Timestamp: ${timestamp}`)
   lines.push(`Validated in: ${validatedIn || 'page'}`)
+  if (status.parentAccountId != null) {
+    lines.push(`Parent AccountId: ${status.parentAccountId}`)
+  }
   lines.push(`Errors: ${errCount}   Warnings: ${warnCount}   Passing: ${okCount}`)
   lines.push('')
   if (checks && checks.length) {
@@ -505,6 +512,9 @@ export function buildAiPrompt(context, selectRelatedReadingFn) {
   lines.push(`API key found flag: ${context.apiKeyFound}`)
   lines.push(`VisitorId: ${context.status.visitorId || 'not set'}`)
   lines.push(`AccountId: ${context.status.accountId == null ? 'not set' : context.status.accountId}`)
+  if (context.status.parentAccountId != null) {
+    lines.push(`Parent AccountId: ${context.status.parentAccountId}`)
+  }
   lines.push(`CSP meta: ${context.cspMeta || 'none'}`)
 
   // Include metadata fields
@@ -519,6 +529,12 @@ export function buildAiPrompt(context, selectRelatedReadingFn) {
     lines.push(`Account metadata fields: ${keys.join(', ') || 'none'}`)
   } else {
     lines.push('Account metadata fields: none')
+  }
+  if (context.status.parentAccountMetadata && typeof context.status.parentAccountMetadata === 'object') {
+    const keys = Object.keys(context.status.parentAccountMetadata).slice(0, 20)
+    lines.push(`Parent account metadata fields: ${keys.join(', ') || 'none'}`)
+  } else if (context.status.parentAccountId != null) {
+    lines.push('Parent account metadata fields: none')
   }
 
   // Include quality assessment
@@ -550,6 +566,7 @@ export function buildAiPrompt(context, selectRelatedReadingFn) {
       validatePresent: context.status.validatePresent,
       visitorId: context.status.visitorId,
       accountId: context.status.accountId,
+      parentAccountId: context.status.parentAccountId,
       hasVisitorMeta: !!(context.status.visitorMetadata && typeof context.status.visitorMetadata === 'object' && Object.keys(context.status.visitorMetadata).some(k => k !== 'id')),
       hasAccountMeta: !!(context.status.accountMetadata && typeof context.status.accountMetadata === 'object' && Object.keys(context.status.accountMetadata).some(k => k !== 'id')),
       cspIssue: adviceHasKey('csp'),
@@ -925,7 +942,7 @@ const _captureInspectSrc = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), '..', 'extension', 'capture-inspect.js'),
   'utf8',
 )
-const _CAPTURE_INSPECT_REVISION = 2 // keep in sync with capture-inspect.js
+const _CAPTURE_INSPECT_REVISION = 3 // keep in sync with capture-inspect.js
 export function captureAndInspect(variant = 'page') {
   if (globalThis.__pendoValidateCaptureAndInspectRevision !== _CAPTURE_INSPECT_REVISION
     || typeof globalThis.__pendoValidateCaptureAndInspect !== 'function') {
@@ -945,6 +962,8 @@ export function assessInstallQuality(context) {
     accountId: { present: false, value: null, quality: 'good', issues: [] },
     visitorMetadata: { fields: [], missingRecommended: [], quality: 'good' },
     accountMetadata: { fields: [], missingRecommended: [], quality: 'good' },
+    parentAccount: { present: false, value: null, quality: 'good', issues: [] },
+    parentAccountMetadata: { fields: [], missingRecommended: [], quality: 'good' },
     environment: { isStaging: false, issues: [] },
   }
 
@@ -1021,6 +1040,34 @@ export function assessInstallQuality(context) {
     result.accountMetadata.missingRecommended = ['name', 'plan/tier']
   }
 
+  const paid = status.parentAccountId
+  if (paid != null) {
+    result.parentAccount.present = true
+    result.parentAccount.value = paid
+    if (PLACEHOLDER_IDS.test(String(paid).trim())) {
+      result.parentAccount.quality = 'poor'
+      result.parentAccount.issues.push(`parentAccountId "${paid}" is a placeholder value.`)
+    } else if (vid && String(paid) === String(vid)) {
+      result.parentAccount.quality = 'weak'
+      result.parentAccount.issues.push('parentAccountId is identical to visitorId (likely misconfiguration).')
+    }
+  }
+
+  const pmeta = status.parentAccountMetadata
+  if (paid != null) {
+    if (pmeta && typeof pmeta === 'object') {
+      const fields = Object.keys(pmeta).filter(k => k !== 'id')
+      result.parentAccountMetadata.fields = fields
+      const missingGroups = []
+      if (!fields.some(f => f.toLowerCase() === 'name')) missingGroups.push('name')
+      result.parentAccountMetadata.missingRecommended = missingGroups
+      if (fields.length === 0) result.parentAccountMetadata.quality = 'weak'
+    } else {
+      result.parentAccountMetadata.quality = 'weak'
+      result.parentAccountMetadata.missingRecommended = ['name']
+    }
+  }
+
   // Environment
   const isStaging = /\b(staging|preview|dev\.|qa\.|localhost)\b/i.test(pageUrl)
   result.environment.isStaging = isStaging
@@ -1055,6 +1102,11 @@ export function appendQualityAdviceToResult(result, pageUrl) {
   } else if (quality.accountId.quality === 'weak' && quality.accountId.issues.length) {
     result.advice.push({ text: quality.accountId.issues[0], source: 'builtin', supportKey: 'chooseIdsMetadata' })
   }
+  if (quality.parentAccount.quality === 'poor') {
+    result.advice.push({ text: `parentAccountId is set to a placeholder value ("${status.parentAccountId}"). Use a stable organisation identifier.`, source: 'builtin', supportKey: 'parentAccounts' })
+  } else if (quality.parentAccount.quality === 'weak' && quality.parentAccount.issues.length) {
+    result.advice.push({ text: quality.parentAccount.issues[0], source: 'builtin', supportKey: 'parentAccounts' })
+  }
   const hasSandboxAdvice = result.advice.some(a => a && a.supportKey === 'sandbox')
   if (quality.environment.issues.length && !hasSandboxAdvice) {
     result.advice.push({ text: quality.environment.issues[0] + ' Consider test prefixes and an Exclude List to keep analytics clean.', source: 'builtin', supportKey: 'sandbox' })
@@ -1064,7 +1116,7 @@ export function appendQualityAdviceToResult(result, pageUrl) {
 
 // ========== Configuration flag detection ==========
 /** Standard pendo.initialize keys that do NOT count as customisation "flags". */
-export const STANDARD_INIT_KEYS = new Set(['visitor', 'account', 'apiKey', 'publicAppId'])
+export const STANDARD_INIT_KEYS = new Set(['visitor', 'account', 'parentAccount', 'apiKey', 'publicAppId'])
 
 /** Known top-level pendo.initialize options mapped to their Web SDK config doc category. */
 export const CONFIG_FLAG_CATEGORY = {
@@ -1133,7 +1185,7 @@ export function appendConfigFlagsAdviceToResult(result) {
   result.advice = result.advice || []
   result.checks = result.checks || []
   if (!flags.length) {
-    result.checks.push('Standard configuration detected (visitor + account only).')
+    result.checks.push('Standard configuration detected (visitor, account, and parentAccount).')
     return result
   }
   const labelList = flags
@@ -1146,7 +1198,7 @@ export function appendConfigFlagsAdviceToResult(result) {
   const supportKeys = categories.map(c => CONFIG_CATEGORY_SUPPORT_KEY[c]).filter(Boolean)
   result.advice.push({
     text: `Non-standard configuration flags detected in pendo.initialize(): ${labelList}. `
-      + 'A standard install passes only visitor and account. Confirm each flag is intentional and '
+      + 'A standard install passes only visitor, account, and parentAccount. Confirm each flag is intentional and '
       + 'review it against the Pendo Web SDK configuration docs.',
     source: 'builtin',
     supportKey: 'agentConfig',

@@ -319,4 +319,55 @@ describe('buildMarkdownReport — Related reading section', () => {
     expect(md).toContain('## Related reading')
     expect(md).toContain('Pendo in multiple environments for development and testing')
   })
+
+  it('includes parentAccountId and parentAccountMetadata in the metadata JSON when present', () => {
+    const ctx = {
+      ...baseContext,
+      status: {
+        ...baseContext.status,
+        parentAccountId: 'parent-1',
+        parentAccountMetadata: { id: 'parent-1', name: 'Parent Corp' },
+      },
+    }
+    const md = buildMarkdownReport(ctx)
+    expect(md).toContain('"parentAccountId": "parent-1"')
+    expect(md).toContain('"parentAccountMetadata"')
+    expect(md).toContain('"name": "Parent Corp"')
+  })
+
+  it('omits parentAccountMetadata from metadata JSON when absent', () => {
+    const md = buildMarkdownReport(baseContext)
+    expect(md).toContain('"parentAccountId": "not set"')
+    expect(md).not.toContain('parentAccountMetadata')
+  })
+
+  it('surfaces parent-accounts related reading when parentAccountId is present', () => {
+    const ctx = {
+      ...baseContext,
+      status: {
+        ...baseContext.status,
+        parentAccountId: 'parent-1',
+        parentAccountMetadata: { id: 'parent-1', name: 'Parent Corp' },
+      },
+    }
+    const md = buildMarkdownReport(ctx, srrFn)
+    expect(md).toContain('## Related reading')
+    expect(md).toContain('Configure parent accounts (multi-level accounts)')
+  })
+})
+
+describe('buildJsonReport — parent account fields', () => {
+  it('includes parent account fields in serialized context when present', () => {
+    const ctx = {
+      ...baseContext,
+      status: {
+        ...baseContext.status,
+        parentAccountId: 'parent-1',
+        parentAccountMetadata: { id: 'parent-1', name: 'Parent Corp' },
+      },
+    }
+    const json = JSON.parse(buildJsonReport(ctx))
+    expect(json.status.parentAccountId).toBe('parent-1')
+    expect(json.status.parentAccountMetadata).toMatchObject({ name: 'Parent Corp' })
+  })
 })

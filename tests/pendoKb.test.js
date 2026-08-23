@@ -19,7 +19,7 @@ beforeAll(() => {
 describe('PENDO_KB data integrity', () => {
   it('is a non-empty array', () => {
     expect(Array.isArray(PENDO_KB)).toBe(true);
-    expect(PENDO_KB.length).toBeGreaterThanOrEqual(20);
+    expect(PENDO_KB.length).toBeGreaterThanOrEqual(32);
   });
 
   it('every entry has required fields', () => {
@@ -301,6 +301,20 @@ describe('selectRelatedReading', () => {
     }, 6, findKbByTopics);
     const slugs = results.map(r => r.slug);
     expect(slugs).not.toContain('validate-install');
+  });
+
+  it('surfaces parent-accounts article when parentAccountId is present', () => {
+    const results = selectRelatedReading({
+      pendoPresent: true,
+      validatePresent: true,
+      visitorId: 'user-123',
+      accountId: 'acct-9',
+      parentAccountId: 'parent-9',
+      hasVisitorMeta: true,
+      hasAccountMeta: true,
+    }, 6, findKbByTopics);
+    const slugs = results.map(r => r.slug);
+    expect(slugs).toContain('parent-accounts');
   });
 });
 

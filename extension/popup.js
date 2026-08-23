@@ -69,7 +69,7 @@ async function injectScriptFileAndRun(api, { target, world, file, func, args, in
 // the global the file defines (so the heavy logic lives in one place — the .js file).
 const _INJECTED_SCRIPTS = {
   // revision must match PENDO_VALIDATE_CAPTURE_INSPECT_REVISION in capture-inspect.js
-  'capture-inspect': { file: 'capture-inspect.js', revision: 2, func: (variant) => globalThis.__pendoValidateCaptureAndInspect(variant) },
+  'capture-inspect': { file: 'capture-inspect.js', revision: 3, func: (variant) => globalThis.__pendoValidateCaptureAndInspect(variant) },
   'enable-debugging': { file: 'enable-debugging.js', func: () => globalThis.__pendoValidateEnableDebugging() },
 };
 
@@ -209,6 +209,7 @@ const PENDO_SUPPORT = {
   sandbox: 'https://support.pendo.io/hc/en-us/articles/360031862352',
   agentDebug: 'https://support.pendo.io/hc/en-us/articles/360034229512',
   configureMetadata: 'https://support.pendo.io/hc/en-us/articles/360031832072',
+  parentAccounts: 'https://support.pendo.io/hc/en-us/articles/360032201831-Configure-parent-accounts-multi-level-accounts',
   signedMetadata: 'https://support.pendo.io/hc/en-us/articles/360039616892',
   hostnameAllowlist: 'https://support.pendo.io/hc/en-us/articles/16101373319707',
   launcherPlan: 'https://support.pendo.io/hc/en-us/articles/21163862516507',
@@ -241,6 +242,7 @@ const SUPPORT_LABELS = {
   sandbox: 'Dev & testing environments',
   agentDebug: 'Web SDK debugger',
   configureMetadata: 'Configure metadata',
+  parentAccounts: 'Parent accounts (multi-level)',
   signedMetadata: 'Signed metadata (JWT)',
   hostnameAllowlist: 'Hostname allowlist',
   launcherPlan: 'Launcher planning guide',
@@ -363,6 +365,8 @@ function assessInstallQuality(context) {
     accountId: { present: false, value: null, quality: 'good', issues: [] },
     visitorMetadata: { fields: [], missingRecommended: [], quality: 'good' },
     accountMetadata: { fields: [], missingRecommended: [], quality: 'good' },
+    parentAccount: { present: false, value: null, quality: 'good', issues: [] },
+    parentAccountMetadata: { fields: [], missingRecommended: [], quality: 'good' },
     environment: { isStaging: false, issues: [] },
   };
 
@@ -433,6 +437,34 @@ function assessInstallQuality(context) {
     result.accountMetadata.missingRecommended = ['name', 'plan/tier'];
   }
 
+  const paid = status.parentAccountId;
+  if (paid != null) {
+    result.parentAccount.present = true;
+    result.parentAccount.value = paid;
+    if (PLACEHOLDER_IDS.test(String(paid).trim())) {
+      result.parentAccount.quality = 'poor';
+      result.parentAccount.issues.push(`parentAccountId "${paid}" is a placeholder value.`);
+    } else if (vid && String(paid) === String(vid)) {
+      result.parentAccount.quality = 'weak';
+      result.parentAccount.issues.push('parentAccountId is identical to visitorId (likely misconfiguration).');
+    }
+  }
+
+  const pmeta = status.parentAccountMetadata;
+  if (paid != null) {
+    if (pmeta && typeof pmeta === 'object') {
+      const fields = Object.keys(pmeta).filter(k => k !== 'id');
+      result.parentAccountMetadata.fields = fields;
+      const missingGroups = [];
+      if (!fields.some(f => f.toLowerCase() === 'name')) missingGroups.push('name');
+      result.parentAccountMetadata.missingRecommended = missingGroups;
+      if (fields.length === 0) result.parentAccountMetadata.quality = 'weak';
+    } else {
+      result.parentAccountMetadata.quality = 'weak';
+      result.parentAccountMetadata.missingRecommended = ['name'];
+    }
+  }
+
   // Lower environments (staging/dev/localhost) should use test-prefixed IDs to keep production analytics clean.
   const isStaging = /\b(staging|preview|dev\.|qa\.|localhost)\b/i.test(pageUrl);
   result.environment.isStaging = isStaging;
@@ -462,6 +494,11 @@ function appendQualityAdviceToResult(result, pageUrl) {
   } else if (quality.accountId.quality === 'weak' && quality.accountId.issues.length) {
     result.advice.push({ text: quality.accountId.issues[0], source: 'builtin', supportKey: 'chooseIdsMetadata' });
   }
+  if (quality.parentAccount.quality === 'poor') {
+    result.advice.push({ text: `parentAccountId is set to a placeholder value ("${status.parentAccountId}"). Use a stable organisation identifier.`, source: 'builtin', supportKey: 'parentAccounts' });
+  } else if (quality.parentAccount.quality === 'weak' && quality.parentAccount.issues.length) {
+    result.advice.push({ text: quality.parentAccount.issues[0], source: 'builtin', supportKey: 'parentAccounts' });
+  }
   // captureAndInspect already emits a sandbox/staging recommendation when the page URL
   // looks like a lower environment, so only add this one when none exists yet (e.g.
   // localhost, which captureAndInspect's URL pattern does not match) to avoid two
@@ -475,7 +512,7 @@ function appendQualityAdviceToResult(result, pageUrl) {
 
 // ========== Configuration flag detection ==========
 /** Standard pendo.initialize keys that do NOT count as customisation "flags". */
-const STANDARD_INIT_KEYS = new Set(['visitor', 'account', 'apiKey', 'publicAppId']);
+const STANDARD_INIT_KEYS = new Set(['visitor', 'account', 'parentAccount', 'apiKey', 'publicAppId']);
 
 /** Known top-level pendo.initialize options mapped to their Web SDK config doc category. */
 const CONFIG_FLAG_CATEGORY = {
@@ -544,7 +581,7 @@ function appendConfigFlagsAdviceToResult(result) {
   result.advice = result.advice || [];
   result.checks = result.checks || [];
   if (!flags.length) {
-    result.checks.push('Standard configuration detected (visitor + account only).');
+    result.checks.push('Standard configuration detected (visitor, account, and parentAccount).');
     return result;
   }
   const labelList = flags
@@ -557,7 +594,7 @@ function appendConfigFlagsAdviceToResult(result) {
   const supportKeys = categories.map(c => CONFIG_CATEGORY_SUPPORT_KEY[c]).filter(Boolean);
   result.advice.push({
     text: `Non-standard configuration flags detected in pendo.initialize(): ${labelList}. `
-      + 'A standard install passes only visitor and account. Confirm each flag is intentional and '
+      + 'A standard install passes only visitor, account, and parentAccount. Confirm each flag is intentional and '
       + 'review it against the Pendo Web SDK configuration docs.',
     source: 'builtin',
     supportKey: 'agentConfig',
@@ -608,6 +645,7 @@ function selectRelatedReading(signals, max) {
   if (signals.pendoPresent && !signals.validatePresent) topics.push('agent', 'troubleshooting');
   if (!signals.visitorId)                          topics.push('identity');
   if (signals.accountId == null)                   topics.push('identity', 'account');
+  if (signals.parentAccountId != null)           topics.push('parent-account', 'account', 'metadata');
   if (!signals.hasVisitorMeta)                     topics.push('metadata');
   if (!signals.hasAccountMeta && signals.hasVisitorMeta) topics.push('metadata', 'account');
   if (signals.cspIssue)                            topics.push('csp', 'security', 'network');
@@ -676,6 +714,7 @@ function buildMarkdownReport(context) {
     detectedApiKey: status.detectedApiKey || 'unknown',
     visitorId: status.visitorId || 'not set',
     accountId: status.accountId == null ? 'not set' : status.accountId,
+    parentAccountId: status.parentAccountId == null ? 'not set' : status.parentAccountId,
     resourceHitCount: (status.resourceHits && status.resourceHits.length) || 0,
     redirectCount: status.redirectCount || 0,
     urlSanitizationPatterns: (status.urlSanitization && status.urlSanitization.inlinePatterns) || [],
@@ -685,6 +724,7 @@ function buildMarkdownReport(context) {
   };
   if (status.visitorMetadata) meta.visitorMetadata = status.visitorMetadata;
   if (status.accountMetadata) meta.accountMetadata = status.accountMetadata;
+  if (status.parentAccountMetadata) meta.parentAccountMetadata = status.parentAccountMetadata;
   if (cspMeta) meta.cspMeta = cspMeta;
   if (launcherUrl) meta.validatedInUrl = launcherUrl;
   lines.push("```json");
@@ -733,6 +773,7 @@ function buildMarkdownReport(context) {
       validatePresent: status.validatePresent,
       visitorId: status.visitorId,
       accountId: status.accountId,
+      parentAccountId: status.parentAccountId,
       cspIssue: adviceHasKey('csp'),
       noResourceHits: status.resourceHits && status.resourceHits.length === 0,
       apiKeyMissing: !apiKeyFound,
@@ -782,6 +823,9 @@ function buildPlainSummary(context) {
   lines.push(`Page: ${pageUrl || 'unknown'}`);
   lines.push(`Timestamp: ${timestamp}`);
   lines.push(`Validated in: ${validatedIn || 'page'}`);
+  if (status.parentAccountId != null) {
+    lines.push(`Parent AccountId: ${status.parentAccountId}`);
+  }
   lines.push(`Errors: ${errCount}   Warnings: ${warnCount}   Passing: ${okCount}`);
   lines.push('');
   if (checks && checks.length) {
@@ -947,7 +991,7 @@ async function runInPage() {
   }
 
   const EMPTY_RESULT = {
-    status: { pendoPresent: false, validatePresent: false, version: null, detectedApiKey: null, visitorId: null, accountId: null, visitorMetadata: null, accountMetadata: null, configKeys: null, configSource: null, resourceHits: [] },
+    status: { pendoPresent: false, validatePresent: false, version: null, detectedApiKey: null, visitorId: null, accountId: null, visitorMetadata: null, accountMetadata: null, parentAccountId: null, parentAccountMetadata: null, configKeys: null, configSource: null, resourceHits: [] },
     captured: [], advice: [], checks: [], cspMeta: '', apiKeyFound: false, hasError: true, hasWarn: false
   };
 
@@ -1123,6 +1167,9 @@ function buildAiPrompt(context) {
   lines.push(`API key found flag: ${context.apiKeyFound}`);
   lines.push(`VisitorId: ${context.status.visitorId || 'not set'}`);
   lines.push(`AccountId: ${context.status.accountId == null ? 'not set' : context.status.accountId}`);
+  if (context.status.parentAccountId != null) {
+    lines.push(`Parent AccountId: ${context.status.parentAccountId}`);
+  }
   lines.push(`CSP meta: ${context.cspMeta || 'none'}`);
 
   // Include metadata fields
@@ -1137,6 +1184,12 @@ function buildAiPrompt(context) {
     lines.push(`Account metadata fields: ${keys.join(', ') || 'none'}`);
   } else {
     lines.push('Account metadata fields: none');
+  }
+  if (context.status.parentAccountMetadata && typeof context.status.parentAccountMetadata === 'object') {
+    const keys = Object.keys(context.status.parentAccountMetadata).slice(0, 20);
+    lines.push(`Parent account metadata fields: ${keys.join(', ') || 'none'}`);
+  } else if (context.status.parentAccountId != null) {
+    lines.push('Parent account metadata fields: none');
   }
 
   // Include quality assessment
@@ -1168,6 +1221,7 @@ function buildAiPrompt(context) {
       validatePresent: context.status.validatePresent,
       visitorId: context.status.visitorId,
       accountId: context.status.accountId,
+      parentAccountId: context.status.parentAccountId,
       hasVisitorMeta: !!(context.status.visitorMetadata && typeof context.status.visitorMetadata === 'object' && Object.keys(context.status.visitorMetadata).some(k => k !== 'id')),
       hasAccountMeta: !!(context.status.accountMetadata && typeof context.status.accountMetadata === 'object' && Object.keys(context.status.accountMetadata).some(k => k !== 'id')),
       cspIssue: adviceHasKey('csp'),
@@ -1937,16 +1991,19 @@ function initPopup() {
   }
 
   /** Render Identity card (visitor, account, API key). */
-  function renderIdentityCard({ visitorId, accountId, detectedApiKey }) {
+  function renderIdentityCard({ visitorId, accountId, parentAccountId, detectedApiKey }) {
     identityBody.replaceChildren();
     appendKvRow(identityBody, { label: 'VisitorId', value: visitorId || '—', copyId: 'identityCopyVisitorId' });
     appendKvRow(identityBody, { label: 'AccountId', value: accountId == null ? '—' : String(accountId), copyId: 'identityCopyAccountId' });
+    if (parentAccountId != null) {
+      appendKvRow(identityBody, { label: 'Parent AccountId', value: String(parentAccountId), copyId: 'identityCopyParentAccountId' });
+    }
     appendKvRow(identityBody, { label: 'API key', value: detectedApiKey || '—', copyId: 'identityCopyApiKey' });
     identityCard.hidden = false;
   }
 
   /** Render the Metadata card (visitor + account JSON previews). */
-  function renderMetadataCard({ visitorMetadata, accountMetadata }) {
+  function renderMetadataCard({ visitorMetadata, accountMetadata, parentAccountMetadata }) {
     metadataBody.replaceChildren();
     const fields = (meta) => meta && typeof meta === 'object' ? Object.keys(meta).length : 0;
     const renderSection = (label, meta) => {
@@ -1995,6 +2052,9 @@ function initPopup() {
     };
     renderSection('Visitor', visitorMetadata);
     renderSection('Account', accountMetadata);
+    if (parentAccountMetadata && typeof parentAccountMetadata === 'object' && Object.keys(parentAccountMetadata).length > 0) {
+      renderSection('Parent Account', parentAccountMetadata);
+    }
     metadataCard.hidden = false;
   }
 
@@ -2236,6 +2296,7 @@ function initPopup() {
       validatePresent: status.validatePresent,
       visitorId: status.visitorId,
       accountId: status.accountId,
+      parentAccountId: status.parentAccountId,
       hasVisitorMeta: !!hasVFields,
       hasAccountMeta: !!hasAFields,
       cspIssue: adviceHasKey('csp'),
@@ -2259,11 +2320,13 @@ function initPopup() {
     renderIdentityCard({
       visitorId: status.visitorId,
       accountId: status.accountId,
+      parentAccountId: status.parentAccountId,
       detectedApiKey: status.detectedApiKey
     });
     renderMetadataCard({
       visitorMetadata: status.visitorMetadata,
-      accountMetadata: status.accountMetadata
+      accountMetadata: status.accountMetadata,
+      parentAccountMetadata: status.parentAccountMetadata
     });
 
     renderPageSnapshot(res);

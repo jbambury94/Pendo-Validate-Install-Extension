@@ -1,5 +1,7 @@
 # Changelog
 
+## 1.8.7
+
 ## 1.8.6
 - **Knowledge base refresh.** Audited the bundled `support.pendo.io` articles and added six current ones (31 total), led by *Validate your Pendo installation*.
 - **Smarter Related reading.** The Status panel, Markdown report, and AI prompt now derive suggestions from what validation actually detected (SPA, iframe, GTM, sandbox, old agent, CSP, Launcher, visitor/account metadata) via a shared `deriveDetectionSignals()` helper, and surface a "what good looks like" reference on a genuinely clean pass.
