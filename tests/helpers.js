@@ -1118,6 +1118,9 @@ export function appendQualityAdviceToResult(result, pageUrl) {
 /** Standard pendo.initialize keys that do NOT count as customisation "flags". */
 export const STANDARD_INIT_KEYS = new Set(['visitor', 'account', 'parentAccount', 'apiKey', 'publicAppId'])
 
+/** Identity-carrying subset of STANDARD_INIT_KEYS, in canonical order, named in the passing check. */
+export const IDENTITY_INIT_KEYS = ['visitor', 'account', 'parentAccount']
+
 /** Known top-level pendo.initialize options mapped to their Web SDK config doc category. */
 export const CONFIG_FLAG_CATEGORY = {
   // Core (https://web-sdk.pendo.io/config/core)
@@ -1174,9 +1177,10 @@ export function assessConfigFlags(status) {
 
 /**
  * Append a single grouped warning when pendo.initialize() uses options beyond a standard
- * install (visitor + account, plus the required apiKey/publicAppId). Each flag is named with
- * its config category and the warning links to the Web SDK configuration docs. No-op when the
- * init options were not readable; adds a passing check when only standard keys are present.
+ * install (visitor + account, optionally parentAccount, plus the required apiKey/publicAppId).
+ * Each flag is named with its config category and the warning links to the Web SDK
+ * configuration docs. No-op when the init options were not readable; adds a passing check
+ * naming the identity keys actually passed when only standard keys are present.
  */
 export function appendConfigFlagsAdviceToResult(result) {
   if (!result || !result.status || !result.status.pendoPresent) return result
@@ -1185,7 +1189,8 @@ export function appendConfigFlagsAdviceToResult(result) {
   result.advice = result.advice || []
   result.checks = result.checks || []
   if (!flags.length) {
-    result.checks.push('Standard configuration detected (visitor, account, and parentAccount).')
+    const present = IDENTITY_INIT_KEYS.filter(k => result.status.configKeys.includes(k))
+    result.checks.push(`Standard configuration detected (${present.length ? present.join(' + ') : 'no non-standard flags'}).`)
     return result
   }
   const labelList = flags
@@ -1198,7 +1203,7 @@ export function appendConfigFlagsAdviceToResult(result) {
   const supportKeys = categories.map(c => CONFIG_CATEGORY_SUPPORT_KEY[c]).filter(Boolean)
   result.advice.push({
     text: `Non-standard configuration flags detected in pendo.initialize(): ${labelList}. `
-      + 'A standard install passes only visitor, account, and parentAccount. Confirm each flag is intentional and '
+      + 'A standard install passes visitor and account (plus parentAccount for multi-level accounts). Confirm each flag is intentional and '
       + 'review it against the Pendo Web SDK configuration docs.',
     source: 'builtin',
     supportKey: 'agentConfig',
