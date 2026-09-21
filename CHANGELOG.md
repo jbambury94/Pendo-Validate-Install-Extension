@@ -1,10 +1,10 @@
 # Changelog
 
 ## 1.8.8
-- **Bundled Pendo Web SDK updated to 2.341.0** (was 2.330.2). Regenerated `extension/vendor/pendo-agent.bundle.js`, `src/pendo.config.json`, and self-hosted designer assets under `extension/pendo/` via `npm run build:agent:refresh`. Self-instrumentation still initialises with `assets.localOnly: true` (no remotely-hosted code).
-- **Pendo Launcher (Beta) and CDP validation.** Recognises both known Launcher Beta Chrome Web Store IDs. Phase 1.75 CDP collects every Launcher isolated-world context on the tab and probes each frame for the agent global so validation runs in the frame that actually hosts Pendo — common on iframe-heavy apps such as Google Workspace.
-- **Clearer Launcher validated reporting.** Page snapshot, exports, and the status hero distinguish snippet-only validation (**Not checked (snippet)**) from Launcher-specific yes/no when CDP or MAIN-world Launcher validation ran.
-- **Toolchain.** Added `.nvmrc` (Node 24) so local development matches CI. Dev dependencies: Vitest 5.0.1 (from 3.2.6), jsdom 30.1.0 (from 26.1.0), esbuild 0.28.2, adm-zip 0.6.1.
+- **Self-instrumentation SDK 2.341.0** (was 2.330.2); bundled agent and designer assets refreshed.
+- **Launcher validation.** Supports both Launcher Beta store IDs; CDP validation picks the iframe that actually hosts the agent on multi-frame pages.
+- **Launcher validated** is clearer in the panel and exports when only the snippet was checked vs Launcher-specific validation.
+- **Dev toolchain.** Node 24 via `.nvmrc`; Vitest 5 and jsdom 30.
 - **Tests.** 603 tests across 27 suites.
 
 ## 1.8.7
