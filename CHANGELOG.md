@@ -1,5 +1,7 @@
 # Changelog
 
+## 1.9.0
+
 ## 1.8.8
 - **Self-instrumentation SDK 2.341.0** (was 2.330.2); bundled agent and designer assets refreshed.
 - **Launcher validation.** Supports both Launcher Beta store IDs; CDP validation picks the iframe that actually hosts the agent on multi-frame pages.
