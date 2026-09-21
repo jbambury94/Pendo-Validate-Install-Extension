@@ -153,11 +153,34 @@ async function managementGetAll() {
   }
 }
 
-/** Chrome Web Store extension IDs — Launcher tabs use chrome-extension://<id>/…; URL path rarely matches title/regex-only search. */
+/** Chrome Web Store extension IDs — Launcher tabs use chrome-extension://<id>/…; URL path rarely matches title/regex-only search. Beta may ship under more than one ID over time. */
 const PENDO_LAUNCHER_EXTENSION_IDS = {
-  stable: 'epnhoepnmfjdbjjfanpjklemanhkjgil',
-  beta: 'pndmgfbnmbbgkikpcnndoeknbmlkhgmj'
+  stable: ['epnhoepnmfjdbjjfanpjklemanhkjgil'],
+  beta: ['pndmgfbnmbbgkikpcnndoeknbmlkhgmj', 'ggbfghmbjlgbagomdlifpdflpeafbekl']
 };
+
+function extensionIdMatchesList(id, ids) {
+  const list = Array.isArray(ids) ? ids : [ids];
+  return list.includes(id);
+}
+
+/** Metadata/export: true/false only when Launcher-specific validation ran; undefined when not checked (e.g. snippet path). */
+function launcherDataValidatedForMetadata({ launcherAttempted, launcherDataValidated }) {
+  if (!launcherAttempted) return undefined;
+  if (launcherDataValidated === undefined) return undefined;
+  return launcherDataValidated === true;
+}
+
+/** Settings → Page snapshot label for Launcher validated. */
+function formatLauncherValidatedSnapshot({ launcherAttempted, snippetOnPage, validatedIn, launcherDataValidated }) {
+  if (!launcherAttempted) return 'Not checked';
+  if (snippetOnPage && (validatedIn === 'page' || !validatedIn) && launcherDataValidated === undefined) {
+    return 'Not checked (snippet)';
+  }
+  if (launcherDataValidated === true) return 'Yes';
+  if (launcherDataValidated === false) return 'No';
+  return '—';
+}
 
 /** Launcher often has no open tab (toolbar popup only). Detect install via chrome.management when tab search finds nothing. Returns { variant, id } with the real extension ID, or null. */
 function detectInstalledPendoLauncherExtension() {
@@ -165,9 +188,9 @@ function detectInstalledPendoLauncherExtension() {
     if (!exts) return null;
     try {
       const enabled = exts.filter(e => e.enabled);
-      const byBetaId = enabled.find(e => e.id === PENDO_LAUNCHER_EXTENSION_IDS.beta);
+      const byBetaId = enabled.find(e => extensionIdMatchesList(e.id, PENDO_LAUNCHER_EXTENSION_IDS.beta));
       if (byBetaId) return { variant: 'launcher-beta', id: byBetaId.id };
-      const byStableId = enabled.find(e => e.id === PENDO_LAUNCHER_EXTENSION_IDS.stable);
+      const byStableId = enabled.find(e => extensionIdMatchesList(e.id, PENDO_LAUNCHER_EXTENSION_IDS.stable));
       if (byStableId) return { variant: 'launcher', id: byStableId.id };
       const launcherNamed = enabled.filter(e => /pendo\s*launcher/i.test(e.name || ''));
       const betaNamed = launcherNamed.find(e => /\bbeta\b/i.test(e.name || ''));
@@ -709,7 +732,7 @@ function buildMarkdownReport(context) {
     timestamp,
     snippetOnPage: !!snippetOnPage,
     launcherPresent: launcherAttempted ? !!launcherPresent : undefined,
-    launcherDataValidated: launcherAttempted ? !!launcherDataValidated : undefined,
+    launcherDataValidated: launcherDataValidatedForMetadata({ launcherAttempted, launcherDataValidated }),
     launcherAttempted: !!launcherAttempted,
     validatedIn: validatedIn || origin || 'page',
     pendoPresent: status.pendoPresent,
@@ -886,6 +909,29 @@ function buildLauncherInvokeExpression(src, globalName, argsExpr = '') {
   return `if (typeof globalThis.${globalName} !== 'function') {\n${src}\n}\nglobalThis.${globalName}(${argsExpr});`;
 }
 
+/** How long to gather Launcher isolated-world contexts after Runtime.enable settles. */
+const LAUNCHER_CONTEXT_COLLECT_MS = 250;
+
+/**
+ * Choose the Launcher isolated world that actually hosts the agent. On multi-frame pages
+ * the Launcher injects a content script into every frame but initializes Pendo in only one,
+ * so probe each candidate for the agent global. Falls back to the first candidate when no
+ * frame has one — that's the genuine "Launcher installed but not active here" case.
+ */
+async function pickLauncherAgentContext(target, candidates) {
+  for (const ctx of candidates) {
+    try {
+      const probe = await chrome.debugger.sendCommand(target, 'Runtime.evaluate', {
+        expression: '!!(window.pendo || window.Pendo)',
+        contextId: ctx.id,
+        returnByValue: true
+      });
+      if (!probe?.exceptionDetails && probe?.result?.value === true) return ctx;
+    } catch {}
+  }
+  return candidates[0];
+}
+
 /**
  * Evaluate a JS expression inside the Pendo Launcher extension's content-script world via CDP.
  * Returns { ok: true, value } or { ok: false, reason, message? }.
@@ -904,29 +950,34 @@ async function evaluateInLauncherWorld(tabId, launcherId, expression) {
   }
 
   try {
-    // Resolve as soon as the Launcher's execution context appears (Runtime.enable emits
-    // executionContextCreated for existing contexts). Arm the safety-net timer only after
-    // Runtime.enable settles — otherwise a slow enable can outlive the cap and yield a
-    // false no-launcher-context even when the Launcher world is present.
-    const launcherCtx = await new Promise((resolve, reject) => {
+    // Runtime.enable emits executionContextCreated for existing contexts; the collection
+    // timer is armed only after it settles, so a slow enable cannot yield a false
+    // no-launcher-context when the Launcher world is present.
+    // The Launcher content script runs in every frame, so Runtime.enable replays one
+    // isolated-world context per frame and their arrival order says nothing about which
+    // one hosts the agent. Collect them all, then pick by probing for window.pendo.
+    const candidates = await new Promise((resolve, reject) => {
+      const found = [];
       let settled = false, timer = null;
       const cleanup = () => {
         if (timer) clearTimeout(timer);
         try { chrome.debugger.onEvent.removeListener(handler); } catch {}
       };
-      const finish = (ctx) => { if (!settled) { settled = true; cleanup(); resolve(ctx || null); } };
+      const finish = () => { if (!settled) { settled = true; cleanup(); resolve(found); } };
       const fail = (err) => { if (!settled) { settled = true; cleanup(); reject(err); } };
       const handler = (source, method, params) => {
         if (source.tabId !== tabId || method !== 'Runtime.executionContextCreated') return;
         const ctx = params.context;
-        if ((ctx.origin || '').toLowerCase() === expectedOrigin) finish(ctx);
+        if ((ctx.origin || '').toLowerCase() === expectedOrigin) found.push(ctx);
       };
       chrome.debugger.onEvent.addListener(handler);
       chrome.debugger.sendCommand(target, 'Runtime.enable')
-        .then(() => { if (!settled) timer = setTimeout(() => finish(null), 250); })
+        .then(() => { if (!settled) timer = setTimeout(finish, LAUNCHER_CONTEXT_COLLECT_MS); })
         .catch(fail);
     });
-    if (!launcherCtx) return { ok: false, reason: 'no-launcher-context' };
+    if (!candidates.length) return { ok: false, reason: 'no-launcher-context' };
+
+    const launcherCtx = await pickLauncherAgentContext(target, candidates);
 
     const evalResult = await chrome.debugger.sendCommand(target, 'Runtime.evaluate', {
       expression,
@@ -1029,7 +1080,7 @@ async function runInPage() {
       snippetOnPage: true,
       launcherAttempted: true,
       launcherPresent: launcherInPage,
-      launcherDataValidated: false,
+      launcherDataValidated: undefined,
       validatedIn: 'page',
       origin: 'page'
     };
@@ -2080,7 +2131,12 @@ function initPopup() {
     appendKvRow(pageSnapshotBody, { label: 'Detected key', value: status.detectedApiKey || '—', copyId: 'pageSnapshotCopyDetectedKey' });
     appendKvRow(pageSnapshotBody, { label: 'Snippet on page', value: yn(snippetOnPage), mono: false, copyId: 'pageSnapshotCopySnippetOnPage' });
     appendKvRow(pageSnapshotBody, { label: 'Pendo Launcher', value: launcherDisplay, mono: false, copyId: 'pageSnapshotCopyPendoLauncher' });
-    appendKvRow(pageSnapshotBody, { label: 'Launcher validated', value: yn(launcherDataValidated), mono: false, copyId: 'pageSnapshotCopyLauncherValidated' });
+    appendKvRow(pageSnapshotBody, {
+      label: 'Launcher validated',
+      value: formatLauncherValidatedSnapshot({ launcherAttempted, snippetOnPage, validatedIn, launcherDataValidated }),
+      mono: false,
+      copyId: 'pageSnapshotCopyLauncherValidated'
+    });
     appendKvRow(pageSnapshotBody, { label: 'Validated in', value: validatedInDisplay, mono: false, copyId: 'pageSnapshotCopyValidatedIn' });
     appendKvRow(pageSnapshotBody, { label: 'Resource hits', value: String(status.resourceHits.length), mono: false, copyId: 'pageSnapshotCopyResourceHits' });
     pageSnapshotCard.hidden = false;
@@ -2342,7 +2398,7 @@ function initPopup() {
       timestamp: toIso(now),
       status, captured, advice: adviceList, checks: checksToRender, cspMeta: cspMeta || '', apiKeyFound, origin: validatedIn || origin || 'page',
       hasError: !!hasError, hasWarn: !!hasWarn,
-      snippetOnPage, launcherPresent, launcherAttempted, launcherDataValidated: !!launcherDataValidated, validatedIn: validatedIn || 'page', launcherUrl: res.launcherUrl,
+      snippetOnPage, launcherPresent, launcherAttempted, launcherDataValidated: res.launcherDataValidated, validatedIn: validatedIn || 'page', launcherUrl: res.launcherUrl,
       validationPath: res.validationPath || (validatedIn === 'page' ? 'page' : 'unknown'),
       validationTabId: res.validationTabId,
       launcherExtensionId: res.launcherExtensionId

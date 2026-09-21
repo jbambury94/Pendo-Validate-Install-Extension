@@ -170,6 +170,19 @@ describe('buildMarkdownReport — content sections', () => {
     expect(md).not.toContain('"launcherDataValidated"')
   })
 
+  it('omits launcherDataValidated from metadata when validation ran via snippet (Launcher not checked)', () => {
+    const ctx = {
+      ...baseContext,
+      snippetOnPage: true,
+      launcherAttempted: true,
+      launcherPresent: true,
+      launcherDataValidated: undefined,
+      validatedIn: 'page',
+    }
+    const md = buildMarkdownReport(ctx)
+    expect(md).not.toContain('"launcherDataValidated"')
+  })
+
   it('omits observedPendoResources but keeps resourceHitCount in metadata', () => {
     const ctx = {
       ...baseContext,
