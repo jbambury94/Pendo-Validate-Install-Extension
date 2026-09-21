@@ -1,6 +1,6 @@
 name: Release
 
-# Pushing a version tag (e.g. v1.8.2) runs tests, builds the Chrome / Edge /
+# Pushing a version tag (e.g. v1.8.2) runs tests, builds the Chrome /
 # Firefox zips, and attaches them to a GitHub Release. workflow_dispatch
 # builds the same zips as workflow artifacts without publishing a Release.
 #

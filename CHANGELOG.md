@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.8.7
+- **Parent accounts (multi-level accounts) are now recognised.** `captureAndInspect()` reads the `parentAccount` object passed to `pendo.initialize()` — from `getSerializedMetadata()`, `agent._.options`, or `agent._.state`, matching the existing visitor/account resolution — and reports it as `parentAccountId` / `parentAccountMetadata`. The Status panel shows a **Parent AccountId** row on the Identity card and a **Parent Account** section on the Metadata card, and the Markdown report, JSON export, Slack summary, and AI prompt all carry the new fields. Because parent accounts are a subscription-wide opt-in, nothing is reported when the object is absent — no new warnings for the majority of installs.
+- **Fixed a false "non-standard configuration" warning on multi-level installs.** `parentAccount` was not in `STANDARD_INIT_KEYS`, so every install using it was flagged as passing customisation flags. It is now treated as standard, and the passing check names the identity keys actually detected (for example *Standard configuration detected (visitor + account + parentAccount).*) instead of a fixed string, so the check never claims a key the page did not pass. The accompanying warning now describes `parentAccount` as optional rather than required.
+- **Parent-account install quality.** `assessInstallQuality()` grades a detected parent account and `appendQualityAdviceToResult()` surfaces a recommendation when `parentAccountId` is a placeholder or duplicates the `visitorId`. Reusing the Account ID as the parent value — the documented pattern for accounts with no parent — is treated as correct.
+- **Knowledge base.** Added *Configure parent accounts (multi-level accounts)* (32 articles total), surfaced in Related reading and the AI prompt whenever a parent account is detected.
+- **Injected-script revision bumped to 3** so an upgraded panel replaces the stale `capture-inspect` global left in a page by 1.8.6 instead of reusing it.
+- **Tooling.** A workspace `npm.exclude` for `dev/**` stops the editor's npm task detection from failing on the gitignored `dev/screenshots/package.json`.
+- **Tests.** New parent-account coverage across capture, install quality, config flags, reports, and the knowledge base. 593 tests across 26 suites.
+- **Chrome Web Store distribution.** Chrome and Edge users install from the [Chrome Web Store listing](https://chromewebstore.google.com/detail/Pendo%20Install%20Validator/ihcmfkfdfpoiadcpleapkjeppmephpfa) (Edge: enable **Allow extensions from other stores** first). Updates are automatic; `README.md` and `UPDATE.md` reflect the new flow. Firefox remains on the GitHub Release zip.
+- **Release packaging.** Dropped the Edge build target — `npm run build` now produces Chrome (Web Store submission artifact) and Firefox zips only. Removed `build:edge` and the obsolete `docs/screenshots/install.png` (Load unpacked mockup).
+- **Attribution.** Documented **John Bambury** (Pendo Professional Services) as author in `manifest.json`, `package.json`, and privacy contact details.
+
 ## 1.8.6
 - **Knowledge base refresh.** Audited the bundled `support.pendo.io` articles and added six current ones (31 total), led by *Validate your Pendo installation*.
 - **Smarter Related reading.** The Status panel, Markdown report, and AI prompt now derive suggestions from what validation actually detected (SPA, iframe, GTM, sandbox, old agent, CSP, Launcher, visitor/account metadata) via a shared `deriveDetectionSignals()` helper, and surface a "what good looks like" reference on a genuinely clean pass.

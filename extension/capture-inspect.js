@@ -1,6 +1,6 @@
-/** Injected into page MAIN world via scripting.executeScript. This file is the single source of truth for captureAndInspect — tests/helpers.js loads and runs it directly (via vm) rather than mirroring it. Re-assigns when revision changes so upgrades/re-injection replace a stale page global. Assigned as a function expression (not a top-level declaration) so it never creates a page-global `captureAndInspect` binding that could collide with the host page. Keep revision (2) in sync with popup.js _INJECTED_SCRIPTS['capture-inspect'].revision. */
-if (globalThis.__pendoValidateCaptureAndInspectRevision !== 2 || typeof globalThis.__pendoValidateCaptureAndInspect !== 'function') {
-globalThis.__pendoValidateCaptureAndInspectRevision = 2;
+/** Injected into page MAIN world via scripting.executeScript. This file is the single source of truth for captureAndInspect — tests/helpers.js loads and runs it directly (via vm) rather than mirroring it. Re-assigns when revision changes so upgrades/re-injection replace a stale page global. Assigned as a function expression (not a top-level declaration) so it never creates a page-global `captureAndInspect` binding that could collide with the host page. Keep revision (3) in sync with popup.js _INJECTED_SCRIPTS['capture-inspect'].revision. */
+if (globalThis.__pendoValidateCaptureAndInspectRevision !== 3 || typeof globalThis.__pendoValidateCaptureAndInspect !== 'function') {
+globalThis.__pendoValidateCaptureAndInspectRevision = 3;
 globalThis.__pendoValidateCaptureAndInspect = function captureAndInspect(variant = 'page') {
   const captured = []
   const original = { log: console.log, warn: console.warn, error: console.error, info: console.info }
@@ -59,6 +59,8 @@ globalThis.__pendoValidateCaptureAndInspect = function captureAndInspect(variant
     accountId: null,
     visitorMetadata: null,
     accountMetadata: null,
+    parentAccountId: null,
+    parentAccountMetadata: null,
     configKeys: null,
     configSource: null,
     resourceHits: [],
@@ -109,8 +111,11 @@ globalThis.__pendoValidateCaptureAndInspect = function captureAndInspect(variant
       const legacyState = agent._ && typeof agent._ === 'object' ? agent._.state : null
       const visitorSrc = (serialized && serialized.visitor) || (opts && opts.visitor) || (legacyState && legacyState.visitor)
       const accountSrc = (serialized && serialized.account) || (opts && opts.account) || (legacyState && legacyState.account)
+      const parentAccountSrc = (serialized && serialized.parentAccount) || (opts && opts.parentAccount) || (legacyState && legacyState.parentAccount)
       status.visitorMetadata = safeCloneFields(visitorSrc)
       status.accountMetadata = safeCloneFields(accountSrc)
+      status.parentAccountMetadata = safeCloneFields(parentAccountSrc)
+      if (parentAccountSrc && typeof parentAccountSrc === 'object') status.parentAccountId = parentAccountSrc.id != null ? parentAccountSrc.id : null
     }
   } catch {}
 
@@ -251,9 +256,11 @@ globalThis.__pendoValidateCaptureAndInspect = function captureAndInspect(variant
     else checks.push("visitorId present.")
     if (status.accountId == null) advice.push({ text: "accountId not found. If you use accounts, provide accountId in pendo.initialize.", source: 'builtin', supportKey: 'chooseIdsMetadata' })
     else checks.push("accountId present.")
+    if (status.parentAccountId != null) checks.push("parentAccount present.")
     const hasFieldsBeyondId = (meta) => !!meta && typeof meta === 'object' && Object.keys(meta).some(k => k !== 'id')
     if (hasFieldsBeyondId(status.visitorMetadata)) checks.push("Visitor metadata fields detected.")
     if (hasFieldsBeyondId(status.accountMetadata)) checks.push("Account metadata fields detected.")
+    if (status.parentAccountId != null && hasFieldsBeyondId(status.parentAccountMetadata)) checks.push("Parent account metadata fields detected.")
     if (status.visitorId && !hasFieldsBeyondId(status.visitorMetadata)) {
       advice.push({ text: "No visitor metadata fields detected beyond the ID. Consider passing name, email, and role for better segmentation.", source: 'builtin', supportKey: 'chooseIdsMetadata' })
     }

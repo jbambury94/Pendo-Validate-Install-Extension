@@ -412,6 +412,20 @@ const PENDO_KB = [
       'Generate a hash for the hosted file and add the integrity attribute to the script tag.',
       'SRI cannot apply to dynamically-loaded staging agents; force the production SDK in staging as a workaround.'
     ]
+  },
+  {
+    slug: 'parent-accounts',
+    title: 'Configure parent accounts (multi-level accounts)',
+    url: 'https://support.pendo.io/hc/en-us/articles/360032201831-Configure-parent-accounts-multi-level-accounts',
+    topics: ['account', 'parent-account', 'metadata', 'identity'],
+    summary: 'How to send parentAccount in pendo.initialize() for multi-level account hierarchies.',
+    bullets: [
+      'Parent accounts require a subscription-wide setting enabled by Pendo Support before use.',
+      'Add a parentAccount object with id (and optional metadata) alongside visitor and account in pendo.initialize().',
+      'Every account must send a parent account value once the feature is enabled for your subscription.',
+      'If an account has no parent, resend the standard Account ID as the parent value to keep data consistent.'
+    ],
+    supportKey: 'parentAccounts'
   }
 ];
 

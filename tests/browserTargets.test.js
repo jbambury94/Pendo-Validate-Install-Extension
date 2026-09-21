@@ -12,16 +12,16 @@ const sourceManifest = JSON.parse(
 )
 
 describe('transformManifest', () => {
-  it('exposes the three supported build targets', () => {
-    expect(TARGETS).toEqual(['chrome', 'edge', 'firefox'])
+  it('exposes the supported build targets', () => {
+    expect(TARGETS).toEqual(['chrome', 'firefox'])
   })
 
   it('throws on an unknown target', () => {
     expect(() => transformManifest(sourceManifest, 'safari')).toThrow(/Unknown build target/)
   })
 
-  it.each(['chrome', 'edge'])('leaves the manifest unchanged for %s', (target) => {
-    const out = transformManifest(sourceManifest, target)
+  it('leaves the manifest unchanged for chrome', () => {
+    const out = transformManifest(sourceManifest, 'chrome')
     expect(out).toEqual(sourceManifest)
     expect(out).not.toBe(sourceManifest) // must be a copy, never the source object
   })

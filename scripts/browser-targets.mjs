@@ -3,7 +3,7 @@
 // build.mjs stages a copy per target and rewrites the manifest via these
 // pure functions so tests can assert on them without touching the filesystem.
 
-export const TARGETS = ['chrome', 'edge', 'firefox'];
+export const TARGETS = ['chrome', 'firefox'];
 
 // APIs Firefox MV3 does not implement. popup.js degrades gracefully when
 // they are absent (debugger-based Launcher introspection returns null and
@@ -23,7 +23,7 @@ export function transformManifest(manifest, target) {
     throw new Error(`Unknown build target "${target}". Expected one of: ${TARGETS.join(', ')}`);
   }
   const out = structuredClone(manifest);
-  if (target !== 'firefox') return out; // Edge is Chromium: byte-identical manifest.
+  if (target !== 'firefox') return out; // Chrome: byte-identical manifest (also used for Web Store uploads).
 
   out.permissions = out.permissions.filter(
     (p) => !FIREFOX_UNSUPPORTED_PERMISSIONS.includes(p),

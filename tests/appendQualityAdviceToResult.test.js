@@ -63,3 +63,31 @@ describe('appendQualityAdviceToResult — sandbox de-duplication', () => {
     expect(result.advice).toHaveLength(0)
   })
 })
+
+describe('appendQualityAdviceToResult — parentAccount', () => {
+  const parentAdvice = (advice) => advice.filter((a) => a && a.supportKey === 'parentAccounts')
+
+  it('adds placeholder parentAccountId advice with supportKey parentAccounts', () => {
+    const result = baseResult({
+      status: { parentAccountId: 'test', parentAccountMetadata: { id: 'test' } },
+    })
+    appendQualityAdviceToResult(result, 'https://app.example.com/dashboard')
+    expect(parentAdvice(result.advice)).toHaveLength(1)
+    expect(parentAdvice(result.advice)[0].text).toContain('placeholder')
+  })
+
+  it('adds weak parentAccountId advice when identical to visitorId', () => {
+    const result = baseResult({
+      status: { parentAccountId: 'user-123', visitorId: 'user-123' },
+    })
+    appendQualityAdviceToResult(result, 'https://app.example.com/dashboard')
+    expect(parentAdvice(result.advice)).toHaveLength(1)
+    expect(parentAdvice(result.advice)[0].text).toContain('identical')
+  })
+
+  it('adds no parentAccount advice when parentAccountId is absent', () => {
+    const result = baseResult()
+    appendQualityAdviceToResult(result, 'https://app.example.com/dashboard')
+    expect(parentAdvice(result.advice)).toHaveLength(0)
+  })
+})

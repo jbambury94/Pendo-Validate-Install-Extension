@@ -1,5 +1,5 @@
 // Builds distributable zips from the single extension/ source folder:
-//   node scripts/build.mjs [chrome|edge|firefox|all]   (default: all)
+//   node scripts/build.mjs [chrome|firefox|all]   (default: all)
 //
 // For each target this stages extension/ into dist/staging/<target>/ (minus
 // dev-only files), rewrites manifest.json via transformManifest(), and zips

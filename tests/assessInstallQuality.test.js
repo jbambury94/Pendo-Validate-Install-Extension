@@ -121,6 +121,55 @@ describe('assessInstallQuality', () => {
     })
   })
 
+  describe('parentAccount', () => {
+    it('does not penalize absence of parentAccountId', () => {
+      const result = assessInstallQuality(goodContext)
+      expect(result.parentAccount.present).toBe(false)
+      expect(result.parentAccount.quality).toBe('good')
+    })
+
+    it('reports good when parentAccountId matches accountId (valid rollup pattern)', () => {
+      const ctx = {
+        ...goodContext,
+        status: {
+          ...goodContext.status,
+          parentAccountId: 'acme-corp-456',
+          parentAccountMetadata: { id: 'acme-corp-456', name: 'Acme Corp' },
+        },
+      }
+      const result = assessInstallQuality(ctx)
+      expect(result.parentAccount.present).toBe(true)
+      expect(result.parentAccount.quality).toBe('good')
+      expect(result.parentAccountMetadata.quality).toBe('good')
+    })
+
+    it('flags placeholder parentAccountId as poor', () => {
+      const ctx = {
+        ...goodContext,
+        status: {
+          ...goodContext.status,
+          parentAccountId: 'test',
+          parentAccountMetadata: { id: 'test' },
+        },
+      }
+      const result = assessInstallQuality(ctx)
+      expect(result.parentAccount.quality).toBe('poor')
+    })
+
+    it('flags parentAccountId identical to visitorId as weak', () => {
+      const ctx = {
+        ...goodContext,
+        status: {
+          ...goodContext.status,
+          parentAccountId: 'user-abc-123',
+          parentAccountMetadata: { id: 'user-abc-123' },
+        },
+      }
+      const result = assessInstallQuality(ctx)
+      expect(result.parentAccount.quality).toBe('weak')
+    })
+  })
+
   describe('environment', () => {
     it('flags staging URL without test prefix on visitorId', () => {
       const ctx = { pageUrl: 'https://staging.app.com', status: { ...goodContext.status, visitorId: 'user-123' } }

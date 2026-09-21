@@ -12,7 +12,7 @@
   <img src="https://img.shields.io/badge/Chrome-MV3-blue" alt="Chrome MV3" />
   <img src="https://img.shields.io/badge/Edge-MV3-blue" alt="Edge MV3" />
   <img src="https://img.shields.io/badge/Firefox-MV3%20(128%2B)-orange" alt="Firefox MV3 (128+)" />
-  <img src="https://img.shields.io/badge/version-1.8.6-FF4876" alt="Version 1.8.6" />
+  <img src="https://img.shields.io/badge/version-1.8.7-FF4876" alt="Version 1.8.7" />
   <img src="https://img.shields.io/badge/AI-OpenAI%20%7C%20Claude%20%7C%20Gemini-lightgrey" alt="AI: OpenAI | Claude | Gemini" />
 </p>
 
@@ -24,7 +24,7 @@
 
 ## The problem
 
-Debugging a Pendo installation today means juggling browser DevTools, running `pendo.validateInstall()` by hand, guessing whether the snippet or the Pendo Launcher loaded, hunting for a missing API key, and cross-referencing CSP headers — all before you can even tell whether visitor identity is flowing. This extension collapses all of that into a single button click. One codebase ships to Chrome, Edge, and Firefox — grab the zip for your browser from [Releases](../../releases).
+Debugging a Pendo installation today means juggling browser DevTools, running `pendo.validateInstall()` by hand, guessing whether the snippet or the Pendo Launcher loaded, hunting for a missing API key, and cross-referencing CSP headers — all before you can even tell whether visitor identity is flowing. This extension collapses all of that into a single button click. One codebase ships to Chrome, Edge, and Firefox — install from the [Chrome Web Store](https://chromewebstore.google.com/detail/Pendo%20Install%20Validator/ihcmfkfdfpoiadcpleapkjeppmephpfa) on Chromium browsers, or grab the Firefox zip from [Releases](../../releases).
 
 ## Why you'll like it
 
@@ -41,23 +41,17 @@ Debugging a Pendo installation today means juggling browser DevTools, running `p
 
 ## Install in 30 seconds
 
-<p align="center">
-  <img src="docs/screenshots/install.png" width="600" alt="Loading the extension from chrome://extensions" />
-</p>
+**Chrome:** [Add Pendo Install Validator from the Chrome Web Store](https://chromewebstore.google.com/detail/Pendo%20Install%20Validator/ihcmfkfdfpoiadcpleapkjeppmephpfa) — click **Add to Chrome**, then pin the toolbar icon. Updates arrive automatically.
 
-Download the zip for your browser from the [latest GitHub Release](../../releases/latest) — one file per target:
+| Browser | Install |
+|---|---|
+| **Chrome** | [Chrome Web Store listing](https://chromewebstore.google.com/detail/Pendo%20Install%20Validator/ihcmfkfdfpoiadcpleapkjeppmephpfa) — **Add to Chrome**. |
+| **Edge** | Open `edge://extensions`, turn on **Allow extensions from other stores**, then use the same [Chrome Web Store listing](https://chromewebstore.google.com/detail/Pendo%20Install%20Validator/ihcmfkfdfpoiadcpleapkjeppmephpfa). Updates arrive automatically. |
+| **Firefox** (128+) | Download `pendo-validate-install-<version>-firefox.zip` from the [latest GitHub Release](../../releases/latest). Open `about:debugging#/runtime/this-firefox`, click **Load Temporary Add-on…**, and select the zip (no need to unzip). |
 
-| Browser | Release file | Install steps |
-|---|---|---|
-| **Chrome** | `pendo-validate-install-<version>-chrome.zip` | Unzip, open `chrome://extensions`, enable **Developer mode** (top-right toggle), click **Load unpacked**, select the unzipped folder. |
-| **Edge** | `pendo-validate-install-<version>-edge.zip` | Unzip, open `edge://extensions`, enable **Developer mode** (bottom-left toggle), click **Load unpacked**, select the unzipped folder. |
-| **Firefox** (128+) | `pendo-validate-install-<version>-firefox.zip` | Open `about:debugging#/runtime/this-firefox`, click **Load Temporary Add-on…**, select the zip (no need to unzip). |
+> **Firefox note:** the zip is unsigned, so Firefox loads it as a *temporary* add-on that is removed when the browser restarts — reload it from `about:debugging`. A permanent install would require Mozilla (AMO) signing.
 
-Then pin the extension icon in the toolbar for quick access.
-
-> **Firefox note:** the zip is unsigned, so Firefox loads it as a *temporary* add-on that is removed when the browser restarts — just reload it from `about:debugging`. A permanent install requires Mozilla (AMO) signing.
-
-**From source** (Chrome / Edge): clone this repo and **Load unpacked** → select the `extension/` folder directly. To apply code changes after editing: click the refresh icon on the extension card, then click the toolbar icon to reopen the panel. For Firefox, build first (`npm install && npm run build:firefox`) since the source manifest is Chrome-flavoured.
+**From source** (development): clone this repo and **Load unpacked** → select the `extension/` folder (Chrome or Edge). To apply code changes after editing: click the refresh icon on the extension card, then click the toolbar icon to reopen the panel. For Firefox, build first (`npm install && npm run build:firefox`) since the source manifest is Chrome-flavoured.
 
 ---
 
@@ -104,12 +98,12 @@ Your key is stored locally in `chrome.storage.local` and is only sent when valid
 ## For developers
 
 - Release notes — see [CHANGELOG.md](CHANGELOG.md).
-- Run the test suite: `npm install && npm test` (Vitest + jsdom, 510 tests across 22 suites).
-- Build the release zips: `npm run build` (all three browsers) or `npm run build:chrome` / `build:edge` / `build:firefox`. Output lands in `dist/`; the per-browser manifest transforms live in `scripts/browser-targets.mjs`.
+- Run the test suite: `npm install && npm test` (Vitest + jsdom).
+- Build release packages: `npm run build` (Chrome + Firefox) or `npm run build:chrome` / `build:firefox`. Output lands in `dist/` — the Chrome zip is the artifact uploaded to the Chrome Web Store; the Firefox zip is attached to GitHub Releases. Per-target manifest transforms live in `scripts/browser-targets.mjs`.
 - UI element / `data-action` reference — see [extension/popup-actions.md](extension/popup-actions.md).
 
 ---
 
 <p align="center">
-  <sub>v1.8.6 &middot; Manifest V3 &middot; Chrome + Edge + Firefox &middot; Built with the Pendo Web SDK</sub>
+  <sub>v1.8.7 &middot; Manifest V3 &middot; Chrome + Edge + Firefox &middot; Built with the Pendo Web SDK &middot; John Bambury (Pendo Professional Services)</sub>
 </p>

@@ -14,8 +14,8 @@ describe('assessConfigFlags', () => {
     expect(assessConfigFlags(undefined)).toEqual({ detected: false, flags: [] })
   })
 
-  it('treats visitor/account/apiKey/publicAppId as standard (no flags)', () => {
-    const r = assessConfigFlags({ configKeys: ['visitor', 'account', 'apiKey', 'publicAppId'] })
+  it('treats visitor/account/parentAccount/apiKey/publicAppId as standard (no flags)', () => {
+    const r = assessConfigFlags({ configKeys: ['visitor', 'account', 'parentAccount', 'apiKey', 'publicAppId'] })
     expect(r.detected).toBe(true)
     expect(r.flags).toEqual([])
   })
@@ -57,11 +57,32 @@ describe('appendConfigFlagsAdviceToResult', () => {
     expect(result.checks).toEqual([])
   })
 
-  it('adds a passing check when only standard keys are present', () => {
+  it('adds a passing check naming only the identity keys actually passed', () => {
     const result = baseResult(['visitor', 'account'])
     appendConfigFlagsAdviceToResult(result)
     expect(result.advice).toEqual([])
-    expect(result.checks).toContain('Standard configuration detected (visitor + account only).')
+    expect(result.checks).toContain('Standard configuration detected (visitor + account).')
+    expect(result.checks[0]).not.toContain('parentAccount')
+  })
+
+  it('names parentAccount in the passing check only when it is present', () => {
+    const result = baseResult(['visitor', 'account', 'parentAccount'])
+    appendConfigFlagsAdviceToResult(result)
+    expect(result.advice).toEqual([])
+    expect(result.checks).toContain('Standard configuration detected (visitor + account + parentAccount).')
+  })
+
+  it('falls back when no identity keys are passed', () => {
+    const result = baseResult(['apiKey'])
+    appendConfigFlagsAdviceToResult(result)
+    expect(result.checks).toContain('Standard configuration detected (no non-standard flags).')
+  })
+
+  it('describes parentAccount as optional in the non-standard warning', () => {
+    const result = baseResult(['visitor', 'account', 'disableCookies'])
+    appendConfigFlagsAdviceToResult(result)
+    expect(result.advice[0].text).toContain('plus parentAccount for multi-level accounts')
+    expect(result.advice[0].text).not.toContain('only visitor, account, and parentAccount')
   })
 
   it('adds one grouped warning naming each flag + category and the deduped category links', () => {

@@ -121,4 +121,20 @@ describe('buildPlainSummary — content', () => {
     const ctx = { ...baseContext, pageUrl: undefined }
     expect(buildPlainSummary(ctx)).toContain('Page: unknown')
   })
+
+  it('includes Parent AccountId when present', () => {
+    const ctx = {
+      ...baseContext,
+      status: {
+        ...baseContext.status,
+        parentAccountId: 'parent-1',
+        parentAccountMetadata: { id: 'parent-1', name: 'Parent Corp' },
+      },
+    }
+    expect(buildPlainSummary(ctx)).toContain('Parent AccountId: parent-1')
+  })
+
+  it('omits Parent AccountId when absent', () => {
+    expect(buildPlainSummary(baseContext)).not.toContain('Parent AccountId')
+  })
 })
