@@ -7,18 +7,24 @@ const LAUNCHER_ID = 'abc123launcher'
 const TARGET = { tabId: TAB_ID }
 const LAUNCHER_ORIGIN = `chrome-extension://${LAUNCHER_ID}`
 
-function installDebuggerMock({ contexts = [], evaluateResult = { result: { value: 99 } } } = {}) {
+const AGENT_PROBE = '!!(window.pendo || window.Pendo)'
+
+function installDebuggerMock({ contexts = [], evaluateResult = { result: { value: 99 } }, agentContextId = null } = {}) {
   let eventHandler = null
   global.chrome.debugger = {
     attach: vi.fn().mockResolvedValue(undefined),
     detach: vi.fn().mockResolvedValue(undefined),
-    sendCommand: vi.fn(async (_target, method) => {
+    sendCommand: vi.fn(async (_target, method, params) => {
       if (method === 'Runtime.enable' && eventHandler) {
         for (const context of contexts) {
           eventHandler({ tabId: TAB_ID }, 'Runtime.executionContextCreated', { context })
         }
       }
-      if (method === 'Runtime.evaluate') return evaluateResult
+      if (method === 'Runtime.evaluate') {
+        // The agent probe runs before the caller's expression; only agentContextId has it.
+        if (params?.expression === AGENT_PROBE) return { result: { value: params.contextId === agentContextId } }
+        return evaluateResult
+      }
       return {}
     }),
     onEvent: {
@@ -82,11 +88,43 @@ describe('evaluateInLauncherWorld', () => {
     expect(chrome.debugger.detach).toHaveBeenCalledWith(TARGET)
   })
 
-  it('resolves as soon as the launcher context appears, without waiting for the safety-net timer', async () => {
-    // Runtime.enable emits the context synchronously, so the whole chain settles via
-    // microtasks — no need to advance the fake timers. Asserts the fixed-delay wait is gone.
-    const result = await evaluateInLauncherWorld(TAB_ID, LAUNCHER_ID, '1+1')
-    expect(result).toEqual({ ok: true, value: 99 })
+  it('evaluates in the launcher frame that hosts the agent, not the first one reported', async () => {
+    // The Launcher content script runs in every frame of a multi-frame page, so arrival
+    // order says nothing about which isolated world actually holds window.pendo.
+    installDebuggerMock({
+      contexts: [
+        { id: 11, origin: LAUNCHER_ORIGIN, auxData: { frameId: 'frame-a' } },
+        { id: 22, origin: LAUNCHER_ORIGIN, auxData: { frameId: 'frame-b' } },
+        { id: 33, origin: LAUNCHER_ORIGIN, auxData: { frameId: 'frame-c' } },
+      ],
+      agentContextId: 22,
+    })
+    const promise = evaluateInLauncherWorld(TAB_ID, LAUNCHER_ID, '1+1')
+    await vi.runAllTimersAsync()
+    expect(await promise).toEqual({ ok: true, value: 99 })
+    expect(chrome.debugger.sendCommand).toHaveBeenCalledWith(TARGET, 'Runtime.evaluate', {
+      expression: '1+1',
+      contextId: 22,
+      returnByValue: true,
+    })
+  })
+
+  it('falls back to the first launcher frame when none hosts the agent', async () => {
+    installDebuggerMock({
+      contexts: [
+        { id: 11, origin: LAUNCHER_ORIGIN, auxData: { frameId: 'frame-a' } },
+        { id: 22, origin: LAUNCHER_ORIGIN, auxData: { frameId: 'frame-b' } },
+      ],
+      agentContextId: null,
+    })
+    const promise = evaluateInLauncherWorld(TAB_ID, LAUNCHER_ID, '1+1')
+    await vi.runAllTimersAsync()
+    expect(await promise).toEqual({ ok: true, value: 99 })
+    expect(chrome.debugger.sendCommand).toHaveBeenCalledWith(TARGET, 'Runtime.evaluate', {
+      expression: '1+1',
+      contextId: 11,
+      returnByValue: true,
+    })
   })
 
   it('does not time out while Runtime.enable is still pending', async () => {
@@ -113,6 +151,9 @@ describe('evaluateInLauncherWorld', () => {
     }
 
     const promise = evaluateInLauncherWorld(TAB_ID, LAUNCHER_ID, '1+1')
+    // First pass advances Runtime.enable's 400ms delay; the second flushes the collection
+    // timer, which is only armed once enable settles.
+    await vi.runAllTimersAsync()
     await vi.runAllTimersAsync()
     expect(await promise).toEqual({ ok: true, value: 99 })
   })

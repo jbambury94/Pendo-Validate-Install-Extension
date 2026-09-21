@@ -1,9 +1,11 @@
 # Changelog
 
 ## 1.8.8
-- **Bundled Pendo Web SDK updated to 2.341.0** (was 2.330.2). Regenerated `extension/vendor/pendo-agent.bundle.js`, `src/pendo.config.json`, and self-hosted designer assets under `extension/pendo/` via `npm run build:agent:refresh`. Self-instrumentation still initialises with `assets.localOnly: true` (no remotely-hosted code).
-- **Toolchain.** Added `.nvmrc` (Node 24) so local development matches CI. Dev dependencies: Vitest 5.0.1 (from 3.2.6), jsdom 30.1.0 (from 26.1.0), esbuild 0.28.2, adm-zip 0.6.1.
-- **Tests.** 593 tests across 26 suites (unchanged count; runner and DOM environment upgrades only).
+- **Self-instrumentation SDK 2.341.0** (was 2.330.2); bundled agent and designer assets refreshed.
+- **Launcher validation.** Supports both Launcher Beta store IDs; CDP validation picks the iframe that actually hosts the agent on multi-frame pages.
+- **Launcher validated** is clearer in the panel and exports when only the snippet was checked vs Launcher-specific validation.
+- **Dev toolchain.** Node 24 via `.nvmrc`; Vitest 5 and jsdom 30.
+- **Tests.** 603 tests across 27 suites.
 
 ## 1.8.7
 - **Parent accounts (multi-level accounts) are now recognised.** `captureAndInspect()` reads the `parentAccount` object passed to `pendo.initialize()` — from `getSerializedMetadata()`, `agent._.options`, or `agent._.state`, matching the existing visitor/account resolution — and reports it as `parentAccountId` / `parentAccountMetadata`. The Status panel shows a **Parent AccountId** row on the Identity card and a **Parent Account** section on the Metadata card, and the Markdown report, JSON export, Slack summary, and AI prompt all carry the new fields. Because parent accounts are a subscription-wide opt-in, nothing is reported when the object is absent — no new warnings for the majority of installs.

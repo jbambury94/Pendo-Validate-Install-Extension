@@ -43,6 +43,53 @@ export const PENDO_SUPPORT = {
   agentConfigReplay:      'https://web-sdk.pendo.io/config/replay',
 }
 
+/** Chrome Web Store extension IDs for Pendo Launcher (keep in sync with extension/popup.js). */
+export const PENDO_LAUNCHER_EXTENSION_IDS = {
+  stable: ['epnhoepnmfjdbjjfanpjklemanhkjgil'],
+  beta: ['pndmgfbnmbbgkikpcnndoeknbmlkhgmj', 'ggbfghmbjlgbagomdlifpdflpeafbekl'],
+}
+
+export function extensionIdMatchesList(id, ids) {
+  const list = Array.isArray(ids) ? ids : [ids]
+  return list.includes(id)
+}
+
+/** Pure detection from chrome.management-shaped extension records. */
+export function detectInstalledPendoLauncherFromExtensions(extensions) {
+  if (!extensions) return null
+  try {
+    const enabled = extensions.filter(e => e.enabled)
+    const byBetaId = enabled.find(e => extensionIdMatchesList(e.id, PENDO_LAUNCHER_EXTENSION_IDS.beta))
+    if (byBetaId) return { variant: 'launcher-beta', id: byBetaId.id }
+    const byStableId = enabled.find(e => extensionIdMatchesList(e.id, PENDO_LAUNCHER_EXTENSION_IDS.stable))
+    if (byStableId) return { variant: 'launcher', id: byStableId.id }
+    const launcherNamed = enabled.filter(e => /pendo\s*launcher/i.test(e.name || ''))
+    const betaNamed = launcherNamed.find(e => /\bbeta\b/i.test(e.name || ''))
+    if (betaNamed) return { variant: 'launcher-beta', id: betaNamed.id }
+    const stableNamed = launcherNamed.find(e => !/\bbeta\b/i.test(e.name || ''))
+    if (stableNamed) return { variant: 'launcher', id: stableNamed.id }
+    return null
+  } catch {
+    return null
+  }
+}
+
+export function launcherDataValidatedForMetadata({ launcherAttempted, launcherDataValidated }) {
+  if (!launcherAttempted) return undefined
+  if (launcherDataValidated === undefined) return undefined
+  return launcherDataValidated === true
+}
+
+export function formatLauncherValidatedSnapshot({ launcherAttempted, snippetOnPage, validatedIn, launcherDataValidated }) {
+  if (!launcherAttempted) return 'Not checked'
+  if (snippetOnPage && (validatedIn === 'page' || !validatedIn) && launcherDataValidated === undefined) {
+    return 'Not checked (snippet)'
+  }
+  if (launcherDataValidated === true) return 'Yes'
+  if (launcherDataValidated === false) return 'No'
+  return '—'
+}
+
 export const SUPPORT_LABELS = {
   installGuide: 'Install guide',
   installComponents: 'Snippet components',
@@ -278,7 +325,7 @@ export function buildMarkdownReport(context, selectRelatedReadingFn) {
     timestamp,
     snippetOnPage: !!snippetOnPage,
     launcherPresent: launcherAttempted ? !!launcherPresent : undefined,
-    launcherDataValidated: launcherAttempted ? !!launcherDataValidated : undefined,
+    launcherDataValidated: launcherDataValidatedForMetadata({ launcherAttempted, launcherDataValidated }),
     launcherAttempted: !!launcherAttempted,
     validatedIn: validatedIn || origin || 'page',
     pendoPresent: status.pendoPresent,
@@ -631,6 +678,29 @@ export function buildLauncherInvokeExpression(src, globalName, argsExpr = '') {
   return `if (typeof globalThis.${globalName} !== 'function') {\n${src}\n}\nglobalThis.${globalName}(${argsExpr});`
 }
 
+/** How long to gather Launcher isolated-world contexts after Runtime.enable settles. */
+export const LAUNCHER_CONTEXT_COLLECT_MS = 250
+
+/**
+ * Choose the Launcher isolated world that actually hosts the agent. On multi-frame pages
+ * the Launcher injects a content script into every frame but initializes Pendo in only one,
+ * so probe each candidate for the agent global. Falls back to the first candidate when no
+ * frame has one — that's the genuine "Launcher installed but not active here" case.
+ */
+export async function pickLauncherAgentContext(target, candidates) {
+  for (const ctx of candidates) {
+    try {
+      const probe = await chrome.debugger.sendCommand(target, 'Runtime.evaluate', {
+        expression: '!!(window.pendo || window.Pendo)',
+        contextId: ctx.id,
+        returnByValue: true
+      })
+      if (!probe?.exceptionDetails && probe?.result?.value === true) return ctx
+    } catch {}
+  }
+  return candidates[0]
+}
+
 /**
  * Evaluate a JS expression inside the Pendo Launcher extension's content-script world via CDP.
  * Returns { ok: true, value } or { ok: false, reason, message? }.
@@ -649,29 +719,34 @@ export async function evaluateInLauncherWorld(tabId, launcherId, expression) {
   }
 
   try {
-    // Resolve as soon as the Launcher's execution context appears (Runtime.enable emits
-    // executionContextCreated for existing contexts). Arm the safety-net timer only after
-    // Runtime.enable settles — otherwise a slow enable can outlive the cap and yield a
-    // false no-launcher-context even when the Launcher world is present.
-    const launcherCtx = await new Promise((resolve, reject) => {
+    // Runtime.enable emits executionContextCreated for existing contexts; the collection
+    // timer is armed only after it settles, so a slow enable cannot yield a false
+    // no-launcher-context when the Launcher world is present.
+    // The Launcher content script runs in every frame, so Runtime.enable replays one
+    // isolated-world context per frame and their arrival order says nothing about which
+    // one hosts the agent. Collect them all, then pick by probing for window.pendo.
+    const candidates = await new Promise((resolve, reject) => {
+      const found = []
       let settled = false, timer = null
       const cleanup = () => {
         if (timer) clearTimeout(timer)
         try { chrome.debugger.onEvent.removeListener(handler) } catch {}
       }
-      const finish = (ctx) => { if (!settled) { settled = true; cleanup(); resolve(ctx || null) } }
+      const finish = () => { if (!settled) { settled = true; cleanup(); resolve(found) } }
       const fail = (err) => { if (!settled) { settled = true; cleanup(); reject(err) } }
       const handler = (source, method, params) => {
         if (source.tabId !== tabId || method !== 'Runtime.executionContextCreated') return
         const ctx = params.context
-        if ((ctx.origin || '').toLowerCase() === expectedOrigin) finish(ctx)
+        if ((ctx.origin || '').toLowerCase() === expectedOrigin) found.push(ctx)
       }
       chrome.debugger.onEvent.addListener(handler)
       chrome.debugger.sendCommand(target, 'Runtime.enable')
-        .then(() => { if (!settled) timer = setTimeout(() => finish(null), 250) })
+        .then(() => { if (!settled) timer = setTimeout(finish, LAUNCHER_CONTEXT_COLLECT_MS) })
         .catch(fail)
     })
-    if (!launcherCtx) return { ok: false, reason: 'no-launcher-context' }
+    if (!candidates.length) return { ok: false, reason: 'no-launcher-context' }
+
+    const launcherCtx = await pickLauncherAgentContext(target, candidates)
 
     const evalResult = await chrome.debugger.sendCommand(target, 'Runtime.evaluate', {
       expression,
