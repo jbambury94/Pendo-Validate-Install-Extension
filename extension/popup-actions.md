@@ -14,7 +14,7 @@
 | Toggle log-level filter chip | `toggle-log-filter` | `#logFilterErr` / `#logFilterWarn` / `#logFilterInfo` | text "Err / Warn / Info" + `aria-pressed` |
 | Copy visible logs | `copy-logs` | `#copyLogs` | text "Copy visible" + `title` |
 | Download visible logs | `download-logs` | `#downloadLogs` | text "Download" + `title` |
-| Download Pendo network HAR | `download-har` | `#downloadHar` | text "HAR" + `title` (reload confirm on Chrome/Edge) |
+| Download Pendo network HAR | `download-har` | `#downloadHar` | text "HAR" + `title` (reload confirm on Chrome/Edge). Hidden unless the `harDownload` feature gate is open |
 | View check in Logs | `view-check-in-logs` | (dynamic per check row) | text "View in Logs" |
 | Validate Pendo Install | `validate` | `#run` | text "Validate Pendo Install" |
 | Enable Pendo Debugger | `launch-debugger` | `#launchDebugger` | text "Debugger" + `title` |
@@ -27,3 +27,5 @@
 | AI API key input | `ai-api-key-input` | `#aiApiKeyInput` | `<label for="aiApiKeyInput">API key</label>` |
 | Show / hide API key | `toggle-key-visibility` | `#aiKeyToggleVisibility` | `aria-label="Show API key"` / `"Hide API key"` |
 | Save AI settings | `save-ai-settings` | `#aiSettingsSave` | text "Save AI settings" |
+
+All four AI rows live inside `#aiAdviceCard`, which is hidden — and left unwired — unless the `aiAdvice` feature gate is open. Gates have no UI of their own; they are switched from the panel console via `__pendoValidateFeatures`, so they add no `data-action` entries. See the [README](../README.md#preview-features).

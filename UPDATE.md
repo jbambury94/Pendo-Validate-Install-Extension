@@ -56,6 +56,12 @@ One exception: if a model you had configured has since been deprecated, the exte
 
 ---
 
+## Preview features
+
+AI advice, HAR download, and CSP probing ship switched off and are opted into per install. If the **AI advice** card or the **HAR** button is missing after an update, that is the gate, not a bug — see [Preview features](README.md#preview-features) for how to switch one on from the panel console. Your choices are stored locally and survive updates; a saved AI key is kept even while the AI gate is closed.
+
+---
+
 ## Keeping up with changes
 
 The full version history is in [CHANGELOG.md](https://github.com/jbambury94/Pendo-Validate-Install-Extension/blob/Stable/CHANGELOG.md). Worth a quick read before updating on Firefox — and occasionally on Chrome or Edge when a release note mentions new permissions.

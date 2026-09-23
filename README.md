@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/Edge-MV3-blue" alt="Edge MV3" />
   <img src="https://img.shields.io/badge/Firefox-MV3%20(128%2B)-orange" alt="Firefox MV3 (128+)" />
   <img src="https://img.shields.io/badge/version-1.9.0-FF4876" alt="Version 1.9.0" />
-  <img src="https://img.shields.io/badge/AI-OpenAI%20%7C%20Claude%20%7C%20Gemini-lightgrey" alt="AI: OpenAI | Claude | Gemini" />
+  <img src="https://img.shields.io/badge/AI%20(preview)-OpenAI%20%7C%20Claude%20%7C%20Gemini-lightgrey" alt="AI (preview): OpenAI | Claude | Gemini" />
 </p>
 
 <p align="center">
@@ -35,7 +35,7 @@ Debugging a Pendo installation today means juggling browser DevTools, running `p
 - **Extended page signals** — detects iframe / sandbox embedding, Google Tag Manager, common SPA frameworks (React / Vue / Angular / Next / Nuxt), the bundled Pendo agent version, and URL sanitization that can strip Pendo's Visual Design Studio token — both load-time redirects and client-side logic (inline-script scan plus history-API instrumentation).
 - **Light / Dark / System theme.** Theme selector in Settings persists locally and applies before first paint, so there's no flash of unstyled content.
 - **Shareable results** — export a Markdown report with support links and related reading, or copy a Slack-ready summary to your clipboard.
-- **Optional AI remediation** — get fix-it suggestions from OpenAI, Anthropic Claude, or Google Gemini. Prompts are enriched with up to 6 KB excerpts so the advice is grounded in official Pendo guidance.
+- **AI remediation (preview, off by default)** — get fix-it suggestions from OpenAI, Anthropic Claude, or Google Gemini. Prompts are enriched with up to 6 KB excerpts so the advice is grounded in official Pendo guidance. Ships behind a [feature gate](#preview-features).
 
 ---
 
@@ -71,13 +71,15 @@ The panel has three tabs:
 |-----|-----------------|
 | **Status** | Pass/warn/error hero, quick stats (Errors / Warnings / Passing), prioritised checks & recommendations, *Related reading* (curated Pendo KB links), identity, and metadata cards. |
 | **Logs** | Colour-coded captured console output with level filter chips (Err / Warn / Info), text search, one-click copy, and a Page facts panel. |
-| **Settings** | Appearance (System / Light / Dark theme), page snapshot summary, and AI advice configuration (provider picker, API key with show/hide toggle, save). |
+| **Settings** | Appearance (System / Light / Dark theme), page snapshot summary, and — once the `aiAdvice` [gate](#preview-features) is open — AI advice configuration (provider picker, API key with show/hide toggle, save). |
 
 The action bar at the bottom gives you **Validate Pendo Install**, **Debugger** (`pendo.enableDebugging()`), and **Export** (Markdown report or Copy summary).
 
 ---
 
 ## Optional: AI advice
+
+> AI advice is a preview feature and is **off by default**. Open the `aiAdvice` gate first — see [Preview features](#preview-features) — and the **AI advice** card appears in Settings.
 
 1. Open **Settings** and pick a provider — OpenAI (`gpt-4o-mini`), Anthropic Claude (`claude-haiku-4-5`), or Google Gemini (`gemini-3.5-flash`).
 2. Paste your API key (use the **Show / Hide** toggle to confirm it) and click **Save**.
@@ -89,9 +91,38 @@ Your key is stored locally in `chrome.storage.local` and is only sent when valid
 
 ---
 
+## Preview features
+
+Some features are still being baked, so they ship switched off and have to be opted into per install. A closed gate hides the UI *and* makes the underlying capability unreachable — the service worker refuses to attach the debugger for a HAR capture or to proxy an AI request — so nothing half-built can be reached by accident.
+
+| Gate | What it unlocks | Status |
+|---|---|---|
+| `harDownload` | The **HAR** button on the Logs tab | Preview |
+| `aiAdvice` | The **AI advice** card in Settings and the provider request after a failing validation | Preview |
+| `cspProbe` | Active CSP probing against real response headers | Not implemented yet; needs CDP, so it stays off on Firefox |
+
+**Change the default for a build** by editing [`extension/feature-flags.json`](extension/feature-flags.json) and reloading the unpacked extension. Store-installed copies are read-only, so use the console instead.
+
+**Flip a gate on an installed copy** from the panel console. The panel runs as an iframe on the page, so pick the extension context first:
+
+1. Open DevTools on a page where the panel is showing.
+2. In the **Console** tab, change the context dropdown (top-left, usually reading `top`) to the `Pendo Install Validator` entry.
+3. Run one of:
+
+```js
+__pendoValidateFeatures.list()               // current state, and where each value came from
+__pendoValidateFeatures.enable('harDownload')
+__pendoValidateFeatures.disable('aiAdvice')
+__pendoValidateFeatures.reset()              // drop all overrides, back to the shipped defaults
+```
+
+Overrides are stored in `chrome.storage.local` under `featureOverrides` and take effect immediately — no extension reload. Anything unreadable, malformed, or unrecognised leaves the gate closed rather than guessing.
+
+---
+
 ## Your data stays yours
 
-- **AI is opt-in only.** Calls happen only when you've saved a key, only after validation finds a problem, and only the page URL, agent metadata, and up to 30 captured log lines are sent. Logs may contain user IDs or application details — use the feature only on pages where you're comfortable sharing that context.
+- **AI is opt-in only.** Calls happen only when the `aiAdvice` gate is open, only when you've saved a key, only after validation finds a problem, and only the page URL, agent metadata, and up to 30 captured log lines are sent. Logs may contain user IDs or application details — use the feature only on pages where you're comfortable sharing that context.
 
 ---
 
@@ -101,6 +132,7 @@ Your key is stored locally in `chrome.storage.local` and is only sent when valid
 - Run the test suite: `npm install && npm test` (Vitest + jsdom).
 - Build release packages: `npm run build` (Chrome + Firefox) or `npm run build:chrome` / `build:firefox`. Output lands in `dist/` — the Chrome zip is the artifact uploaded to the Chrome Web Store; the Firefox zip is attached to GitHub Releases. Per-target manifest transforms live in `scripts/browser-targets.mjs`.
 - UI element / `data-action` reference — see [extension/popup-actions.md](extension/popup-actions.md).
+- Feature gates — defaults in [extension/feature-flags.json](extension/feature-flags.json), resolution in `extension/feature-flags.js`. See [Preview features](#preview-features).
 
 ---
 
