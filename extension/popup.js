@@ -832,8 +832,30 @@ function buildMarkdownReport(context) {
 /** Serialize full context as pretty-printed JSON (still used by some report flows). */
 function buildJsonReport(context) { return JSON.stringify(context, null, 2); }
 
+/** Filter captured console lines by level chips and search query. */
+function filterCapturedLogs(captured, logFilters, logQuery) {
+  const q = (logQuery || '').toLowerCase();
+  let errCount = 0;
+  let warnCount = 0;
+  let infoCount = 0;
+  const visible = [];
+  for (const l of captured || []) {
+    const lev = l.level === 'error' ? 'error' : l.level === 'warn' ? 'warn' : 'info';
+    if (lev === 'error') errCount++;
+    else if (lev === 'warn') warnCount++;
+    else infoCount++;
+    if (lev === 'error' && !logFilters.error) continue;
+    if (lev === 'warn' && !logFilters.warn) continue;
+    if (lev === 'info' && !logFilters.info) continue;
+    if (q && !(l.text || '').toLowerCase().includes(q)) continue;
+    visible.push({ level: lev, text: l.text || '' });
+  }
+  return { errCount, warnCount, infoCount, visible };
+}
+
 /** Build a plain-text summary suitable for clipboard (status + counts + advice + checks). */
-function buildPlainSummary(context) {
+function buildPlainSummary(context, options) {
+  const includeIdentity = options && options.includeIdentity === true;
   const { pageUrl, timestamp, status, captured, advice, checks, snippetOnPage, launcherPresent, launcherAttempted, launcherDataValidated, validatedIn } = context;
   const errCount = (captured || []).filter(l => l.level === 'error').length;
   const warnCount = (captured || []).filter(l => l.level === 'warn').length;
@@ -848,10 +870,14 @@ function buildPlainSummary(context) {
 
   const lines = [];
   lines.push(`Pendo Install Validator — ${statusLine}`);
-  lines.push(`Page: ${pageUrl || 'unknown'}`);
+  if (includeIdentity) {
+    lines.push(`Page: ${pageUrl || 'unknown'}`);
+    lines.push(`VisitorId: ${status.visitorId || 'not set'}`);
+    lines.push(`AccountId: ${status.accountId == null ? 'not set' : status.accountId}`);
+  }
   lines.push(`Timestamp: ${timestamp}`);
   lines.push(`Validated in: ${validatedIn || 'page'}`);
-  if (status.parentAccountId != null) {
+  if (includeIdentity && status.parentAccountId != null) {
     lines.push(`Parent AccountId: ${status.parentAccountId}`);
   }
   lines.push(`Errors: ${errCount}   Warnings: ${warnCount}   Passing: ${okCount}`);
@@ -866,10 +892,21 @@ function buildPlainSummary(context) {
     lines.push('Recommendations:');
     adviceList.forEach(a => {
       const prefix = a.source === 'ai' ? '[AI] ' : '';
-      lines.push(`  • ${prefix}${a.text}`);
+      let text = a.text;
+      if (!includeIdentity) {
+        text = text.replace(/\b(api[_-]?key|apikey)\b[\s:]*[^\s,.)]+/gi, 'api key [redacted]');
+      }
+      lines.push(`  • ${prefix}${text}`);
     });
   }
   return lines.join('\n');
+}
+
+/** Fire validation_completed Track Event from panel context; never throws. */
+function emitValidationCompletedTelemetry(context, aiAdviceUsed) {
+  if (!context || typeof buildValidationCompletedProps !== 'function' || typeof trackIvaEvent !== 'function') return;
+  const props = buildValidationCompletedProps(context, { aiAdviceUsed: !!aiAdviceUsed });
+  trackIvaEvent('validation_completed', props);
 }
 
 /** Trigger browser download of a blob (report file). */
@@ -1582,8 +1619,8 @@ function makeIcon(name, size = 16) {
 function initPopup() {
   // ── DOM refs ─────────────────────────────────────────────────────────────
   const ivaHeader = document.getElementById('ivaHeader');
-  const resizeHandle = document.getElementById('resizeHandle');
   const closeBtn = document.getElementById('closeBtn');
+  const resizeHandle = document.getElementById('resizeHandle');
 
   const tabStatusBtn = document.getElementById('tabStatusBtn');
   const tabLogsBtn = document.getElementById('tabLogsBtn');
@@ -1634,10 +1671,10 @@ function initPopup() {
   const runBtn = document.getElementById('run');
   const runBtnLabel = runBtn?.querySelector('.btn__label');
   const launchDebuggerBtn = document.getElementById('launchDebugger');
-  const exportMenuBtn = document.getElementById('exportMenuBtn');
-  const exportMenu = document.getElementById('exportMenu');
-  const exportMdBtn = document.getElementById('exportMd');
-  const exportCopyBtn = document.getElementById('exportCopy');
+  const shareSummaryBtn = document.getElementById('shareSummary');
+  const downloadMarkdownReportBtn = document.getElementById('downloadMarkdownReport');
+  const downloadLogsBtn = document.getElementById('downloadLogs');
+  const shareIncludeIdentityInput = document.getElementById('shareIncludeIdentity');
 
   const toastEl = document.getElementById('toast');
 
@@ -1655,6 +1692,7 @@ function initPopup() {
   let validationSeq = 0; // incremented per Validate click; stale AI callbacks compare before mutating UI
   let logFilters = { error: true, warn: true, info: true };
   let logQuery = '';
+  let shareIncludeIdentity = false;
   let toastTimer = null;
   let statusHeroTimeTimer = null;
   const STATUS_HERO_TIME_INTERVAL_MS = 5_000;
@@ -1686,6 +1724,36 @@ function initPopup() {
     bindResizeHandle(resizeHandle);
   }
 
+  /** Corner resize: posts {dw, dh} deltas; content.js clamps and applies width/height. */
+  function bindResizeHandle(handle) {
+    if (!handle) return;
+    handle.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const startScreenX = e.screenX;
+      const startScreenY = e.screenY;
+      try { handle.setPointerCapture(e.pointerId); } catch (_) {}
+      window.parent.postMessage({ type: 'pendo-validate-resizestart' }, '*');
+
+      function onMove(ev) {
+        const dw = ev.screenX - startScreenX;
+        const dh = ev.screenY - startScreenY;
+        window.parent.postMessage({ type: 'pendo-validate-resize', dw, dh }, '*');
+      }
+      function teardown(ev) {
+        try { handle.releasePointerCapture(ev.pointerId); } catch (_) {}
+        handle.removeEventListener('pointermove', onMove);
+        handle.removeEventListener('pointerup', teardown);
+        handle.removeEventListener('pointercancel', teardown);
+        window.parent.postMessage({ type: 'pendo-validate-resizeend' }, '*');
+      }
+      handle.addEventListener('pointermove', onMove);
+      handle.addEventListener('pointerup', teardown);
+      handle.addEventListener('pointercancel', teardown);
+    });
+  }
+
   /**
    * Header drag: pointer capture in the iframe; parent (content.js) applies the deltas.
    * screenX/screenY are stable even when the parent moves the iframe under the pointer.
@@ -1712,36 +1780,6 @@ function initPopup() {
         handle.removeEventListener('pointerup', teardown);
         handle.removeEventListener('pointercancel', teardown);
         window.parent.postMessage({ type: 'pendo-validate-dragend' }, '*');
-      }
-      handle.addEventListener('pointermove', onMove);
-      handle.addEventListener('pointerup', teardown);
-      handle.addEventListener('pointercancel', teardown);
-    });
-  }
-
-  /** Corner resize: posts {dw, dh} deltas; content.js clamps and applies width/height. */
-  function bindResizeHandle(handle) {
-    if (!handle) return;
-    handle.addEventListener('pointerdown', (e) => {
-      if (e.pointerType === 'mouse' && e.button !== 0) return;
-      e.preventDefault();
-      e.stopPropagation();
-      const startScreenX = e.screenX;
-      const startScreenY = e.screenY;
-      try { handle.setPointerCapture(e.pointerId); } catch (_) {}
-      window.parent.postMessage({ type: 'pendo-validate-resizestart' }, '*');
-
-      function onMove(ev) {
-        const dw = ev.screenX - startScreenX;
-        const dh = ev.screenY - startScreenY;
-        window.parent.postMessage({ type: 'pendo-validate-resize', dw, dh }, '*');
-      }
-      function teardown(ev) {
-        try { handle.releasePointerCapture(ev.pointerId); } catch (_) {}
-        handle.removeEventListener('pointermove', onMove);
-        handle.removeEventListener('pointerup', teardown);
-        handle.removeEventListener('pointercancel', teardown);
-        window.parent.postMessage({ type: 'pendo-validate-resizeend' }, '*');
       }
       handle.addEventListener('pointermove', onMove);
       handle.addEventListener('pointerup', teardown);
@@ -1786,12 +1824,22 @@ function initPopup() {
     return makeIcon('zap', 16);
   }
 
+  /** Append debugger session hint to hero sub when debugging was enabled this session. */
+  function heroSubWithDebuggerNote(sub) {
+    const base = sub || '';
+    if (lastContext && lastContext.debuggerEnabledAt) {
+      const extra = 'Debugging enabled — validate again for verbose logs.';
+      return base.includes(extra) ? base : (base ? `${base} ${extra}` : extra);
+    }
+    return base;
+  }
+
   /** Set the hero state, icon, title, sub. */
   function setStatusHero({ state, title, sub }) {
     statusHero.dataset.state = state;
     statusHeroIcon.replaceChildren(severityIcon(state));
     statusHeroTitle.textContent = title;
-    statusHeroSub.textContent = sub;
+    statusHeroSub.textContent = heroSubWithDebuggerNote(sub);
   }
 
   /** Format last-run time relative to now. */
@@ -1953,6 +2001,18 @@ function initPopup() {
         }
         const displayText = it.source === 'ai' ? stripAllUrls(stripEmbeddedHelpUrl(it.text)) : it.text;
         cell.appendChild(document.createTextNode(displayText));
+        if (g.kind === 'err' || g.kind === 'warn') {
+          const logsLink = document.createElement('button');
+          logsLink.type = 'button';
+          logsLink.className = 'check-item__logs-link';
+          logsLink.dataset.action = 'view-check-in-logs';
+          logsLink.textContent = 'View in Logs';
+          logsLink.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            openCheckInLogs(displayText, g.kind);
+          });
+          cell.appendChild(logsLink);
+        }
         if (it.supportUrl) {
           const docWrap = document.createElement('div');
           const a = document.createElement('a');
@@ -2155,23 +2215,32 @@ function initPopup() {
     pageFactsCard.hidden = false;
   }
 
+  function persistLogUiPrefs() {
+    try {
+      if (!chrome.storage || !chrome.storage.local) return;
+      chrome.storage.local.set({
+        logUiPrefs: { filters: { ...logFilters }, query: logQuery || '' },
+      });
+    } catch (_) { /* ignore */ }
+  }
+
+  /** Jump to Logs tab with a search token derived from a check line. */
+  function openCheckInLogs(checkText, kind) {
+    const stripped = stripAllUrls(String(checkText || '')).replace(/\s+/g, ' ').trim();
+    const token = stripped.slice(0, 40);
+    logQuery = token;
+    if (logsSearch) logsSearch.value = token;
+    if (kind === 'err') logFilters = { error: true, warn: false, info: false };
+    else if (kind === 'warn') logFilters = { error: false, warn: true, info: false };
+    persistLogUiPrefs();
+    activateTab('logs');
+    renderLogs();
+  }
+
   /** Render the logs list using the current filter + query state. */
   function renderLogs() {
     const captured = (lastContext && lastContext.captured) || [];
-    const q = (logQuery || '').toLowerCase();
-
-    // Single pass: tally per-level counts and collect the visible lines together.
-    let errCount = 0, warnCount = 0, infoCount = 0;
-    const visible = [];
-    for (const l of captured) {
-      const lev = l.level === 'error' ? 'error' : l.level === 'warn' ? 'warn' : 'info';
-      if (lev === 'error') errCount++; else if (lev === 'warn') warnCount++; else infoCount++;
-      if (lev === 'error' && !logFilters.error) continue;
-      if (lev === 'warn' && !logFilters.warn) continue;
-      if (lev === 'info' && !logFilters.info) continue;
-      if (q && !(l.text || '').toLowerCase().includes(q)) continue;
-      visible.push(l);
-    }
+    const { errCount, warnCount, infoCount, visible } = filterCapturedLogs(captured, logFilters, logQuery);
 
     logCountErr.textContent = String(errCount);
     logCountWarn.textContent = String(warnCount);
@@ -2231,6 +2300,7 @@ function initPopup() {
     else if (level === 'warn') logFilters.warn = !logFilters.warn;
     else if (level === 'info') logFilters.info = !logFilters.info;
     renderLogs();
+    persistLogUiPrefs();
   }
   logFilterErr.addEventListener('click', () => toggleFilter('error'));
   logFilterWarn.addEventListener('click', () => toggleFilter('warn'));
@@ -2240,16 +2310,17 @@ function initPopup() {
   logsSearch.addEventListener('input', (e) => {
     const value = e.target.value;
     if (logSearchTimer) clearTimeout(logSearchTimer);
-    logSearchTimer = setTimeout(() => { logQuery = value; renderLogs(); }, 150);
+    logSearchTimer = setTimeout(() => { logQuery = value; renderLogs(); persistLogUiPrefs(); }, 150);
   });
 
   // ── Toast ────────────────────────────────────────────────────────────────
-  function showToast(message) {
+  function showToast(message, durationMs) {
     if (!message) return;
     toastEl.textContent = message;
     toastEl.hidden = false;
     if (toastTimer) clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { toastEl.hidden = true; }, 1800);
+    const ms = typeof durationMs === 'number' && durationMs > 0 ? durationMs : 1800;
+    toastTimer = setTimeout(() => { toastEl.hidden = true; }, ms);
   }
 
   // ── Run validation ───────────────────────────────────────────────────────
@@ -2322,7 +2393,7 @@ function initPopup() {
   /**
    * Render a completed validation result into the Status tab (hero, quick stats, check
    * groups, related reading, identity/metadata cards, page snapshot/facts), set lastContext,
-   * and enable Export. Returns the normalized adviceList/checksToRender so the caller can run
+   * and enable Share / Markdown download. Returns the normalized adviceList/checksToRender so the caller can run
    * the optional AI follow-up. Kept separate from the run orchestration so the localhost-only
    * screenshot hook can render fixture data without a live validation.
    */
@@ -2405,10 +2476,55 @@ function initPopup() {
     };
     renderLogs();
 
-    exportMenuBtn.disabled = false;
-    exportMenuBtn.title = 'Export results';
+    syncShareExportControls();
 
     return { adviceList, checksToRender, captured };
+  }
+
+  /** Enable Share / Markdown when lastContext exists; set Share title from identity pref. */
+  function syncShareExportControls() {
+    const hasContext = !!lastContext;
+    if (shareSummaryBtn) {
+      shareSummaryBtn.disabled = !hasContext;
+      if (!hasContext) {
+        shareSummaryBtn.title = 'Run a validation first';
+      } else if (shareIncludeIdentity) {
+        shareSummaryBtn.title = 'Copy summary including page URL and identity';
+      } else {
+        shareSummaryBtn.title = 'Copy summary for Slack or Jira (identity redacted by default)';
+      }
+    }
+    if (downloadMarkdownReportBtn) {
+      downloadMarkdownReportBtn.disabled = !hasContext;
+      downloadMarkdownReportBtn.title = hasContext
+        ? 'Download full Markdown report (always includes identity and logs)'
+        : 'Run a validation first';
+    }
+  }
+
+  async function copyPlainSummaryToClipboard() {
+    if (!lastContext) return false;
+    const text = buildPlainSummary(lastContext, { includeIdentity: shareIncludeIdentity });
+    await copyTextToClipboard(text);
+    return true;
+  }
+
+  function trackShareSummaryCopied() {
+    if (typeof trackIvaEvent !== 'function' || !lastContext) return;
+    const ivaOutcome = typeof deriveIvaOutcome === 'function' ? deriveIvaOutcome(lastContext) : 'unknown';
+    trackIvaEvent('share_summary_copied', {
+      ivaRedacted: !shareIncludeIdentity,
+      ivaOutcome: String(ivaOutcome),
+    });
+  }
+
+  function trackMarkdownReportDownloaded() {
+    if (typeof trackIvaEvent !== 'function' || !lastContext) return;
+    const ivaOutcome = typeof deriveIvaOutcome === 'function' ? deriveIvaOutcome(lastContext) : 'unknown';
+    trackIvaEvent('markdown_report_downloaded', {
+      ivaOutcome: String(ivaOutcome),
+      ivaValidationPath: String(lastContext.validationPath || 'unknown'),
+    });
   }
 
   runBtn?.addEventListener('click', async () => {
@@ -2433,6 +2549,7 @@ function initPopup() {
 
       const { status, captured, hasError, hasWarn } = res;
       let { adviceList, checksToRender } = renderValidationResult(res);
+      let aiAdviceUsed = false;
 
       const failureDetected = !status.validatePresent || hasError || hasWarn;
       if (failureDetected) {
@@ -2445,6 +2562,7 @@ function initPopup() {
         const aiAdvice = await requestAiAdvice(aiContext);
         if (runId !== validationSeq) return;
         if (aiAdvice && aiAdvice.length) {
+          aiAdviceUsed = true;
           adviceList = adviceList.concat(aiAdvice);
           lastContext.advice = adviceList;
           const newBuckets = classifyAdvice(adviceList, captured, checksToRender);
@@ -2456,6 +2574,9 @@ function initPopup() {
             logCount: captured.length
           });
         }
+      }
+      if (runId === validationSeq && lastContext) {
+        emitValidationCompletedTelemetry(lastContext, aiAdviceUsed);
       }
     } catch (e) {
       console.error(e);
@@ -2498,47 +2619,62 @@ function initPopup() {
     } else {
       res = await runInActiveTab();
     }
-    if (res.ok) showToast('Debugger enabled');
-    else showToast(res.message || 'Debugger failed');
+    const validationPath = (lastContext && lastContext.validationPath) || 'unknown';
+    if (res.ok) {
+      if (lastContext) lastContext.debuggerEnabledAt = Date.now();
+      if (typeof trackIvaEvent === 'function') {
+        trackIvaEvent('debugger_enabled', { ivaOk: true, ivaValidationPath: String(validationPath) });
+      }
+      launchDebuggerBtn.title = 'Debugging enabled (this session)';
+      launchDebuggerBtn.setAttribute('aria-label', 'Debugging enabled (this session)');
+      launchDebuggerBtn.disabled = true;
+      setTimeout(() => { launchDebuggerBtn.disabled = false; }, 3000);
+      if (lastContext) setStatusHero(deriveHeroState(lastContext));
+      showToast('SDK debugging enabled. Re-run Validate to refresh console output.', 4200);
+    } else {
+      if (typeof trackIvaEvent === 'function') {
+        trackIvaEvent('debugger_enabled', { ivaOk: false, ivaValidationPath: String(validationPath) });
+      }
+      const msg = res.message || 'Debugger failed';
+      const hint = /not found|not available/i.test(msg)
+        ? `${msg} See Web SDK debugger docs in Related reading.`
+        : msg;
+      showToast(hint, 4200);
+    }
   });
 
-  // ── Export menu ──────────────────────────────────────────────────────────
-  /** Toggle the export dropdown, only when a validation result exists. */
-  function setExportMenuOpen(open) {
-    exportMenu.hidden = !open;
-    exportMenuBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
-  }
-  exportMenuBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    if (exportMenuBtn.disabled) return;
-    setExportMenuOpen(exportMenu.hidden);
-  });
-  document.addEventListener('click', (e) => {
-    if (exportMenu.hidden) return;
-    if (e.target.closest('#exportMenu') || e.target.closest('#exportMenuBtn')) return;
-    setExportMenuOpen(false);
+  shareSummaryBtn?.addEventListener('click', async () => {
+    if (!lastContext || shareSummaryBtn.disabled) return;
+    try {
+      await copyPlainSummaryToClipboard();
+      trackShareSummaryCopied();
+      showToast(shareIncludeIdentity ? 'Summary copied' : 'Summary copied (identity redacted)');
+    } catch (e) { console.error(e); showToast('Copy failed'); }
   });
 
-  exportMdBtn.addEventListener('click', () => {
-    setExportMenuOpen(false);
-    if (!lastContext) return;
+  downloadMarkdownReportBtn?.addEventListener('click', () => {
+    if (!lastContext || downloadMarkdownReportBtn.disabled) return;
     try {
       const md = buildMarkdownReport(lastContext);
-      const host = (() => { try { return (new URL(lastContext.pageUrl)).host; } catch { return 'page'; } })().replace(/[^a-z0-9\.-]/gi, '_');
-      const fname = `pendo-install-validator-report_${host}_${Date.now()}.md`;
-      downloadBlob(fname, 'text/markdown', md);
+      downloadBlob(`pendo-validate-report_${Date.now()}.md`, 'text/markdown', md);
+      trackMarkdownReportDownloaded();
       showToast('Markdown report downloaded');
-    } catch (e) { console.error(e); showToast('Export failed'); }
+    } catch (e) {
+      console.error(e);
+      showToast('Download failed');
+    }
   });
 
-  exportCopyBtn.addEventListener('click', async () => {
-    setExportMenuOpen(false);
-    if (!lastContext) return;
-    try {
-      const text = buildPlainSummary(lastContext);
-      await copyTextToClipboard(text);
-      showToast('Summary copied');
-    } catch (e) { console.error(e); showToast('Copy failed'); }
+  downloadLogsBtn?.addEventListener('click', () => {
+    const captured = (lastContext && lastContext.captured) || [];
+    const { visible } = filterCapturedLogs(captured, logFilters, logQuery);
+    if (!visible.length) {
+      showToast('No lines match filter');
+      return;
+    }
+    const text = visible.map(({ level, text }) => `[${level}] ${text}`).join('\n');
+    downloadBlob(`pendo-validate-logs_${Date.now()}.txt`, 'text/plain', text);
+    showToast('Logs downloaded');
   });
 
   // ── Clipboard ────────────────────────────────────────────────────────────
@@ -2588,11 +2724,14 @@ function initPopup() {
 
   copyLogsBtn.addEventListener('click', () => {
     const captured = (lastContext && lastContext.captured) || [];
-    const text = captured.length
-      ? captured.map(({ level, text }) => `[${level}] ${text}`).join('\n')
-      : 'No logs captured.';
+    const { visible } = filterCapturedLogs(captured, logFilters, logQuery);
+    if (!visible.length) {
+      showToast('No lines match filter');
+      return;
+    }
+    const text = visible.map(({ level, text }) => `[${level}] ${text}`).join('\n');
     copyTextToClipboard(text)
-      .then(() => showToast('Logs copied'))
+      .then(() => showToast('Visible logs copied'))
       .catch(err => { console.warn('Copy logs failed:', err); showToast('Copy failed'); });
   });
 
@@ -2606,9 +2745,34 @@ function initPopup() {
     }
   }
 
-  chrome.storage.local.get({ themePreference: 'system' }, ({ themePreference }) => {
-    themeSelect.value = themePreference;
-    applyTheme(themePreference);
+  chrome.storage.local.get(
+    { themePreference: 'system', shareIncludeIdentity: false, logUiPrefs: null },
+    ({ themePreference, shareIncludeIdentity: sharePref, logUiPrefs }) => {
+      themeSelect.value = themePreference;
+      applyTheme(themePreference);
+      shareIncludeIdentity = !!sharePref;
+      if (shareIncludeIdentityInput) shareIncludeIdentityInput.checked = shareIncludeIdentity;
+      syncShareExportControls();
+      if (logUiPrefs && typeof logUiPrefs === 'object') {
+        if (logUiPrefs.filters && typeof logUiPrefs.filters === 'object') {
+          logFilters = {
+            error: logUiPrefs.filters.error !== false,
+            warn: logUiPrefs.filters.warn !== false,
+            info: logUiPrefs.filters.info !== false,
+          };
+        }
+        if (typeof logUiPrefs.query === 'string') {
+          logQuery = logUiPrefs.query;
+          if (logsSearch) logsSearch.value = logQuery;
+        }
+      }
+    },
+  );
+
+  shareIncludeIdentityInput?.addEventListener('change', () => {
+    shareIncludeIdentity = !!shareIncludeIdentityInput.checked;
+    chrome.storage.local.set({ shareIncludeIdentity });
+    syncShareExportControls();
   });
 
   themeSelect.addEventListener('change', () => {

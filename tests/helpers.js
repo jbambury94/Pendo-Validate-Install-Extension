@@ -427,7 +427,28 @@ export function buildJsonReport(context) {
   return JSON.stringify(context, null, 2)
 }
 
-export function buildPlainSummary(context) {
+export function filterCapturedLogs(captured, logFilters, logQuery) {
+  const q = (logQuery || '').toLowerCase()
+  let errCount = 0
+  let warnCount = 0
+  let infoCount = 0
+  const visible = []
+  for (const l of captured || []) {
+    const lev = l.level === 'error' ? 'error' : l.level === 'warn' ? 'warn' : 'info'
+    if (lev === 'error') errCount++
+    else if (lev === 'warn') warnCount++
+    else infoCount++
+    if (lev === 'error' && !logFilters.error) continue
+    if (lev === 'warn' && !logFilters.warn) continue
+    if (lev === 'info' && !logFilters.info) continue
+    if (q && !(l.text || '').toLowerCase().includes(q)) continue
+    visible.push({ level: lev, text: l.text || '' })
+  }
+  return { errCount, warnCount, infoCount, visible }
+}
+
+export function buildPlainSummary(context, options) {
+  const includeIdentity = options && options.includeIdentity === true
   const { pageUrl, timestamp, status, captured, advice, checks, snippetOnPage, launcherPresent, launcherAttempted, launcherDataValidated, validatedIn } = context
   const errCount = (captured || []).filter(l => l.level === 'error').length
   const warnCount = (captured || []).filter(l => l.level === 'warn').length
@@ -442,10 +463,14 @@ export function buildPlainSummary(context) {
 
   const lines = []
   lines.push(`Pendo Install Validator — ${statusLine}`)
-  lines.push(`Page: ${pageUrl || 'unknown'}`)
+  if (includeIdentity) {
+    lines.push(`Page: ${pageUrl || 'unknown'}`)
+    lines.push(`VisitorId: ${status.visitorId || 'not set'}`)
+    lines.push(`AccountId: ${status.accountId == null ? 'not set' : status.accountId}`)
+  }
   lines.push(`Timestamp: ${timestamp}`)
   lines.push(`Validated in: ${validatedIn || 'page'}`)
-  if (status.parentAccountId != null) {
+  if (includeIdentity && status.parentAccountId != null) {
     lines.push(`Parent AccountId: ${status.parentAccountId}`)
   }
   lines.push(`Errors: ${errCount}   Warnings: ${warnCount}   Passing: ${okCount}`)
@@ -460,7 +485,11 @@ export function buildPlainSummary(context) {
     lines.push('Recommendations:')
     adviceList.forEach(a => {
       const prefix = a.source === 'ai' ? '[AI] ' : ''
-      lines.push(`  • ${prefix}${a.text}`)
+      let text = a.text
+      if (!includeIdentity) {
+        text = text.replace(/\b(api[_-]?key|apikey)\b[\s:]*[^\s,.)]+/gi, 'api key [redacted]')
+      }
+      lines.push(`  • ${prefix}${text}`)
     })
   }
   return lines.join('\n')

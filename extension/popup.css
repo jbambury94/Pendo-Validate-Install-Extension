@@ -598,6 +598,39 @@ body {
   text-decoration: none;
 }
 .check-item__doc:hover { color: var(--pank-press); text-decoration: underline; }
+.check-item__logs-link {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--pank-press);
+  cursor: pointer;
+  font-family: var(--font-sans);
+}
+.check-item__logs-link:hover { text-decoration: underline; }
+.field--checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--ink);
+}
+.field--checkbox input { margin-top: 2px; flex-shrink: 0; }
+.field--checkbox__body {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  flex: 1;
+  min-width: 0;
+}
+.field--checkbox__label { line-height: 1.35; }
+#sharingCard .field--checkbox .field__hint { margin: 0; }
+.sharing-card__intro { margin: 0 0 8px; }
+.sharing-card__download { align-self: flex-start; margin-bottom: 5px; }
 .check-item__source {
   display: inline-block;
   margin-right: 6px;
@@ -869,25 +902,18 @@ body {
   40% { opacity: 1; }
 }
 
-/* Resize handle */
+/* Invisible corner resize hit target (cursor only; no grip graphic) */
 .resize-handle {
   position: absolute;
-  right: 0; bottom: 0;
-  width: 16px; height: 16px;
+  right: 0;
+  bottom: 0;
+  width: 20px;
+  height: 20px;
   cursor: nwse-resize;
   z-index: 5;
   touch-action: none;
   user-select: none;
-}
-.resize-handle::before {
-  content: "";
-  position: absolute;
-  right: 4px; bottom: 4px;
-  width: 8px; height: 8px;
-  border-right: 2px solid var(--ink-3);
-  border-bottom: 2px solid var(--ink-3);
-  border-bottom-right-radius: 2px;
-  opacity: .55;
+  background: transparent;
 }
 
 /* Toast */

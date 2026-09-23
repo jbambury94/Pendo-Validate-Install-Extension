@@ -27,6 +27,7 @@ describe('manifest web_accessible_resources', () => {
         'enable-debugging.js',
         'theme-init.js',
         'pendo-kb.js',
+        'pendo-telemetry.js',
         'pendo-install-quality.md',
         'vendor/pendo-agent.bundle.js',
         'pendo/*',

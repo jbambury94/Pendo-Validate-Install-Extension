@@ -131,7 +131,8 @@
               <span class="chip__dot"></span>Info <span id="logCountInfo">0</span>
             </button>
             <input id="logsSearch" class="logs-search" type="search" placeholder="Filter…" aria-label="Filter log lines" />
-            <button class="card__action" id="copyLogs" data-action="copy-logs" title="Copy all logs" aria-label="Copy all logs" style="margin-left:auto;">Copy</button>
+            <button class="card__action" id="downloadLogs" data-action="download-logs" title="Download visible logs" aria-label="Download visible logs">Download</button>
+            <button class="card__action" id="copyLogs" data-action="copy-logs" title="Copy visible logs" aria-label="Copy visible logs">Copy visible</button>
           </div>
 
           <div class="card">
@@ -146,6 +147,26 @@
 
         <!-- Settings panel -->
         <div id="tabSettingsPanel" class="tab-panel" role="tabpanel" aria-labelledby="tabSettingsBtn" hidden>
+          <div class="card" id="sharingCard">
+            <div class="card__head"><div class="card__title">Sharing</div></div>
+            <div class="card__body card__body--flush">
+              <div class="field">
+                <label class="field--checkbox" for="shareIncludeIdentity">
+                  <input type="checkbox" id="shareIncludeIdentity" data-action="share-include-identity" />
+                  <span class="field--checkbox__body">
+                    <span class="field--checkbox__label">Include identity &amp; page URL in Share</span>
+                    <span class="field__hint">Applies to the action-bar <strong>Share</strong> button only. Page URL, visitor/account IDs, and parent account are omitted unless this is on; advice text may still redact API-key-like strings when off.</span>
+                  </span>
+                </label>
+              </div>
+              <div class="field">
+                <p class="field__hint sharing-card__intro"><strong>Share</strong> (action bar) copies plain text for Slack or Jira. <strong>Markdown report</strong> (below) always includes full validation context for support tickets.</p>
+                <button type="button" id="downloadMarkdownReport" class="btn btn--ghost sharing-card__download" data-action="download-markdown-report" disabled title="Run a validation first">Download Markdown report</button>
+                <p class="field__hint">Full report for email or attachments — page URL, identity, metadata, related reading, and all captured logs. Run Validate first.</p>
+              </div>
+            </div>
+          </div>
+
           <div class="card">
             <div class="card__head"><div class="card__title">Appearance</div></div>
             <div class="card__body">
@@ -203,52 +224,20 @@
           <span class="btn__label">Validate Pendo Install</span>
         </button>
         <button id="launchDebugger" class="btn btn--ghost" data-action="launch-debugger" title="pendo.enableDebugging()">Debugger</button>
-        <div class="menu-wrap">
-          <button id="exportMenuBtn" class="btn btn--ghost" data-action="open-export-menu" aria-haspopup="menu" aria-expanded="false" disabled title="Run a validation first">
-            Export
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <polyline points="9 18 15 12 9 6"/>
-            </svg>
-          </button>
-          <div id="exportMenu" class="menu" role="menu" hidden>
-            <button class="menu__item" id="exportMd" data-action="export-markdown" role="menuitem">
-              <span class="menu__item-icon" aria-hidden="true">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                  <polyline points="14 2 14 8 20 8"/>
-                </svg>
-              </span>
-              <span class="menu__item-body">
-                <span class="menu__item-title">Markdown report</span>
-                <span class="menu__item-sub">Human-readable, with support links.</span>
-              </span>
-            </button>
-            <button class="menu__item" id="exportCopy" data-action="export-copy-summary" role="menuitem">
-              <span class="menu__item-icon" aria-hidden="true">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-                  <rect x="9" y="9" width="13" height="13" rx="2"/>
-                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-                </svg>
-              </span>
-              <span class="menu__item-body">
-                <span class="menu__item-title">Copy summary</span>
-                <span class="menu__item-sub">Plain text — paste into Slack or a ticket.</span>
-              </span>
-            </button>
-          </div>
-        </div>
+        <button id="shareSummary" class="btn btn--ghost" data-action="share-summary" disabled title="Run a validation first">Share</button>
       </div>
 
-      <!-- Resize handle (bottom-right corner) -->
+      <!-- Invisible corner hit target for resize (no visible grip) -->
       <div class="resize-handle" id="resizeHandle" data-action="resize-panel" role="separator" aria-label="Resize panel"></div>
     </div>
 
     <!-- Toast container -->
     <div id="toast" class="toast" hidden aria-live="polite"></div>
 
-    <!-- Load order: pendo-kb.js (KB globals) must load before popup.js -->
+    <!-- Load order: pendo-kb.js (KB globals) must load before popup.js; pendo-telemetry.js before popup.js -->
     <!-- Pendo support knowledge base (topics, summaries, article links) -->
     <script src="pendo-kb.js"></script>
+    <script src="pendo-telemetry.js"></script>
     <!-- Popup logic: validation, advice, export, copy, render, tabs, drag/resize -->
     <script src="popup.js"></script>
     <!-- Pendo self-instrumentation: idle-load the agent bundle after the panel is wired -->

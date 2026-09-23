@@ -15,13 +15,15 @@
 | Copy button — Page facts | `copy-kv` | `#pageFactsCopySnippet`, `#pageFactsCopyValidatedIn`, `#pageFactsCopyLinesCaptured` | `title` set in `popup.js` |
 | Copy advice card action | `copy-advice` | `#copyAdvice` | `aria-label="Copy advice"` |
 | Toggle log-level filter chip | `toggle-log-filter` | `#logFilterErr` / `#logFilterWarn` / `#logFilterInfo` | text "Err / Warn / Info" + `aria-pressed` |
-| Copy logs | `copy-logs` | `#copyLogs` | `aria-label="Copy all logs"` |
+| Copy visible logs | `copy-logs` | `#copyLogs` | text "Copy visible" + `title` |
+| Download visible logs | `download-logs` | `#downloadLogs` | text "Download" + `title` |
+| View check in Logs | `view-check-in-logs` | (dynamic per check row) | text "View in Logs" |
 | Validate Pendo Install | `validate` | `#run` | text "Validate Pendo Install" |
 | Enable Pendo Debugger | `launch-debugger` | `#launchDebugger` | text "Debugger" + `title` |
-| Open export menu | `open-export-menu` | `#exportMenuBtn` | text "Export" + `aria-haspopup`, `aria-expanded` |
-| Export — Markdown report | `export-markdown` | `#exportMd` | text "Markdown report" |
-| Export — Copy summary | `export-copy-summary` | `#exportCopy` | text "Copy summary" |
-| Resize panel (corner handle) | `resize-panel` | `#resizeHandle` | `role="separator"` + `aria-label="Resize panel"` |
+| Share summary | `share-summary` | `#shareSummary` | text "Share" + `title` (reflects identity pref when enabled) |
+| Include identity in Share | `share-include-identity` | `#shareIncludeIdentity` | checkbox in Settings → Sharing |
+| Download Markdown report | `download-markdown-report` | `#downloadMarkdownReport` | text "Download Markdown report" + `title` |
+| Resize panel (invisible corner) | `resize-panel` | `#resizeHandle` | `role="separator"` + `aria-label="Resize panel"`; no visible grip |
 | Theme preference select | `theme-select` | `#themeSelect` | `<label for="themeSelect">Theme</label>` |
 | AI provider select | `ai-provider-select` | `#aiProviderSelect` | `<label for="aiProviderSelect">Provider</label>` |
 | AI API key input | `ai-api-key-input` | `#aiApiKeyInput` | `<label for="aiApiKeyInput">API key</label>` |
