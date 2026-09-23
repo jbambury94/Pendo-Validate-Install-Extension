@@ -212,6 +212,29 @@ describe('__pendoValidateFeatures console helper', () => {
     expect(storage.featureOverrides).toEqual({})
   })
 
+  it('reports each state change as a feature_flag_toggled Track Event, including reset()', async () => {
+    const { window } = await bootPanel()
+    const tracked = []
+    window.pendo = { track: (name, props) => tracked.push({ name, props }) }
+
+    await window.__pendoValidateFeatures.enable('harDownload')
+    await window.__pendoValidateFeatures.reset()
+
+    expect(tracked.map((t) => t.name)).toEqual(['feature_flag_toggled', 'feature_flag_toggled'])
+    expect(tracked[0].props).toMatchObject({ ivaFeatureKey: 'harDownload', ivaFeatureEnabled: true })
+    expect(tracked[1].props).toMatchObject({ ivaFeatureKey: 'harDownload', ivaFeatureEnabled: false })
+  })
+
+  it('reports nothing when a call leaves every gate where it was', async () => {
+    const { window } = await bootPanel()
+    const tracked = []
+    window.pendo = { track: (name) => tracked.push(name) }
+
+    await window.__pendoValidateFeatures.disable('harDownload')
+
+    expect(tracked).toEqual([])
+  })
+
   it('warns rather than silently failing when a gate needs an unavailable capability', async () => {
     const { window } = await bootPanel({ hasDebugger: false })
     const warn = vi.spyOn(window.console, 'warn').mockImplementation(() => {})

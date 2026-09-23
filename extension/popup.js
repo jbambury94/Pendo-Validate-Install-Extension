@@ -3013,6 +3013,13 @@ function initPopup() {
     refreshFeatureState().then(onFeatureStateResolved).catch(() => {});
   });
 
+  /** Emit one Track Event per gate that actually changed state, so reset() is reported too. */
+  function reportGateChanges(previousState) {
+    for (const [key, enabled] of Object.entries(_featureState)) {
+      if (previousState[key] !== enabled) trackFeatureFlagToggled(key, enabled);
+    }
+  }
+
   /**
    * Console helper for flipping gates at runtime: pick the extension panel context in the DevTools
    * context dropdown, then call __pendoValidateFeatures.list() / .enable('harDownload').
@@ -3041,9 +3048,11 @@ function initPopup() {
     async enable(key) { return this._set(key, true); },
     async disable(key) { return this._set(key, false); },
     async reset() {
+      const before = Object.assign({}, _featureState);
       await clearFeatureOverrides(_featureStorage());
       await refreshFeatureState();
       onFeatureStateResolved();
+      reportGateChanges(before);
       return this.list();
     },
     async _set(key, value) {
@@ -3053,15 +3062,14 @@ function initPopup() {
         console.error(`[IVA] Unknown feature "${key}". Known features: ${known}.`);
         return null;
       }
-      const before = featureEnabled(key);
+      const before = Object.assign({}, _featureState);
       await writeFeatureOverride(_featureStorage(), key, value);
       await refreshFeatureState();
       onFeatureStateResolved();
-      const after = featureEnabled(key);
-      if (value && !after) {
+      if (value && !featureEnabled(key)) {
         console.warn(`[IVA] "${key}" stayed off: it requires ${entry.requires.join(', ')}, which this browser does not provide.`);
       }
-      if (after !== before) trackFeatureFlagToggled(key, after);
+      reportGateChanges(before);
       return this.list();
     },
   };
