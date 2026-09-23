@@ -71,6 +71,7 @@ const _INJECTED_SCRIPTS = {
   // revision must match PENDO_VALIDATE_CAPTURE_INSPECT_REVISION in capture-inspect.js
   'capture-inspect': { file: 'capture-inspect.js', revision: 3, func: (variant) => globalThis.__pendoValidateCaptureAndInspect(variant) },
   'enable-debugging': { file: 'enable-debugging.js', func: () => globalThis.__pendoValidateEnableDebugging() },
+  'har-timings': { file: 'har-timings.js', func: () => globalThis.__pendoValidateHarTimings() },
 };
 
 function _isStaleCombinedCaptureResult(result, injectedScript, args) {
@@ -1032,6 +1033,54 @@ async function evaluateInLauncherWorld(tabId, launcherId, expression) {
   }
 }
 
+const HAR_RELOAD_ARM_MS = 6000;
+
+function getExtensionOriginForHar() {
+  const rt = _extRuntime();
+  if (!rt?.getURL) return '';
+  try {
+    return rt.getURL('').replace(/\/$/, '');
+  } catch {
+    return '';
+  }
+}
+
+function readPanelExtensionVersion() {
+  try {
+    const rt = _extRuntime();
+    if (rt?.getManifest) return String(rt.getManifest().version || '');
+  } catch { /* ignore */ }
+  return '';
+}
+
+async function captureNetworkHarViaTimings(tabId, pageUrl) {
+  const results = await executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    injectedScript: 'har-timings',
+  });
+  const raw = results && results[0] ? results[0].result : null;
+  if (raw && raw.error) return { ok: false, message: raw.error };
+  const entries = Array.isArray(raw) ? raw : (raw && Array.isArray(raw.entries) ? raw.entries : []);
+  const timeOrigin = raw && typeof raw.timeOrigin === 'number' ? raw.timeOrigin : Date.now();
+  const har = buildHarFromResourceTimings(entries, {
+    pageUrl,
+    extensionOrigin: getExtensionOriginForHar(),
+    creatorVersion: readPanelExtensionVersion(),
+    timeOrigin,
+  });
+  return { ok: true, har, mode: 'timings', entryCount: har.log.entries.length };
+}
+
+async function captureNetworkHar(tabId, pageUrl) {
+  if (typeof chrome !== 'undefined' && chrome.debugger && typeof chrome.debugger.attach === 'function') {
+    const res = await sendExtMessage({ type: 'pendo-validate-har-capture', tabId, pageUrl });
+    if (!res?.ok) return { ok: false, message: res?.error || 'Could not start HAR capture' };
+    return { ok: true, pendingReload: true };
+  }
+  return captureNetworkHarViaTimings(tabId, pageUrl);
+}
+
 /** Enable pendo.enableDebugging() inside the Launcher content-script world (Phase 1.75 path). */
 async function enableDebuggingViaLauncherCdp(tabId, launcher) {
   let expression;
@@ -1119,7 +1168,9 @@ async function runInPage() {
       launcherPresent: launcherInPage,
       launcherDataValidated: undefined,
       validatedIn: 'page',
-      origin: 'page'
+      origin: 'page',
+      validationPath: 'page',
+      validationTabId: tab.id
     };
   }
 
@@ -1185,7 +1236,9 @@ async function runInPage() {
       launcherPresent: true,
       launcherDataValidated: false,
       validatedIn: 'page',
-      origin: 'page'
+      origin: 'page',
+      validationPath: 'page',
+      validationTabId: tab.id
     };
   }
 
@@ -1201,7 +1254,9 @@ async function runInPage() {
     launcherPresent: false,
     launcherDataValidated: false,
     validatedIn: 'page',
-    origin: 'page'
+    origin: 'page',
+    validationPath: 'page',
+    validationTabId: tab.id
   };
 }
 
@@ -1647,10 +1702,6 @@ function initPopup() {
 
   const relatedReadingCard = document.getElementById('relatedReadingCard');
   const relatedReadingBody = document.getElementById('relatedReadingBody');
-  const identityCard = document.getElementById('identityCard');
-  const identityBody = document.getElementById('identityBody');
-  const metadataCard = document.getElementById('metadataCard');
-  const metadataBody = document.getElementById('metadataBody');
   const statusEmpty = document.getElementById('statusEmpty');
 
   const logsListEl = document.getElementById('logsList');
@@ -1662,11 +1713,8 @@ function initPopup() {
   const logFilterWarn = document.getElementById('logFilterWarn');
   const logFilterInfo = document.getElementById('logFilterInfo');
   const copyLogsBtn = document.getElementById('copyLogs');
-  const pageFactsCard = document.getElementById('pageFactsCard');
-  const pageFactsBody = document.getElementById('pageFactsBody');
-
-  const pageSnapshotCard = document.getElementById('pageSnapshotCard');
-  const pageSnapshotBody = document.getElementById('pageSnapshotBody');
+  const installDetailsCard = document.getElementById('installDetailsCard');
+  const installDetailsBody = document.getElementById('installDetailsBody');
 
   const runBtn = document.getElementById('run');
   const runBtnLabel = runBtn?.querySelector('.btn__label');
@@ -1674,6 +1722,7 @@ function initPopup() {
   const shareSummaryBtn = document.getElementById('shareSummary');
   const downloadMarkdownReportBtn = document.getElementById('downloadMarkdownReport');
   const downloadLogsBtn = document.getElementById('downloadLogs');
+  const downloadHarBtn = document.getElementById('downloadHar');
   const shareIncludeIdentityInput = document.getElementById('shareIncludeIdentity');
 
   const toastEl = document.getElementById('toast');
@@ -1697,6 +1746,8 @@ function initPopup() {
   let statusHeroTimeTimer = null;
   const STATUS_HERO_TIME_INTERVAL_MS = 5_000;
   let qualityGuideCache = null;
+  let harReloadArmedUntil = 0;
+  let harCaptureInProgress = false;
 
   // Prefetch quality guide for AI prompt enrichment
   try {
@@ -2106,23 +2157,17 @@ function initPopup() {
     return row;
   }
 
-  /** Render Identity card (visitor, account, API key). */
-  function renderIdentityCard({ visitorId, accountId, parentAccountId, detectedApiKey }) {
-    identityBody.replaceChildren();
-    appendKvRow(identityBody, { label: 'VisitorId', value: visitorId || '—', copyId: 'identityCopyVisitorId' });
-    appendKvRow(identityBody, { label: 'AccountId', value: accountId == null ? '—' : String(accountId), copyId: 'identityCopyAccountId' });
-    if (parentAccountId != null) {
-      appendKvRow(identityBody, { label: 'Parent AccountId', value: String(parentAccountId), copyId: 'identityCopyParentAccountId' });
-    }
-    appendKvRow(identityBody, { label: 'API key', value: detectedApiKey || '—', copyId: 'identityCopyApiKey' });
-    identityCard.hidden = false;
+  function appendSectionTitle(container, title) {
+    const h = document.createElement('div');
+    h.className = 'install-details__section';
+    h.textContent = title;
+    container.appendChild(h);
   }
 
-  /** Render the Metadata card (visitor + account JSON previews). */
-  function renderMetadataCard({ visitorMetadata, accountMetadata, parentAccountMetadata }) {
-    metadataBody.replaceChildren();
+  /** Render metadata JSON sections into a container (shared by Install details). */
+  function appendMetadataSections(container, { visitorMetadata, accountMetadata, parentAccountMetadata }) {
     const fields = (meta) => meta && typeof meta === 'object' ? Object.keys(meta).length : 0;
-    const renderSection = (label, meta) => {
+    const renderSection = (label, meta, copyIdPrefix) => {
       const count = fields(meta);
       const row = document.createElement('div');
       row.className = 'kv-row kv-row--top';
@@ -2141,7 +2186,7 @@ function initPopup() {
       row.appendChild(v);
       if (count > 0) {
         const btn = document.createElement('button');
-        btn.id = 'metadataCopy' + label;
+        btn.id = copyIdPrefix;
         btn.type = 'button';
         btn.className = 'kv-row__copy';
         btn.dataset.action = 'copy-kv';
@@ -2157,62 +2202,66 @@ function initPopup() {
         spacer.className = 'kv-row__copy-spacer';
         row.appendChild(spacer);
       }
-      metadataBody.appendChild(row);
+      container.appendChild(row);
 
       if (count > 0) {
         const pre = document.createElement('pre');
         pre.className = 'kv-json';
         pre.textContent = JSON.stringify(meta, null, 2);
-        metadataBody.appendChild(pre);
+        container.appendChild(pre);
       }
     };
-    renderSection('Visitor', visitorMetadata);
-    renderSection('Account', accountMetadata);
+    renderSection('Visitor', visitorMetadata, 'installDetailsCopyVisitorMeta');
+    renderSection('Account', accountMetadata, 'installDetailsCopyAccountMeta');
     if (parentAccountMetadata && typeof parentAccountMetadata === 'object' && Object.keys(parentAccountMetadata).length > 0) {
-      renderSection('Parent Account', parentAccountMetadata);
+      renderSection('Parent Account', parentAccountMetadata, 'installDetailsCopyParentMeta');
     }
-    metadataCard.hidden = false;
   }
 
-  /** Render the page-snapshot section in the Settings tab. */
-  function renderPageSnapshot(res) {
-    pageSnapshotBody.replaceChildren();
-    const { status, apiKeyFound, snippetOnPage, launcherPresent, launcherAttempted, launcherDataValidated, validatedIn } = res;
+  /** Logs tab: install, identity, metadata, and capture summary (no duplicate Status cards). */
+  function renderInstallDetails(res) {
+    installDetailsBody.replaceChildren();
+    const { status, captured, snippetOnPage, launcherPresent, launcherAttempted, launcherDataValidated, validatedIn } = res;
     const yn = (v) => v === true ? 'Yes' : v === false ? 'No' : '—';
     const launcherDisplay = !launcherAttempted ? 'Not checked' : launcherPresent === true ? 'Found' : 'Not found';
     const validatedInDisplay = validatedIn === 'launcher' ? 'Pendo Launcher'
       : validatedIn === 'launcher-beta' ? 'Pendo Launcher Beta'
       : validatedIn === 'page' ? 'Page' : '—';
 
-    appendKvRow(pageSnapshotBody, { label: 'Pendo present', value: yn(status.pendoPresent), mono: false, copyId: 'pageSnapshotCopyPendoPresent' });
-    appendKvRow(pageSnapshotBody, { label: 'validateInstall', value: yn(status.validatePresent), mono: false, copyId: 'pageSnapshotCopyValidateInstall' });
-    appendKvRow(pageSnapshotBody, { label: 'Agent version', value: status.version || 'unknown', copyId: 'pageSnapshotCopyAgentVersion' });
-    appendKvRow(pageSnapshotBody, { label: 'API key found', value: yn(apiKeyFound), mono: false, copyId: 'pageSnapshotCopyApiKeyFound' });
-    appendKvRow(pageSnapshotBody, { label: 'Detected key', value: status.detectedApiKey || '—', copyId: 'pageSnapshotCopyDetectedKey' });
-    appendKvRow(pageSnapshotBody, { label: 'Snippet on page', value: yn(snippetOnPage), mono: false, copyId: 'pageSnapshotCopySnippetOnPage' });
-    appendKvRow(pageSnapshotBody, { label: 'Pendo Launcher', value: launcherDisplay, mono: false, copyId: 'pageSnapshotCopyPendoLauncher' });
-    appendKvRow(pageSnapshotBody, {
+    appendSectionTitle(installDetailsBody, 'Install');
+    appendKvRow(installDetailsBody, { label: 'Pendo present', value: yn(status.pendoPresent), mono: false, copyId: 'installDetailsCopyPendoPresent' });
+    appendKvRow(installDetailsBody, { label: 'validateInstall', value: yn(status.validatePresent), mono: false, copyId: 'installDetailsCopyValidateInstall' });
+    appendKvRow(installDetailsBody, { label: 'Agent version', value: status.version || 'unknown', copyId: 'installDetailsCopyAgentVersion' });
+    appendKvRow(installDetailsBody, { label: 'Snippet', value: yn(snippetOnPage), mono: false, copyId: 'installDetailsCopySnippet' });
+    appendKvRow(installDetailsBody, { label: 'Pendo Launcher', value: launcherDisplay, mono: false, copyId: 'installDetailsCopyPendoLauncher' });
+    appendKvRow(installDetailsBody, {
       label: 'Launcher validated',
       value: formatLauncherValidatedSnapshot({ launcherAttempted, snippetOnPage, validatedIn, launcherDataValidated }),
       mono: false,
-      copyId: 'pageSnapshotCopyLauncherValidated'
+      copyId: 'installDetailsCopyLauncherValidated',
     });
-    appendKvRow(pageSnapshotBody, { label: 'Validated in', value: validatedInDisplay, mono: false, copyId: 'pageSnapshotCopyValidatedIn' });
-    appendKvRow(pageSnapshotBody, { label: 'Resource hits', value: String(status.resourceHits.length), mono: false, copyId: 'pageSnapshotCopyResourceHits' });
-    pageSnapshotCard.hidden = false;
-  }
+    appendKvRow(installDetailsBody, { label: 'Validated in', value: validatedInDisplay, mono: false, copyId: 'installDetailsCopyValidatedIn' });
 
-  /** Render the optional Page facts card on the Logs tab. */
-  function renderPageFacts(res) {
-    pageFactsBody.replaceChildren();
-    const { snippetOnPage, validatedIn } = res;
-    const validatedInDisplay = validatedIn === 'launcher' ? 'Pendo Launcher'
-      : validatedIn === 'launcher-beta' ? 'Pendo Launcher Beta'
-      : validatedIn === 'page' ? 'Active tab' : '—';
-    appendKvRow(pageFactsBody, { label: 'Snippet', value: snippetOnPage ? 'Found' : 'Not found', mono: false, copyId: 'pageFactsCopySnippet' });
-    appendKvRow(pageFactsBody, { label: 'Validated in', value: validatedInDisplay, mono: false, copyId: 'pageFactsCopyValidatedIn' });
-    appendKvRow(pageFactsBody, { label: 'Lines captured', value: String((res.captured || []).length), copyId: 'pageFactsCopyLinesCaptured' });
-    pageFactsCard.hidden = false;
+    appendSectionTitle(installDetailsBody, 'Identity');
+    appendKvRow(installDetailsBody, { label: 'VisitorId', value: status.visitorId || '—', copyId: 'installDetailsCopyVisitorId' });
+    appendKvRow(installDetailsBody, { label: 'AccountId', value: status.accountId == null ? '—' : String(status.accountId), copyId: 'installDetailsCopyAccountId' });
+    if (status.parentAccountId != null) {
+      appendKvRow(installDetailsBody, { label: 'Parent AccountId', value: String(status.parentAccountId), copyId: 'installDetailsCopyParentAccountId' });
+    }
+    appendKvRow(installDetailsBody, { label: 'API key', value: status.detectedApiKey || '—', copyId: 'installDetailsCopyApiKey' });
+
+    appendSectionTitle(installDetailsBody, 'Metadata');
+    appendMetadataSections(installDetailsBody, {
+      visitorMetadata: status.visitorMetadata,
+      accountMetadata: status.accountMetadata,
+      parentAccountMetadata: status.parentAccountMetadata,
+    });
+
+    appendSectionTitle(installDetailsBody, 'Capture');
+    appendKvRow(installDetailsBody, { label: 'Resource hits', value: String((status.resourceHits || []).length), mono: false, copyId: 'installDetailsCopyResourceHits' });
+    appendKvRow(installDetailsBody, { label: 'Lines captured', value: String((captured || []).length), copyId: 'installDetailsCopyLinesCaptured' });
+
+    installDetailsCard.hidden = false;
   }
 
   function persistLogUiPrefs() {
@@ -2323,6 +2372,26 @@ function initPopup() {
     toastTimer = setTimeout(() => { toastEl.hidden = true; }, ms);
   }
 
+  /** Deliver HAR saved by the background worker after a CDP reload (panel iframe is destroyed on reload). */
+  function tryDeliverPendingHarDownload() {
+    if (!chrome.storage?.local) return;
+    chrome.storage.local.get({ pendingHarDownload: null }, ({ pendingHarDownload: pending }) => {
+      if (!pending || (!pending.har && !pending.error)) return;
+      chrome.storage.local.remove('pendingHarDownload');
+      if (pending.error) {
+        showToast(String(pending.error), 4200);
+        return;
+      }
+      const json = JSON.stringify(pending.har, null, 2);
+      downloadBlob(`pendo-network_${Date.now()}.har`, 'application/json', json);
+      trackHarDownloaded(pending.mode || 'cdp', pending.entryCount || 0);
+      const n = pending.entryCount || 0;
+      showToast(`HAR downloaded (${n} Pendo request${n === 1 ? '' : 's'})`);
+    });
+  }
+  tryDeliverPendingHarDownload();
+  [4000, 10000, 18000].forEach((ms) => setTimeout(tryDeliverPendingHarDownload, ms));
+
   // ── Run validation ───────────────────────────────────────────────────────
   /** Toggle the primary button between idle and running visuals. */
   function setRunningVisual(running) {
@@ -2375,18 +2444,12 @@ function initPopup() {
   function resetStatusUi() {
     quickStats.hidden = true;
     checksCard.hidden = true;
-    identityCard.hidden = true;
-    metadataCard.hidden = true;
-    pageFactsCard.hidden = true;
-    pageSnapshotCard.hidden = true;
+    installDetailsCard.hidden = true;
     statusEmpty.hidden = true;
     statusTabCount.hidden = true;
     logsTabCount.hidden = true;
     checkGroupsEl.replaceChildren();
-    identityBody.replaceChildren();
-    metadataBody.replaceChildren();
-    pageFactsBody.replaceChildren();
-    pageSnapshotBody.replaceChildren();
+    installDetailsBody.replaceChildren();
     logsListEl.replaceChildren();
   }
 
@@ -2449,20 +2512,7 @@ function initPopup() {
       logCount: captured.length
     });
 
-    renderIdentityCard({
-      visitorId: status.visitorId,
-      accountId: status.accountId,
-      parentAccountId: status.parentAccountId,
-      detectedApiKey: status.detectedApiKey
-    });
-    renderMetadataCard({
-      visitorMetadata: status.visitorMetadata,
-      accountMetadata: status.accountMetadata,
-      parentAccountMetadata: status.parentAccountMetadata
-    });
-
-    renderPageSnapshot(res);
-    renderPageFacts(res);
+    renderInstallDetails(res);
 
     lastContext = {
       pageUrl: pageUrl || 'unknown',
@@ -2500,6 +2550,19 @@ function initPopup() {
         ? 'Download full Markdown report (always includes identity and logs)'
         : 'Run a validation first';
     }
+    const harUsesReload = typeof chrome !== 'undefined' && chrome.debugger && typeof chrome.debugger.attach === 'function';
+    if (downloadHarBtn) {
+      downloadHarBtn.disabled = !hasContext || harCaptureInProgress;
+      if (!hasContext) {
+        downloadHarBtn.title = 'Run a validation first';
+      } else if (harCaptureInProgress) {
+        downloadHarBtn.title = 'Capturing network…';
+      } else if (harUsesReload) {
+        downloadHarBtn.title = 'Download Pendo network HAR (reloads the page — click twice to confirm)';
+      } else {
+        downloadHarBtn.title = 'Download partial Pendo network HAR from Resource Timing (no reload)';
+      }
+    }
   }
 
   async function copyPlainSummaryToClipboard() {
@@ -2524,6 +2587,19 @@ function initPopup() {
     trackIvaEvent('markdown_report_downloaded', {
       ivaOutcome: String(ivaOutcome),
       ivaValidationPath: String(lastContext.validationPath || 'unknown'),
+    });
+  }
+
+  function trackHarDownloaded(mode, entryCount) {
+    if (typeof trackIvaEvent !== 'function' || !lastContext) return;
+    const ivaOutcome = typeof deriveIvaOutcome === 'function' ? deriveIvaOutcome(lastContext) : 'unknown';
+    const bucket = typeof bucketIvaLogLines === 'function'
+      ? bucketIvaLogLines(entryCount)
+      : String(entryCount);
+    trackIvaEvent('har_downloaded', {
+      ivaHarMode: String(mode || 'unknown'),
+      ivaHarEntries: String(bucket),
+      ivaOutcome: String(ivaOutcome),
     });
   }
 
@@ -2675,6 +2751,48 @@ function initPopup() {
     const text = visible.map(({ level, text }) => `[${level}] ${text}`).join('\n');
     downloadBlob(`pendo-validate-logs_${Date.now()}.txt`, 'text/plain', text);
     showToast('Logs downloaded');
+  });
+
+  downloadHarBtn?.addEventListener('click', async () => {
+    if (!lastContext || downloadHarBtn.disabled) return;
+    const harUsesReload = typeof chrome !== 'undefined' && chrome.debugger && typeof chrome.debugger.attach === 'function';
+    const now = Date.now();
+    if (harUsesReload && now > harReloadArmedUntil) {
+      harReloadArmedUntil = now + HAR_RELOAD_ARM_MS;
+      showToast('HAR capture reloads the page. Click HAR again within 6 seconds to start.', 5200);
+      return;
+    }
+    harReloadArmedUntil = 0;
+    const tabId = lastContext.validationTabId;
+    if (!tabId) {
+      showToast('No validation tab — run Validate again');
+      return;
+    }
+    harCaptureInProgress = true;
+    syncShareExportControls();
+    showToast(harUsesReload ? 'Capturing Pendo network (reloading page)…' : 'Building partial HAR from Resource Timing…', 4000);
+    try {
+      const result = await captureNetworkHar(tabId, lastContext.pageUrl || 'unknown');
+      if (result.pendingReload) {
+        showToast('Page reloading… Panel will reopen when capture finishes.', 5500);
+        return;
+      }
+      if (!result.ok) {
+        showToast(result.message || 'HAR capture failed', 4200);
+        return;
+      }
+      const json = JSON.stringify(result.har, null, 2);
+      downloadBlob(`pendo-network_${Date.now()}.har`, 'application/json', json);
+      trackHarDownloaded(result.mode, result.entryCount);
+      const partial = result.mode === 'timings' ? ' (partial, no reload)' : '';
+      showToast(`HAR downloaded (${result.entryCount} Pendo request${result.entryCount === 1 ? '' : 's'})${partial}`);
+    } catch (e) {
+      console.error(e);
+      showToast('HAR capture failed', 4200);
+    } finally {
+      harCaptureInProgress = false;
+      syncShareExportControls();
+    }
   });
 
   // ── Clipboard ────────────────────────────────────────────────────────────

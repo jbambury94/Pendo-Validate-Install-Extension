@@ -1,23 +1,41 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
+function loadBackgroundHandler() {
+  const { readFileSync } = require('fs')
+  const { join } = require('path')
+  const extDir = join(__dirname, '..', 'extension')
+  const harCaptureSrc = readFileSync(join(extDir, 'har-capture.js'), 'utf8')
+  const importScripts = (name) => {
+    if (name === 'har-capture.js') new Function(harCaptureSrc)()
+  }
+  const src = readFileSync(join(extDir, 'background.js'), 'utf8')
+  const wrappedSrc = src.replace('chrome.action.onClicked.addListener', '/* skip */ void ')
+  const fn = new Function('chrome', 'fetch', 'setTimeout', 'clearTimeout', 'AbortController', 'importScripts', wrappedSrc)
+  fn(chrome, global.fetch, setTimeout, clearTimeout, AbortController, importScripts)
+}
+
+function stubHarDebuggerApis() {
+  chrome.debugger = {
+    attach: vi.fn((_target, _version, cb) => { if (cb) cb() }),
+    detach: vi.fn((_target, cb) => { if (cb) cb() }),
+    sendCommand: vi.fn((_target, _method, _params, cb) => { if (cb) cb({}) }),
+    onEvent: { addListener: vi.fn(), removeListener: vi.fn() },
+  }
+  chrome.tabs.reload = vi.fn((_tabId, _opts, cb) => { if (cb) cb() })
+  chrome.runtime.getManifest = vi.fn(() => ({ version: '1.9.0' }))
+}
+
 describe('background.js — AI fetch proxy', () => {
   let handler
 
   beforeEach(() => {
     vi.clearAllMocks()
     global.fetch = vi.fn()
+    stubHarDebuggerApis()
 
     chrome.runtime.onMessage.addListener.mockImplementation((fn) => { handler = fn })
 
-    const { readFileSync } = require('fs')
-    const { join } = require('path')
-    const src = readFileSync(join(__dirname, '..', 'extension', 'background.js'), 'utf8')
-
-    const wrappedSrc = src
-      .replace('chrome.action.onClicked.addListener', '/* skip */ void ')
-
-    const fn = new Function('chrome', 'fetch', 'setTimeout', 'clearTimeout', 'AbortController', wrappedSrc)
-    fn(chrome, global.fetch, setTimeout, clearTimeout, AbortController)
+    loadBackgroundHandler()
   })
 
   it('registers a message listener', () => {
@@ -193,15 +211,10 @@ describe('background.js — Firefox privileged-API bridge', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     chrome.runtime.lastError = null
+    stubHarDebuggerApis()
     chrome.runtime.onMessage.addListener.mockImplementation((fn) => { handler = fn })
 
-    const { readFileSync } = require('fs')
-    const { join } = require('path')
-    const src = readFileSync(join(__dirname, '..', 'extension', 'background.js'), 'utf8')
-    const wrappedSrc = src.replace('chrome.action.onClicked.addListener', '/* skip */ void ')
-
-    const fn = new Function('chrome', 'fetch', 'setTimeout', 'clearTimeout', 'AbortController', wrappedSrc)
-    fn(chrome, vi.fn(), setTimeout, clearTimeout, AbortController)
+    loadBackgroundHandler()
   })
 
   it('pendo-validate-tabs-query forwards to chrome.tabs.query and returns the tabs', async () => {
@@ -265,6 +278,19 @@ describe('background.js — Firefox privileged-API bridge', () => {
     expect(sendResponse).toHaveBeenCalledWith({ ok: true, results })
   })
 
+  it('pendo-validate-execute-script injects har-timings.js, then invokes it', async () => {
+    const results = [{ result: { timeOrigin: 1, entries: [] } }]
+    chrome.scripting.executeScript.mockResolvedValue(results)
+
+    const sendResponse = vi.fn()
+    const target = { tabId: 11 }
+    handler({ type: 'pendo-validate-execute-script', injectedScript: 'har-timings', target, world: 'MAIN' }, sender, sendResponse)
+
+    await vi.waitFor(() => expect(sendResponse).toHaveBeenCalled())
+    expect(chrome.scripting.executeScript).toHaveBeenNthCalledWith(1, { target, world: 'MAIN', files: ['har-timings.js'] })
+    expect(sendResponse).toHaveBeenCalledWith({ ok: true, results })
+  })
+
   it('pendo-validate-execute-script with invokeOnly skips the file injection and only invokes', async () => {
     const results = [{ result: { status: { pendoPresent: true } } }]
     chrome.scripting.executeScript.mockResolvedValue(results)
@@ -307,6 +333,29 @@ describe('background.js — Firefox privileged-API bridge', () => {
 
     await vi.waitFor(() => expect(sendResponse).toHaveBeenCalled())
     expect(sendResponse).toHaveBeenCalledWith({ ok: false, error: 'inject blocked' })
+  })
+
+  it('pendo-validate-check-reopen-panel returns reopen when flag matches sender tab', async () => {
+    chrome.storage.local.get.mockImplementation(() => Promise.resolve({
+      ivaReopenPanel: { tabId: 5, expires: Date.now() + 60000 },
+    }));
+    chrome.storage.local.remove.mockImplementation(() => Promise.resolve());
+    const sendResponse = vi.fn();
+    handler({ type: 'pendo-validate-check-reopen-panel' }, { tab: { id: 5 } }, sendResponse);
+    await vi.waitFor(() => expect(sendResponse).toHaveBeenCalled());
+    expect(sendResponse.mock.calls[0][0]).toEqual({ ok: true, reopen: true });
+    expect(chrome.storage.local.remove).toHaveBeenCalledWith('ivaReopenPanel');
+  })
+
+  it('pendo-validate-har-capture acknowledges immediately and starts background capture', () => {
+    const sendResponse = vi.fn()
+    const ret = handler(
+      { type: 'pendo-validate-har-capture', tabId: 42, pageUrl: 'https://app.example.com/' },
+      { id: chrome.runtime.id },
+      sendResponse,
+    )
+    expect(ret).toBe(true)
+    expect(sendResponse).toHaveBeenCalledWith({ ok: true, started: true })
   })
 
   it('pendo-validate-management-get-all returns the installed extension list', async () => {

@@ -98,4 +98,18 @@ describe('pendo-telemetry', () => {
     expect(() => trackIvaEvent('validation_completed', { ivaOutcome: 'ok' })).not.toThrow()
     globalThis.window = prev
   })
+
+  it('har_downloaded props avoid page URL and identity', () => {
+    const props = {
+      ivaHarMode: 'cdp',
+      ivaHarEntries: bucketIvaLogLines(5),
+      ivaOutcome: 'err',
+    }
+    const serialized = JSON.stringify(props)
+    expect(serialized).not.toContain('customer.example.com')
+    expect(serialized).not.toContain('visitor')
+    for (const key of Object.keys(props)) {
+      expect(key).toMatch(/^iva/)
+    }
+  })
 })

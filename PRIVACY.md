@@ -44,12 +44,15 @@ The extension bundles the Pendo Web SDK — built from the official [`@pendo/web
   - **`share_summary_copied`** — whether identity was redacted in the copied summary and the validation outcome.
   - **`markdown_report_downloaded`** — validation outcome and validation path (no page URL or customer identity).
   - **`debugger_enabled`** — success flag and validation path.
+  - **`har_downloaded`** — capture mode (`cdp` or `timings`), bucketed Pendo request count, validation outcome (no URLs or customer identity).
 
 Client-side Track Events also record the **panel URL** where the event fired (the extension’s own `chrome-extension://…/popup.html/…` tab path from tab switching), not the customer site under validation.
 
 This telemetry covers **only the extension's own panel UI**. It does **not** capture or transmit the content of the pages you visit, your browsing history, or any data from the Pendo installation you are validating (except when you explicitly opt in to **Include identity & page URL in Share**, which affects clipboard copy only, not these Track Events).
 
 **Markdown report** (Settings → Sharing → Download Markdown report) is saved to your device only when you click download. It always includes full validation context (page URL, visitor/account IDs, metadata, and captured logs). That file is not sent to Pendo analytics; only the **`markdown_report_downloaded`** Track Event (outcome and path) is recorded.
+
+**Pendo network HAR** (Logs tab → **HAR**) is saved to your device only when you click download after a validation run. On Chrome and Edge it reloads the validated tab once (you confirm with a second click) and records Pendo-related network requests via the same `debugger` permission used for Launcher validation; on Firefox it builds a partial HAR from Resource Timing without reloading. Cookie, `Authorization`, and `Set-Cookie` headers are stripped before download. Requests from the extension panel’s self-instrumentation agent are excluded. The HAR is not sent to Pendo analytics; only the **`har_downloaded`** Track Event (capture mode, bucketed entry count, outcome) is recorded.
 
 ### 2. AI remediation advice — opt-in only
 

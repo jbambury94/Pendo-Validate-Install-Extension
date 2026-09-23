@@ -5,7 +5,121 @@
  *
  * Also handles toolbar icon clicks: injects content.js into pre-existing tabs, then sends
  * pendo-validate-toggle to show/hide the overlay panel.
+ *
+ * HAR capture (CDP + reload) runs here so it survives tab reload — the panel iframe is
+ * destroyed when the validated page reloads.
  */
+importScripts('har-capture.js');
+
+const HAR_POST_LOAD_SETTLE_MS = 2000;
+const HAR_CAPTURE_MAX_MS = 15000;
+const PENDING_HAR_STORAGE_KEY = 'pendingHarDownload';
+const REOPEN_PANEL_STORAGE_KEY = 'ivaReopenPanel';
+const REOPEN_PANEL_TTL_MS = 120000;
+
+async function requestOpenPanelOnTab(tabId) {
+  try {
+    await chrome.tabs.sendMessage(tabId, { type: 'pendo-validate-open-panel' });
+  } catch (_) { /* content script not ready yet — page-load check handles it */ }
+}
+
+function debuggerSendCommand(target, method, params) {
+  return new Promise((resolve, reject) => {
+    chrome.debugger.sendCommand(target, method, params || {}, (result) => {
+      if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+      else resolve(result);
+    });
+  });
+}
+
+function getExtensionOriginForHar() {
+  try {
+    return chrome.runtime.getURL('').replace(/\/$/, '');
+  } catch {
+    return '';
+  }
+}
+
+function readExtensionVersion() {
+  try {
+    return String(chrome.runtime.getManifest().version || '');
+  } catch {
+    return '';
+  }
+}
+
+async function captureNetworkHarInServiceWorker(tabId, pageUrl) {
+  if (!chrome.debugger?.attach) {
+    return { ok: false, message: 'CDP not available.' };
+  }
+  const target = { tabId };
+  const events = [];
+  let resolveWait;
+  let settleTimer = null;
+  let captureSettled = false;
+  const waitDone = new Promise((resolve) => { resolveWait = resolve; });
+  const finish = (reason) => {
+    if (captureSettled) return;
+    captureSettled = true;
+    if (settleTimer) clearTimeout(settleTimer);
+    resolveWait();
+  };
+
+  const handler = (source, method, params) => {
+    if (source.tabId !== tabId) return;
+    if (method && method.startsWith('Network.')) {
+      events.push({ method, params: params || {} });
+    }
+    if (method === 'Page.loadEventFired') {
+      if (settleTimer) clearTimeout(settleTimer);
+      settleTimer = setTimeout(() => finish('loadEventFired'), HAR_POST_LOAD_SETTLE_MS);
+    }
+  };
+
+  try {
+    await new Promise((resolve, reject) => {
+      chrome.debugger.attach(target, '1.3', () => {
+        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+        else resolve();
+      });
+    });
+  } catch (e) {
+    return { ok: false, message: e.message || String(e) };
+  }
+
+  try {
+    chrome.debugger.onEvent.addListener(handler);
+    await debuggerSendCommand(target, 'Network.enable', { maxPostDataSize: 65536 });
+    await debuggerSendCommand(target, 'Page.enable');
+    const maxTimer = setTimeout(() => finish('maxTimer'), HAR_CAPTURE_MAX_MS);
+    await new Promise((resolve, reject) => {
+      chrome.tabs.reload(tabId, {}, () => {
+        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+        else resolve();
+      });
+    });
+    await waitDone;
+    clearTimeout(maxTimer);
+
+    const har = buildHarFromCdpEvents(events, {
+      pageUrl,
+      extensionOrigin: getExtensionOriginForHar(),
+      creatorVersion: readExtensionVersion(),
+    });
+    const entryCount = har.log.entries.length;
+    return { ok: true, har, mode: 'cdp', entryCount };
+  } catch (e) {
+    return { ok: false, message: e?.message || String(e) };
+  } finally {
+    try { chrome.debugger.onEvent.removeListener(handler); } catch {}
+    try {
+      await new Promise((resolve) => {
+        chrome.debugger.detach(target, () => resolve());
+      });
+    } catch {}
+  }
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === 'pendo-validate-tabs-query') {
     (async () => {
@@ -43,12 +157,59 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             args: [],
           });
           sendResponse({ ok: true, results });
+        } else if (injectedScript === 'har-timings') {
+          if (!invokeOnly) await chrome.scripting.executeScript({ target, world, files: ['har-timings.js'] });
+          const results = await chrome.scripting.executeScript({
+            target,
+            world,
+            func: () => globalThis.__pendoValidateHarTimings(),
+            args: [],
+          });
+          sendResponse({ ok: true, results });
         } else {
           sendResponse({ ok: false, error: `Unknown injectedScript: ${injectedScript}` });
         }
       } catch (e) {
         sendResponse({ ok: false, error: e?.message || String(e) });
       }
+    })();
+    return true;
+  }
+
+  if (message?.type === 'pendo-validate-check-reopen-panel') {
+    (async () => {
+      const tabId = sender.tab?.id;
+      try {
+        const data = await chrome.storage.local.get({ [REOPEN_PANEL_STORAGE_KEY]: null });
+        const pending = data[REOPEN_PANEL_STORAGE_KEY];
+        const reopen = !!(pending && pending.tabId === tabId && Date.now() < pending.expires);
+        if (reopen) await chrome.storage.local.remove(REOPEN_PANEL_STORAGE_KEY);
+        sendResponse({ ok: true, reopen });
+      } catch (e) {
+        sendResponse({ ok: false, reopen: false, error: e?.message || String(e) });
+      }
+    })();
+    return true;
+  }
+
+  if (message?.type === 'pendo-validate-har-capture') {
+    const tabId = message.tabId;
+    const pageUrl = message.pageUrl || 'unknown';
+    sendResponse({ ok: true, started: true });
+    (async () => {
+      try {
+        await chrome.storage.local.set({
+          [REOPEN_PANEL_STORAGE_KEY]: { tabId, expires: Date.now() + REOPEN_PANEL_TTL_MS },
+        });
+      } catch (_) { /* ignore */ }
+      const result = await captureNetworkHarInServiceWorker(tabId, pageUrl);
+      const payload = result.ok
+        ? { har: result.har, entryCount: result.entryCount, mode: result.mode, ts: Date.now() }
+        : { error: result.message || 'HAR capture failed', ts: Date.now() };
+      try {
+        await chrome.storage.local.set({ [PENDING_HAR_STORAGE_KEY]: payload });
+      } catch (_) { /* ignore */ }
+      await requestOpenPanelOnTab(tabId);
     })();
     return true;
   }

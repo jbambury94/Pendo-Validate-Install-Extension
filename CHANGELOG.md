@@ -3,10 +3,10 @@
 ## 1.9.0
 - **Share replaces the Export menu.** The action bar's Export flyout is gone; **Share** copies the plain-text summary in one click. Page URL and visitor/account IDs are omitted by default — enable **Include identity & page URL in Share** in Settings → Sharing to add them.
 - **Markdown report moved to Settings → Sharing.** **Download Markdown report** always produces the full report (page URL, identity, metadata, related reading, all logs), unaffected by the Share opt-in.
-- **Logs tab.** **Copy visible** and **Download** now honour the level chips and search box; filter and query persist across sessions (`logUiPrefs`). Checks with matching console output link straight to the filtered Logs view.
+- **Logs tab.** **Copy visible** and **Download** now honour the level chips and search box; filter and query persist across sessions (`logUiPrefs`). Checks with matching console output link straight to the filtered Logs view. **Install details** consolidates identity, metadata, and install snapshot fields (formerly split across Status and Settings). **HAR** downloads a Pendo-only network capture (Chrome/Edge: CDP + reload with two-click confirm; Firefox: Resource Timing fallback).
 - **Debugger feedback.** Enabling the SDK debugger shows a clearer toast, marks the button as enabled for the session, and the status hero prompts you to validate again for verbose logs.
 - **Resize grip removed** in favour of an invisible corner hit target; resizing is unchanged.
-- **Tests.** 615 tests across 29 suites.
+- **Tests.** 624 tests across 30 suites.
 
 ## 1.8.8
 - **Self-instrumentation SDK 2.341.0** (was 2.330.2); bundled agent and designer assets refreshed.

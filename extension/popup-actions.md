@@ -9,14 +9,12 @@
 | Toggle Errors check group | `toggle-check-group` | `#checkGroupHeadErr` | visible group title |
 | Toggle Warnings check group | `toggle-check-group` | `#checkGroupHeadWarn` | visible group title |
 | Toggle Passing check group | `toggle-check-group` | `#checkGroupHeadOk` | visible group title |
-| Copy button — Identity card | `copy-kv` | `#identityCopyVisitorId`, `#identityCopyAccountId`, `#identityCopyApiKey` | `title` set in `popup.js` |
-| Copy button — Metadata card | `copy-kv` | `#metadataCopyVisitor`, `#metadataCopyAccount` | `title` set in `popup.js` |
-| Copy button — Page snapshot | `copy-kv` | `#pageSnapshotCopyPendoPresent`, `#pageSnapshotCopyValidateInstall`, `#pageSnapshotCopyAgentVersion`, `#pageSnapshotCopyApiKeyFound`, `#pageSnapshotCopyDetectedKey`, `#pageSnapshotCopySnippetOnPage`, `#pageSnapshotCopyPendoLauncher`, `#pageSnapshotCopyLauncherValidated`, `#pageSnapshotCopyValidatedIn`, `#pageSnapshotCopyResourceHits` | `title` set in `popup.js` |
-| Copy button — Page facts | `copy-kv` | `#pageFactsCopySnippet`, `#pageFactsCopyValidatedIn`, `#pageFactsCopyLinesCaptured` | `title` set in `popup.js` |
+| Copy button — Install details | `copy-kv` | `#installDetailsCopyPendoPresent`, `#installDetailsCopyValidateInstall`, `#installDetailsCopyAgentVersion`, `#installDetailsCopySnippet`, `#installDetailsCopyPendoLauncher`, `#installDetailsCopyLauncherValidated`, `#installDetailsCopyValidatedIn`, `#installDetailsCopyVisitorId`, `#installDetailsCopyAccountId`, `#installDetailsCopyParentAccountId`, `#installDetailsCopyApiKey`, `#installDetailsCopyVisitorMeta`, `#installDetailsCopyAccountMeta`, `#installDetailsCopyParentMeta`, `#installDetailsCopyResourceHits`, `#installDetailsCopyLinesCaptured` | `title` set in `popup.js` |
 | Copy advice card action | `copy-advice` | `#copyAdvice` | `aria-label="Copy advice"` |
 | Toggle log-level filter chip | `toggle-log-filter` | `#logFilterErr` / `#logFilterWarn` / `#logFilterInfo` | text "Err / Warn / Info" + `aria-pressed` |
 | Copy visible logs | `copy-logs` | `#copyLogs` | text "Copy visible" + `title` |
 | Download visible logs | `download-logs` | `#downloadLogs` | text "Download" + `title` |
+| Download Pendo network HAR | `download-har` | `#downloadHar` | text "HAR" + `title` (reload confirm on Chrome/Edge) |
 | View check in Logs | `view-check-in-logs` | (dynamic per check row) | text "View in Logs" |
 | Validate Pendo Install | `validate` | `#run` | text "Validate Pendo Install" |
 | Enable Pendo Debugger | `launch-debugger` | `#launchDebugger` | text "Debugger" + `title` |

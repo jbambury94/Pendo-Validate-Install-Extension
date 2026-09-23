@@ -528,6 +528,17 @@ body {
   line-height: 1.5;
 }
 
+.install-details__section {
+  padding: 10px 12px 4px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  border-top: 1px solid var(--line-soft);
+}
+.install-details__section:first-child { border-top: none; padding-top: 4px; }
+
 /* Check group accordion */
 .check-group {
   border-top: 1px solid var(--line-soft);

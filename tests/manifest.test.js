@@ -28,6 +28,8 @@ describe('manifest web_accessible_resources', () => {
         'theme-init.js',
         'pendo-kb.js',
         'pendo-telemetry.js',
+        'har-capture.js',
+        'har-timings.js',
         'pendo-install-quality.md',
         'vendor/pendo-agent.bundle.js',
         'pendo/*',

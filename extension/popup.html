@@ -88,20 +88,6 @@
             <div class="card__body" id="relatedReadingBody"></div>
           </div>
 
-          <div class="card" id="identityCard" hidden>
-            <div class="card__head">
-              <div class="card__title">Identity</div>
-            </div>
-            <div class="card__body" id="identityBody"></div>
-          </div>
-
-          <div class="card" id="metadataCard" hidden>
-            <div class="card__head">
-              <div class="card__title">Metadata</div>
-            </div>
-            <div class="card__body" id="metadataBody"></div>
-          </div>
-
           <div class="empty" id="statusEmpty">
             <div class="empty__icon" aria-hidden="true">
               <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
@@ -132,6 +118,7 @@
             </button>
             <input id="logsSearch" class="logs-search" type="search" placeholder="Filter…" aria-label="Filter log lines" />
             <button class="card__action" id="downloadLogs" data-action="download-logs" title="Download visible logs" aria-label="Download visible logs">Download</button>
+            <button class="card__action" id="downloadHar" data-action="download-har" title="Run a validation first" aria-label="Download Pendo network HAR" disabled>HAR</button>
             <button class="card__action" id="copyLogs" data-action="copy-logs" title="Copy visible logs" aria-label="Copy visible logs">Copy visible</button>
           </div>
 
@@ -139,9 +126,9 @@
             <div id="logsList" class="logs-list"></div>
           </div>
 
-          <div class="card" id="pageFactsCard" hidden>
-            <div class="card__head"><div class="card__title">Page facts</div></div>
-            <div class="card__body" id="pageFactsBody"></div>
+          <div class="card" id="installDetailsCard" hidden>
+            <div class="card__head"><div class="card__title">Install details</div></div>
+            <div class="card__body card__body--flush" id="installDetailsBody"></div>
           </div>
         </div>
 
@@ -180,11 +167,6 @@
                 <div class="field__hint">Choose Light or Dark to override your system preference.</div>
               </div>
             </div>
-          </div>
-
-          <div class="card" id="pageSnapshotCard" hidden>
-            <div class="card__head"><div class="card__title">Page snapshot</div></div>
-            <div class="card__body" id="pageSnapshotBody"></div>
           </div>
 
           <div class="card">
@@ -238,6 +220,7 @@
     <!-- Pendo support knowledge base (topics, summaries, article links) -->
     <script src="pendo-kb.js"></script>
     <script src="pendo-telemetry.js"></script>
+    <script src="har-capture.js"></script>
     <!-- Popup logic: validation, advice, export, copy, render, tabs, drag/resize -->
     <script src="popup.js"></script>
     <!-- Pendo self-instrumentation: idle-load the agent bundle after the panel is wired -->
