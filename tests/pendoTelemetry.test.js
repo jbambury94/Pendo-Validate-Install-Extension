@@ -99,6 +99,64 @@ describe('pendo-telemetry', () => {
     globalThis.window = prev
   })
 
+  it('buildFeatureStateProps emits one boolean per gate', () => {
+    expect(buildFeatureStateProps({ harDownload: true, aiAdvice: false, cspProbe: false })).toEqual({
+      ivaFeatureHarDownload: true,
+      ivaFeatureAiAdvice: false,
+      ivaFeatureCspProbe: false,
+    })
+  })
+
+  it('buildFeatureStateProps returns nothing when gates have not resolved', () => {
+    expect(buildFeatureStateProps({})).toEqual({})
+    expect(buildFeatureStateProps(null)).toEqual({})
+    expect(buildFeatureStateProps('harDownload')).toEqual({})
+  })
+
+  it('validation_completed carries gate state so a gate can be promoted on evidence', () => {
+    const props = buildValidationCompletedProps(baseRes, {
+      featureState: { harDownload: true, aiAdvice: false },
+    })
+    expect(props.ivaFeatureHarDownload).toBe(true)
+    expect(props.ivaFeatureAiAdvice).toBe(false)
+    expect(props.ivaOutcome).toBe('ok')
+  })
+
+  it('gate props cannot displace the core validation properties', () => {
+    const props = buildValidationCompletedProps(baseRes, {
+      aiAdviceUsed: true,
+      featureState: { outcome: true, aiUsed: false },
+    })
+    expect(props.ivaOutcome).toBe('ok')
+    expect(props.ivaAiUsed).toBe(true)
+  })
+
+  it('validation_completed stays under the 512-byte cap with every gate reported', () => {
+    const props = buildValidationCompletedProps(baseRes, {
+      ivaVersion: '1.9.0',
+      browser: 'chrome',
+      featureState: { harDownload: true, cspProbe: true, aiAdvice: true },
+    })
+    expect(JSON.stringify(props).length).toBeLessThan(512)
+  })
+
+  it('buildFeatureFlagToggledProps reports the gate and its new state', () => {
+    const props = buildFeatureFlagToggledProps('harDownload', true)
+    expect(props.ivaFeatureKey).toBe('harDownload')
+    expect(props.ivaFeatureEnabled).toBe(true)
+    expect(typeof props.ivaBrowser).toBe('string')
+  })
+
+  it('buildFeatureFlagToggledProps conforms to Pendo property rules', () => {
+    const props = buildFeatureFlagToggledProps(undefined, 'yes')
+    expect(props.ivaFeatureKey).toBe('unknown')
+    expect(props.ivaFeatureEnabled).toBe(false)
+    for (const key of Object.keys(props)) {
+      expect(key).toMatch(/^iva[A-Za-z0-9_]{0,28}$/)
+      expect(typeof props[key] === 'string' || typeof props[key] === 'boolean').toBe(true)
+    }
+  })
+
   it('har_downloaded props avoid page URL and identity', () => {
     const props = {
       ivaHarMode: 'cdp',

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 const manifest = JSON.parse(
@@ -28,6 +28,8 @@ describe('manifest web_accessible_resources', () => {
         'theme-init.js',
         'pendo-kb.js',
         'pendo-telemetry.js',
+        'feature-flags.js',
+        'feature-flags.json',
         'har-capture.js',
         'har-timings.js',
         'pendo-install-quality.md',
@@ -40,6 +42,27 @@ describe('manifest web_accessible_resources', () => {
 
   it('does not expose the toolbar icon, which the browser loads from manifest.icons (not web pages)', () => {
     expect(resources).not.toContain('icons/*.png')
+  })
+
+  it('every named resource exists in extension/, so nothing is exposed under a stale filename', () => {
+    for (const resource of resources) {
+      if (resource.includes('*')) continue
+      expect(
+        existsSync(resolve(process.cwd(), 'extension', resource)),
+        `${resource} is listed in web_accessible_resources but missing from extension/`,
+      ).toBe(true)
+    }
+  })
+})
+
+describe('feature gates', () => {
+  const registry = JSON.parse(
+    readFileSync(resolve(process.cwd(), 'extension/feature-flags.json'), 'utf8'),
+  )
+
+  it('keeps the debugger permission, which Launcher CDP validation needs regardless of the HAR gate', () => {
+    expect(registry.harDownload.default).toBe(false)
+    expect(manifest.permissions).toContain('debugger')
   })
 })
 describe('manifest version', () => {
