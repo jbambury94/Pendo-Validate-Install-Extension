@@ -57,6 +57,34 @@ async function tabsQuery(queryInfo) {
   return res.tabs;
 }
 
+// ========== Feature gates ==========
+// Shipped defaults come from feature-flags.json, per-install overrides from chrome.storage.local.
+// State starts empty so every gate reads closed until both have actually been read — gated UI is
+// marked hidden in popup.html and only revealed once applyFeatureGates() runs.
+let _featureState = {};
+let _featureRegistry = {};
+let _featureOverrides = {};
+
+function _featureStorage() {
+  return _chromeApi?.storage?.local ?? _browserApi?.storage?.local ?? null;
+}
+
+function featureEnabled(key) {
+  return isFeatureEnabled(_featureState, key);
+}
+
+async function refreshFeatureState() {
+  const loaded = await loadFeatureState({
+    runtime: _extRuntime(),
+    storage: _featureStorage(),
+    api: _chromeApi,
+  });
+  _featureRegistry = loaded.registry;
+  _featureOverrides = loaded.overrides;
+  _featureState = loaded.state;
+  return _featureState;
+}
+
 async function injectScriptFileAndRun(api, { target, world, file, func, args, invokeOnly }) {
   // Firefox forbids func/args on the same executeScript call as files — inject, then invoke.
   // invokeOnly skips the (idempotent) file step when the injected global already exists in
@@ -906,8 +934,17 @@ function buildPlainSummary(context, options) {
 /** Fire validation_completed Track Event from panel context; never throws. */
 function emitValidationCompletedTelemetry(context, aiAdviceUsed) {
   if (!context || typeof buildValidationCompletedProps !== 'function' || typeof trackIvaEvent !== 'function') return;
-  const props = buildValidationCompletedProps(context, { aiAdviceUsed: !!aiAdviceUsed });
+  const props = buildValidationCompletedProps(context, {
+    aiAdviceUsed: !!aiAdviceUsed,
+    featureState: _featureState,
+  });
   trackIvaEvent('validation_completed', props);
+}
+
+/** Fire feature_flag_toggled from panel context — the only context where window.pendo exists. */
+function trackFeatureFlagToggled(key, enabled) {
+  if (typeof trackIvaEvent !== 'function' || typeof buildFeatureFlagToggledProps !== 'function') return;
+  trackIvaEvent('feature_flag_toggled', buildFeatureFlagToggledProps(key, enabled));
 }
 
 /** Trigger browser download of a blob (report file). */
@@ -1073,6 +1110,9 @@ async function captureNetworkHarViaTimings(tabId, pageUrl) {
 }
 
 async function captureNetworkHar(tabId, pageUrl) {
+  // Single entry point for both capture modes, so one gate covers the CDP path and the Firefox
+  // Resource Timing fallback.
+  if (!featureEnabled('harDownload')) return { ok: false, message: 'HAR download is not enabled' };
   if (typeof chrome !== 'undefined' && chrome.debugger && typeof chrome.debugger.attach === 'function') {
     const res = await sendExtMessage({ type: 'pendo-validate-har-capture', tabId, pageUrl });
     if (!res?.ok) return { ok: false, message: res?.error || 'Could not start HAR capture' };
@@ -1498,6 +1538,9 @@ function parseAiAdviceResponse(content, existingAdvice) {
 
 /** Call configured AI API for remediation suggestions; returns array of { text, source: 'ai' }. */
 async function requestAiAdvice(context) {
+  // The one choke point for AI: returning early here also suppresses the "AI suggestion
+  // unavailable" advice item the catch block would otherwise add.
+  if (!featureEnabled('aiAdvice')) return [];
   const cfg = await getAiConfig();
   const apiKey = String((cfg && cfg.aiApiKey) || '').trim();
   if (!apiKey) return [];
@@ -1729,6 +1772,7 @@ function initPopup() {
 
   const themeSelect = document.getElementById('themeSelect');
 
+  const aiAdviceCard = document.getElementById('aiAdviceCard');
   const aiProviderSelect = document.getElementById('aiProviderSelect');
   const aiApiKeyInput = document.getElementById('aiApiKeyInput');
   const aiKeyToggle = document.getElementById('aiKeyToggleVisibility');
@@ -2378,6 +2422,9 @@ function initPopup() {
     chrome.storage.local.get({ pendingHarDownload: null }, ({ pendingHarDownload: pending }) => {
       if (!pending || (!pending.har && !pending.error)) return;
       chrome.storage.local.remove('pendingHarDownload');
+      // A capture outlives the gate that started it — the worker keeps going across the reload that
+      // destroys this panel. Clear the record without writing a file if HAR was switched off since.
+      if (!featureEnabled('harDownload')) return;
       if (pending.error) {
         showToast(String(pending.error), 4200);
         return;
@@ -2389,8 +2436,10 @@ function initPopup() {
       showToast(`HAR downloaded (${n} Pendo request${n === 1 ? '' : 's'})`);
     });
   }
-  tryDeliverPendingHarDownload();
-  [4000, 10000, 18000].forEach((ms) => setTimeout(tryDeliverPendingHarDownload, ms));
+  function schedulePendingHarDelivery() {
+    tryDeliverPendingHarDownload();
+    [4000, 10000, 18000].forEach((ms) => setTimeout(tryDeliverPendingHarDownload, ms));
+  }
 
   // ── Run validation ───────────────────────────────────────────────────────
   /** Toggle the primary button between idle and running visuals. */
@@ -2551,8 +2600,10 @@ function initPopup() {
         : 'Run a validation first';
     }
     const harUsesReload = typeof chrome !== 'undefined' && chrome.debugger && typeof chrome.debugger.attach === 'function';
+    const harGateOpen = featureEnabled('harDownload');
     if (downloadHarBtn) {
-      downloadHarBtn.disabled = !hasContext || harCaptureInProgress;
+      downloadHarBtn.hidden = !harGateOpen;
+      downloadHarBtn.disabled = !harGateOpen || !hasContext || harCaptureInProgress;
       if (!hasContext) {
         downloadHarBtn.title = 'Run a validation first';
       } else if (harCaptureInProgress) {
@@ -2628,7 +2679,7 @@ function initPopup() {
       let aiAdviceUsed = false;
 
       const failureDetected = !status.validatePresent || hasError || hasWarn;
-      if (failureDetected) {
+      if (failureDetected && featureEnabled('aiAdvice')) {
         // Core results are already rendered; end the running spinner before the (possibly
         // slow) AI request so the button returns to idle instead of spinning up to timeoutMs.
         runState = 'done';
@@ -2754,6 +2805,7 @@ function initPopup() {
   });
 
   downloadHarBtn?.addEventListener('click', async () => {
+    if (!featureEnabled('harDownload')) return;
     if (!lastContext || downloadHarBtn.disabled) return;
     const harUsesReload = typeof chrome !== 'undefined' && chrome.debugger && typeof chrome.debugger.attach === 'function';
     const now = Date.now();
@@ -2904,27 +2956,115 @@ function initPopup() {
   });
 
   // ── AI Settings panel ────────────────────────────────────────────────────
-  getAiConfig().then(cfg => {
-    if (cfg.aiProvider) aiProviderSelect.value = cfg.aiProvider;
-    if (cfg.aiApiKey) aiApiKeyInput.value = cfg.aiApiKey;
-  });
+  // Wired on demand rather than at startup so a closed aiAdvice gate never reads the stored API
+  // key. Runs at most once, since the gate can open again later via storage.onChanged.
+  let aiSettingsWired = false;
+  function wireAiSettings() {
+    if (aiSettingsWired) return;
+    aiSettingsWired = true;
 
-  aiKeyToggle.addEventListener('click', () => {
-    const isPassword = aiApiKeyInput.type === 'password';
-    aiApiKeyInput.type = isPassword ? 'text' : 'password';
-    aiKeyToggle.textContent = isPassword ? 'Hide' : 'Show';
-    aiKeyToggle.setAttribute('aria-label', isPassword ? 'Hide API key' : 'Show API key');
-  });
-
-  aiSaveBtn.addEventListener('click', () => {
-    const provider = aiProviderSelect.value;
-    const apiKey = aiApiKeyInput.value.trim();
-    chrome.storage.local.set({ aiProvider: provider, aiApiKey: apiKey }, () => {
-      aiSaveStatus.textContent = 'Saved.';
-      showToast('AI settings saved');
-      setTimeout(() => { aiSaveStatus.textContent = ''; }, 2000);
+    getAiConfig().then(cfg => {
+      if (cfg.aiProvider && aiProviderSelect) aiProviderSelect.value = cfg.aiProvider;
+      if (cfg.aiApiKey && aiApiKeyInput) aiApiKeyInput.value = cfg.aiApiKey;
     });
+
+    aiKeyToggle?.addEventListener('click', () => {
+      const isPassword = aiApiKeyInput.type === 'password';
+      aiApiKeyInput.type = isPassword ? 'text' : 'password';
+      aiKeyToggle.textContent = isPassword ? 'Hide' : 'Show';
+      aiKeyToggle.setAttribute('aria-label', isPassword ? 'Hide API key' : 'Show API key');
+    });
+
+    aiSaveBtn?.addEventListener('click', () => {
+      const provider = aiProviderSelect.value;
+      const apiKey = aiApiKeyInput.value.trim();
+      chrome.storage.local.set({ aiProvider: provider, aiApiKey: apiKey }, () => {
+        aiSaveStatus.textContent = 'Saved.';
+        showToast('AI settings saved');
+        setTimeout(() => { aiSaveStatus.textContent = ''; }, 2000);
+      });
+    });
+  }
+
+  // ── Feature gates ────────────────────────────────────────────────────────
+  /** Reveal or hide gated UI. Safe to call repeatedly — storage.onChanged re-runs it. */
+  function applyFeatureGates() {
+    const aiOpen = featureEnabled('aiAdvice');
+    if (aiAdviceCard) aiAdviceCard.hidden = !aiOpen;
+    if (aiOpen) wireAiSettings();
+    syncShareExportControls();
+  }
+
+  let pendingHarDeliveryScheduled = false;
+  function onFeatureStateResolved() {
+    applyFeatureGates();
+    // Deferred until the gate is known: running it earlier would discard a legitimately pending
+    // capture, because every gate reads closed before feature-flags.json has been read.
+    if (featureEnabled('harDownload') && !pendingHarDeliveryScheduled) {
+      pendingHarDeliveryScheduled = true;
+      schedulePendingHarDelivery();
+    }
+  }
+
+  refreshFeatureState().then(onFeatureStateResolved).catch(() => applyFeatureGates());
+
+  _chromeApi?.storage?.onChanged?.addListener?.((changes, areaName) => {
+    if (!isFeatureOverridesChange(changes, areaName)) return;
+    refreshFeatureState().then(onFeatureStateResolved).catch(() => {});
   });
+
+  /**
+   * Console helper for flipping gates at runtime: pick the extension panel context in the DevTools
+   * context dropdown, then call __pendoValidateFeatures.list() / .enable('harDownload').
+   *
+   * Unlike __pendoValidateApplyFixture below, this is deliberately not restricted to the local
+   * screenshot server — flipping a gate on a real install is the entire point. It only writes to
+   * this extension's own storage, and every gate stays closed until someone opts in.
+   */
+  globalThis.__pendoValidateFeatures = {
+    list() {
+      const rows = Object.entries(_featureRegistry).map(([key, entry]) => ({
+        key,
+        enabled: featureEnabled(key),
+        source: typeof _featureOverrides[key] === 'boolean' ? 'local override' : 'shipped default',
+        stage: entry.stage,
+        requires: entry.requires.join(', ') || '—',
+        label: entry.label,
+      }));
+      if (!rows.length) {
+        console.warn('[IVA] No feature registry loaded — feature-flags.json is missing or malformed, so every gate is closed.');
+        return rows;
+      }
+      console.table(rows, ['enabled', 'source', 'stage', 'requires', 'label']);
+      return rows;
+    },
+    async enable(key) { return this._set(key, true); },
+    async disable(key) { return this._set(key, false); },
+    async reset() {
+      await clearFeatureOverrides(_featureStorage());
+      await refreshFeatureState();
+      onFeatureStateResolved();
+      return this.list();
+    },
+    async _set(key, value) {
+      const entry = _featureRegistry[key];
+      if (!entry) {
+        const known = Object.keys(_featureRegistry).join(', ') || 'none (registry failed to load)';
+        console.error(`[IVA] Unknown feature "${key}". Known features: ${known}.`);
+        return null;
+      }
+      const before = featureEnabled(key);
+      await writeFeatureOverride(_featureStorage(), key, value);
+      await refreshFeatureState();
+      onFeatureStateResolved();
+      const after = featureEnabled(key);
+      if (value && !after) {
+        console.warn(`[IVA] "${key}" stayed off: it requires ${entry.requires.join(', ')}, which this browser does not provide.`);
+      }
+      if (after !== before) trackFeatureFlagToggled(key, after);
+      return this.list();
+    },
+  };
 
   // Show the empty state on the Status tab until a run completes.
   if (runState === 'idle') statusEmpty.hidden = false;

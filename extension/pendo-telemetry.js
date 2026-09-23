@@ -60,9 +60,33 @@ function readIvaExtensionVersion() {
 }
 
 /**
+ * Turn resolved feature gates into one boolean property each (ivaFeatureHarDownload, …), so a gate
+ * can be promoted on evidence of real use rather than a guess.
+ */
+function buildFeatureStateProps(state) {
+  const props = {};
+  if (!state || typeof state !== 'object') return props;
+  for (const [key, enabled] of Object.entries(state)) {
+    if (!key) continue;
+    props[`ivaFeature${key.charAt(0).toUpperCase()}${key.slice(1)}`] = enabled === true;
+  }
+  return props;
+}
+
+/** Build property map for feature_flag_toggled. Key is low cardinality — one per registry entry. */
+function buildFeatureFlagToggledProps(key, enabled) {
+  return {
+    ivaFeatureKey: String(key || 'unknown'),
+    ivaFeatureEnabled: enabled === true,
+    ivaVersion: readIvaExtensionVersion(),
+    ivaBrowser: detectIvaBrowser(),
+  };
+}
+
+/**
  * Build property map for validation_completed. No page URL, IDs, or console text.
  * @param {object} res - Validation result or lastContext-shaped object
- * @param {{ aiAdviceUsed?: boolean, ivaVersion?: string, browser?: string }} meta
+ * @param {{ aiAdviceUsed?: boolean, ivaVersion?: string, browser?: string, featureState?: object }} meta
  */
 function buildValidationCompletedProps(res, meta) {
   const captured = res.captured || [];
@@ -72,7 +96,7 @@ function buildValidationCompletedProps(res, meta) {
   const warnCount = captured.filter((l) => l.level === 'warn').length;
   const opts = meta || {};
 
-  return {
+  return Object.assign(buildFeatureStateProps(opts.featureState), {
     ivaOutcome: deriveIvaOutcome(res),
     ivaValidationPath: String(res.validationPath || 'unknown'),
     ivaValidatedIn: String(res.validatedIn || 'page'),
@@ -87,7 +111,7 @@ function buildValidationCompletedProps(res, meta) {
     ivaAiUsed: !!opts.aiAdviceUsed,
     ivaVersion: String(opts.ivaVersion != null ? opts.ivaVersion : readIvaExtensionVersion()),
     ivaBrowser: String(opts.browser != null ? opts.browser : detectIvaBrowser()),
-  };
+  });
 }
 
 /** Fire a Track Event; never throws. Uses pendo.track(name, props). */

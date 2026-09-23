@@ -465,6 +465,8 @@ body {
   font-family: var(--font-sans);
 }
 .card__action:hover { background: var(--panel-soft); color: var(--ink); }
+/* display:inline-flex above would otherwise beat the hidden attribute on gated actions (HAR). */
+.card__action[hidden] { display: none; }
 .card__body { padding: 8px 0; }
 .card__body--flush { padding: 0; }
 

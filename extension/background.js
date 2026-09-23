@@ -8,14 +8,38 @@
  *
  * HAR capture (CDP + reload) runs here so it survives tab reload — the panel iframe is
  * destroyed when the validated page reloads.
+ *
+ * Feature gates are enforced here as well as in the panel. The worker owns HAR capture and the
+ * Claude proxy outright, so a closed gate has to make the capability unreachable rather than
+ * merely hidden.
  */
-importScripts('har-capture.js');
+importScripts('feature-flags.js', 'har-capture.js');
 
 const HAR_POST_LOAD_SETTLE_MS = 2000;
 const HAR_CAPTURE_MAX_MS = 15000;
 const PENDING_HAR_STORAGE_KEY = 'pendingHarDownload';
 const REOPEN_PANEL_STORAGE_KEY = 'ivaReopenPanel';
 const REOPEN_PANEL_TTL_MS = 120000;
+
+// The registry file is static for the life of the build, so it is cached; overrides are not, so
+// they are re-read per check. The worker is torn down often, which keeps both honest.
+let featureRegistryPromise = null;
+
+function loadWorkerFeatureRegistry() {
+  if (!featureRegistryPromise) featureRegistryPromise = loadFeatureRegistry(chrome.runtime, fetch);
+  return featureRegistryPromise;
+}
+
+async function isWorkerFeatureEnabled(key) {
+  try {
+    const registry = await loadWorkerFeatureRegistry();
+    const overrides = await readFeatureOverrides(chrome.storage?.local);
+    const state = resolveFeatureState(registry, overrides, detectFeatureCapabilities(chrome));
+    return isFeatureEnabled(state, key);
+  } catch (_) {
+    return false;
+  }
+}
 
 async function requestOpenPanelOnTab(tabId) {
   try {
@@ -158,6 +182,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           });
           sendResponse({ ok: true, results });
         } else if (injectedScript === 'har-timings') {
+          if (!(await isWorkerFeatureEnabled('harDownload'))) {
+            sendResponse({ ok: false, error: 'HAR download is not enabled' });
+            return;
+          }
           if (!invokeOnly) await chrome.scripting.executeScript({ target, world, files: ['har-timings.js'] });
           const results = await chrome.scripting.executeScript({
             target,
@@ -193,10 +221,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === 'pendo-validate-har-capture') {
+    // Attaching the debugger and reloading the user's tab is the most invasive thing this worker
+    // does, so it is restricted to our own panel the way the AI proxy below already is.
+    if (sender.id !== chrome.runtime.id) return;
     const tabId = message.tabId;
     const pageUrl = message.pageUrl || 'unknown';
-    sendResponse({ ok: true, started: true });
     (async () => {
+      if (!(await isWorkerFeatureEnabled('harDownload'))) {
+        sendResponse({ ok: false, error: 'HAR download is not enabled' });
+        return;
+      }
+      sendResponse({ ok: true, started: true });
       try {
         await chrome.storage.local.set({
           [REOPEN_PANEL_STORAGE_KEY]: { tabId, expires: Date.now() + REOPEN_PANEL_TTL_MS },
@@ -233,6 +268,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (sender.id !== chrome.runtime.id) return;
 
   (async () => {
+    if (!(await isWorkerFeatureEnabled('aiAdvice'))) {
+      sendResponse({ ok: false, status: 0, error: 'disabled', message: 'AI advice is not enabled' });
+      return;
+    }
     const { endpoint, headers, body, timeoutMs } = message;
     const controller = new AbortController();
     const t = setTimeout(() => controller.abort('timeout'), timeoutMs || 8000);

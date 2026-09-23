@@ -1,17 +1,32 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import vm from 'node:vm'
+import { FEATURE_REGISTRY, registryWithEnabled } from './setup.js'
 
-function loadBackgroundHandler() {
-  const { readFileSync } = require('fs')
-  const { join } = require('path')
-  const extDir = join(__dirname, '..', 'extension')
-  const harCaptureSrc = readFileSync(join(extDir, 'har-capture.js'), 'utf8')
-  const importScripts = (name) => {
-    if (name === 'har-capture.js') new Function(harCaptureSrc)()
+const extDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'extension')
+
+// Load into this realm rather than a `new Function` scope so the HAR builders stay reachable as
+// globals, the way importScripts makes them reachable in the real worker. feature-flags.js is
+// already in the realm — setup.js loads it for every suite.
+vm.runInThisContext(readFileSync(join(extDir, 'har-capture.js'), 'utf8'))
+
+const backgroundSrc = readFileSync(join(extDir, 'background.js'), 'utf8')
+
+function loadBackgroundHandler({ registry = FEATURE_REGISTRY } = {}) {
+  const importScripts = () => { /* both files are already in this realm */ }
+  // The worker fetches feature-flags.json through the same fetch it uses for the AI proxy, so serve
+  // the registry here and delegate everything else to whatever the test mocked on global.fetch.
+  const fetchImpl = async (url, opts) => {
+    if (String(url).includes('feature-flags.json')) {
+      return { ok: true, status: 200, json: async () => registry }
+    }
+    return global.fetch(url, opts)
   }
-  const src = readFileSync(join(extDir, 'background.js'), 'utf8')
-  const wrappedSrc = src.replace('chrome.action.onClicked.addListener', '/* skip */ void ')
+  const wrappedSrc = backgroundSrc.replace('chrome.action.onClicked.addListener', '/* skip */ void ')
   const fn = new Function('chrome', 'fetch', 'setTimeout', 'clearTimeout', 'AbortController', 'importScripts', wrappedSrc)
-  fn(chrome, global.fetch, setTimeout, clearTimeout, AbortController, importScripts)
+  fn(chrome, fetchImpl, setTimeout, clearTimeout, AbortController, importScripts)
 }
 
 function stubHarDebuggerApis() {
@@ -35,7 +50,7 @@ describe('background.js — AI fetch proxy', () => {
 
     chrome.runtime.onMessage.addListener.mockImplementation((fn) => { handler = fn })
 
-    loadBackgroundHandler()
+    loadBackgroundHandler({ registry: registryWithEnabled('aiAdvice') })
   })
 
   it('registers a message listener', () => {
@@ -202,6 +217,21 @@ describe('background.js — AI fetch proxy', () => {
     expect(opts.headers['x-api-key']).toBe('test-key')
     expect(opts.body).toBe('{"model":"test"}')
   })
+
+  it('refuses to proxy and never reaches the provider when the aiAdvice gate is closed', async () => {
+    loadBackgroundHandler({ registry: FEATURE_REGISTRY })
+
+    const sendResponse = vi.fn()
+    handler(
+      { type: 'pendo-validate-ai-fetch', endpoint: 'https://api.test/v1', headers: {}, body: '{}', timeoutMs: 5000 },
+      { id: chrome.runtime.id },
+      sendResponse,
+    )
+
+    await vi.waitFor(() => expect(sendResponse).toHaveBeenCalled())
+    expect(sendResponse.mock.calls[0][0]).toMatchObject({ ok: false, error: 'disabled' })
+    expect(fetch).not.toHaveBeenCalled()
+  })
 })
 
 describe('background.js — Firefox privileged-API bridge', () => {
@@ -279,6 +309,7 @@ describe('background.js — Firefox privileged-API bridge', () => {
   })
 
   it('pendo-validate-execute-script injects har-timings.js, then invokes it', async () => {
+    loadBackgroundHandler({ registry: registryWithEnabled('harDownload') })
     const results = [{ result: { timeOrigin: 1, entries: [] } }]
     chrome.scripting.executeScript.mockResolvedValue(results)
 
@@ -288,6 +319,30 @@ describe('background.js — Firefox privileged-API bridge', () => {
 
     await vi.waitFor(() => expect(sendResponse).toHaveBeenCalled())
     expect(chrome.scripting.executeScript).toHaveBeenNthCalledWith(1, { target, world: 'MAIN', files: ['har-timings.js'] })
+    expect(sendResponse).toHaveBeenCalledWith({ ok: true, results })
+  })
+
+  it('pendo-validate-execute-script refuses har-timings when the harDownload gate is closed', async () => {
+    const sendResponse = vi.fn()
+    handler({ type: 'pendo-validate-execute-script', injectedScript: 'har-timings', target: { tabId: 11 }, world: 'MAIN' }, sender, sendResponse)
+
+    await vi.waitFor(() => expect(sendResponse).toHaveBeenCalled())
+    expect(chrome.scripting.executeScript).not.toHaveBeenCalled()
+    expect(sendResponse).toHaveBeenCalledWith({ ok: false, error: 'HAR download is not enabled' })
+  })
+
+  it('pendo-validate-execute-script still serves capture-inspect while HAR is gated off', async () => {
+    const results = [{ result: { status: { pendoPresent: true } } }]
+    chrome.scripting.executeScript.mockResolvedValue(results)
+
+    const sendResponse = vi.fn()
+    handler(
+      { type: 'pendo-validate-execute-script', injectedScript: 'capture-inspect', target: { tabId: 3 }, world: 'MAIN', args: ['page'] },
+      sender,
+      sendResponse,
+    )
+
+    await vi.waitFor(() => expect(sendResponse).toHaveBeenCalled())
     expect(sendResponse).toHaveBeenCalledWith({ ok: true, results })
   })
 
@@ -347,7 +402,8 @@ describe('background.js — Firefox privileged-API bridge', () => {
     expect(chrome.storage.local.remove).toHaveBeenCalledWith('ivaReopenPanel');
   })
 
-  it('pendo-validate-har-capture acknowledges immediately and starts background capture', () => {
+  it('pendo-validate-har-capture acknowledges and starts background capture when the gate is open', async () => {
+    loadBackgroundHandler({ registry: registryWithEnabled('harDownload') })
     const sendResponse = vi.fn()
     const ret = handler(
       { type: 'pendo-validate-har-capture', tabId: 42, pageUrl: 'https://app.example.com/' },
@@ -355,7 +411,34 @@ describe('background.js — Firefox privileged-API bridge', () => {
       sendResponse,
     )
     expect(ret).toBe(true)
+    await vi.waitFor(() => expect(sendResponse).toHaveBeenCalled())
     expect(sendResponse).toHaveBeenCalledWith({ ok: true, started: true })
+  })
+
+  it('pendo-validate-har-capture refuses and never attaches the debugger when the gate is closed', async () => {
+    const sendResponse = vi.fn()
+    const ret = handler(
+      { type: 'pendo-validate-har-capture', tabId: 42, pageUrl: 'https://app.example.com/' },
+      { id: chrome.runtime.id },
+      sendResponse,
+    )
+    expect(ret).toBe(true)
+    await vi.waitFor(() => expect(sendResponse).toHaveBeenCalled())
+    expect(sendResponse).toHaveBeenCalledWith({ ok: false, error: 'HAR download is not enabled' })
+    expect(chrome.debugger.attach).not.toHaveBeenCalled()
+    expect(chrome.tabs.reload).not.toHaveBeenCalled()
+  })
+
+  it('pendo-validate-har-capture ignores messages from another extension', () => {
+    loadBackgroundHandler({ registry: registryWithEnabled('harDownload') })
+    const sendResponse = vi.fn()
+    const ret = handler(
+      { type: 'pendo-validate-har-capture', tabId: 42, pageUrl: 'https://app.example.com/' },
+      { id: 'different-extension-id' },
+      sendResponse,
+    )
+    expect(ret).toBeUndefined()
+    expect(sendResponse).not.toHaveBeenCalled()
   })
 
   it('pendo-validate-management-get-all returns the installed extension list', async () => {

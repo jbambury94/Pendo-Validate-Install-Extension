@@ -118,7 +118,8 @@
             </button>
             <input id="logsSearch" class="logs-search" type="search" placeholder="Filter…" aria-label="Filter log lines" />
             <button class="card__action" id="downloadLogs" data-action="download-logs" title="Download visible logs" aria-label="Download visible logs">Download</button>
-            <button class="card__action" id="downloadHar" data-action="download-har" title="Run a validation first" aria-label="Download Pendo network HAR" disabled>HAR</button>
+            <!-- Gated by the harDownload feature flag; popup.js reveals it when the gate is open -->
+            <button class="card__action" id="downloadHar" data-action="download-har" title="Run a validation first" aria-label="Download Pendo network HAR" disabled hidden>HAR</button>
             <button class="card__action" id="copyLogs" data-action="copy-logs" title="Copy visible logs" aria-label="Copy visible logs">Copy visible</button>
           </div>
 
@@ -169,7 +170,8 @@
             </div>
           </div>
 
-          <div class="card">
+          <!-- Gated by the aiAdvice feature flag; popup.js reveals it when the gate is open -->
+          <div class="card" id="aiAdviceCard" hidden>
             <div class="card__head">
               <div class="card__title">AI advice</div>
               <span style="font-size:11px;color:var(--ink-3);">Optional</span>
@@ -220,6 +222,8 @@
     <!-- Pendo support knowledge base (topics, summaries, article links) -->
     <script src="pendo-kb.js"></script>
     <script src="pendo-telemetry.js"></script>
+    <!-- Feature gates: must precede popup.js, which resolves them before revealing gated UI -->
+    <script src="feature-flags.js"></script>
     <script src="har-capture.js"></script>
     <!-- Popup logic: validation, advice, export, copy, render, tabs, drag/resize -->
     <script src="popup.js"></script>

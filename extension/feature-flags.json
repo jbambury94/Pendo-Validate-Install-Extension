@@ -1,0 +1,21 @@
+{
+  "harDownload": {
+    "default": false,
+    "label": "HAR download",
+    "description": "Logs tab HAR button. Captures Pendo network requests for the validated page (Chrome/Edge: CDP plus a page reload; Firefox: partial capture from Resource Timing).",
+    "stage": "preview"
+  },
+  "cspProbe": {
+    "default": false,
+    "label": "CSP probing",
+    "description": "Active Content-Security-Policy probing against real response headers. Not implemented — the gate ships ahead of the feature so the work cannot reach users switched on. Needs CDP, so it stays off on Firefox even when enabled.",
+    "stage": "unimplemented",
+    "requires": ["debugger"]
+  },
+  "aiAdvice": {
+    "default": false,
+    "label": "AI remediation advice",
+    "description": "Settings card for choosing a provider and storing an API key, plus the provider request made when a validation run surfaces an issue.",
+    "stage": "preview"
+  }
+}

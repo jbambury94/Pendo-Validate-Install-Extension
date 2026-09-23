@@ -42,6 +42,8 @@
         "theme-init.js",
         "pendo-kb.js",
         "pendo-telemetry.js",
+        "feature-flags.js",
+        "feature-flags.json",
         "har-capture.js",
         "har-timings.js",
         "pendo-install-quality.md",
