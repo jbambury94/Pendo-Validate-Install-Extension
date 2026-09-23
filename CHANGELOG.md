@@ -8,7 +8,7 @@
 - **Debugger feedback.** Enabling the SDK debugger shows a clearer toast, marks the button as enabled for the session, and the status hero prompts you to validate again for verbose logs.
 - **Resize grip removed** in favour of an invisible corner hit target; resizing is unchanged.
 - **HAR capture is restricted to the extension's own panel.** The `pendo-validate-har-capture` worker message now checks `sender.id` the way the AI proxy already did, since attaching the debugger and reloading the user's tab is the most invasive thing the worker does.
-- **Tests.** 691 tests across 32 suites, including a gating suite that runs against the shipped `popup.js` rather than the `tests/helpers.js` mirror.
+- **Tests.** 706 tests across 33 suites, including a gating suite that runs against the shipped `popup.js` rather than the `tests/helpers.js` mirror, and a panel suite that boots the real `popup.html` to confirm a closed gate leaves the UI absent.
 
 ## 1.8.8
 - **Self-instrumentation SDK 2.341.0** (was 2.330.2); bundled agent and designer assets refreshed.
