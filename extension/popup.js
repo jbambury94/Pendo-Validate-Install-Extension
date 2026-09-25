@@ -854,6 +854,85 @@ function filterCapturedLogs(captured, logFilters, logQuery) {
   return { errCount, warnCount, infoCount, visible };
 }
 
+/** Text rendered on a check row — AI items drop stale embedded help links. */
+function checkItemDisplayText(item) {
+  const text = String((item && item.text) || '');
+  return item && item.source === 'ai' ? stripAllUrls(stripEmbeddedHelpUrl(text)) : text;
+}
+
+/** Logs search token for a check row. Derive it from the displayed text so the
+ *  "View in Logs" availability check and the click handler search for the same string. */
+function checkLogSearchToken(text) {
+  return stripAllUrls(String(text || '')).replace(/\s+/g, ' ').trim().slice(0, 40);
+}
+
+/** Whether a check row should offer "View in Logs" (captured lines only, or search matches captured output). */
+function shouldOfferViewInLogsLink(item, kind, captured) {
+  if (!item || (kind !== 'err' && kind !== 'warn')) return false;
+  if (item.source === 'captured') return true;
+  const token = checkLogSearchToken(checkItemDisplayText(item));
+  const filters = kind === 'err'
+    ? { error: true, warn: false, info: false }
+    : { error: false, warn: true, info: false };
+  const { visible } = filterCapturedLogs(captured || [], filters, token);
+  return visible.length > 0;
+}
+
+/** Tab hosting this panel (overlay iframe), not merely the focused tab in the window. */
+function getHostTabIdForPanel() {
+  return new Promise(async (resolve) => {
+    if (window === window.parent) {
+      try {
+        const [tab] = await tabsQuery({ active: true, currentWindow: true });
+        resolve(tab?.id ?? null);
+      } catch {
+        resolve(null);
+      }
+      return;
+    }
+    const timeout = setTimeout(() => {
+      window.removeEventListener('message', onMsg);
+      resolve(null);
+    }, 3000);
+    function onMsg(e) {
+      if (e.source !== window.parent) return;
+      if (e.data?.type === 'pendo-validate-host-tab-id') {
+        clearTimeout(timeout);
+        window.removeEventListener('message', onMsg);
+        const id = e.data.tabId;
+        resolve(typeof id === 'number' ? id : null);
+      }
+    }
+    window.addEventListener('message', onMsg);
+    window.parent.postMessage({ type: 'pendo-validate-request-host-tab-id' }, '*');
+  });
+}
+
+/** Redact identity-bearing values from Share summary lines when includeIdentity is off. */
+function redactShareSummaryText(text, context) {
+  let out = String(text || '');
+  const { pageUrl, status } = context || {};
+  const st = status || {};
+
+  out = out.replace(/\b(api[_-]?key|apikey)\b[\s:]*[^\s,.)]+/gi, 'api key [redacted]');
+
+  const secrets = [];
+  if (pageUrl) secrets.push(String(pageUrl));
+  if (st.detectedApiKey) secrets.push(String(st.detectedApiKey));
+  if (st.visitorId != null && st.visitorId !== '') secrets.push(String(st.visitorId));
+  if (st.accountId != null && st.accountId !== '') secrets.push(String(st.accountId));
+  if (st.parentAccountId != null && st.parentAccountId !== '') secrets.push(String(st.parentAccountId));
+
+  secrets.sort((a, b) => b.length - a.length);
+  for (const value of secrets) {
+    if (!value) continue;
+    out = out.split(value).join('[redacted]');
+  }
+
+  out = out.replace(/https?:\/\/\S+/gi, '[url redacted]');
+  return out;
+}
+
 /** Build a plain-text summary suitable for clipboard (status + counts + advice + checks). */
 function buildPlainSummary(context, options) {
   const includeIdentity = options && options.includeIdentity === true;
@@ -885,7 +964,10 @@ function buildPlainSummary(context, options) {
   lines.push('');
   if (checks && checks.length) {
     lines.push('Passing:');
-    checks.forEach(c => lines.push(`  • ${c}`));
+    checks.forEach(c => {
+      const line = includeIdentity ? c : redactShareSummaryText(c, context);
+      lines.push(`  • ${line}`);
+    });
     lines.push('');
   }
   const adviceList = normalizeAdviceList(advice || []);
@@ -895,7 +977,7 @@ function buildPlainSummary(context, options) {
       const prefix = a.source === 'ai' ? '[AI] ' : '';
       let text = a.text;
       if (!includeIdentity) {
-        text = text.replace(/\b(api[_-]?key|apikey)\b[\s:]*[^\s,.)]+/gi, 'api key [redacted]');
+        text = redactShareSummaryText(text, context);
       }
       lines.push(`  • ${prefix}${text}`);
     });
@@ -2050,9 +2132,10 @@ function initPopup() {
           tag.textContent = 'AI';
           cell.appendChild(tag);
         }
-        const displayText = it.source === 'ai' ? stripAllUrls(stripEmbeddedHelpUrl(it.text)) : it.text;
+        const displayText = checkItemDisplayText(it);
         cell.appendChild(document.createTextNode(displayText));
-        if (g.kind === 'err' || g.kind === 'warn') {
+        const capturedForLogs = (lastContext && lastContext.captured) || [];
+        if (shouldOfferViewInLogsLink(it, g.kind, capturedForLogs)) {
           const logsLink = document.createElement('button');
           logsLink.type = 'button';
           logsLink.className = 'check-item__logs-link';
@@ -2275,8 +2358,7 @@ function initPopup() {
 
   /** Jump to Logs tab with a search token derived from a check line. */
   function openCheckInLogs(checkText, kind) {
-    const stripped = stripAllUrls(String(checkText || '')).replace(/\s+/g, ' ').trim();
-    const token = stripped.slice(0, 40);
+    const token = checkLogSearchToken(checkText);
     logQuery = token;
     if (logsSearch) logsSearch.value = token;
     if (kind === 'err') logFilters = { error: true, warn: false, info: false };
@@ -2373,10 +2455,13 @@ function initPopup() {
   }
 
   /** Deliver HAR saved by the background worker after a CDP reload (panel iframe is destroyed on reload). */
-  function tryDeliverPendingHarDownload() {
+  async function tryDeliverPendingHarDownload() {
     if (!chrome.storage?.local) return;
+    const hostTabId = await getHostTabIdForPanel();
+    if (hostTabId == null) return;
     chrome.storage.local.get({ pendingHarDownload: null }, ({ pendingHarDownload: pending }) => {
       if (!pending || (!pending.har && !pending.error)) return;
+      if (pending.tabId != null && pending.tabId !== hostTabId) return;
       chrome.storage.local.remove('pendingHarDownload');
       if (pending.error) {
         showToast(String(pending.error), 4200);

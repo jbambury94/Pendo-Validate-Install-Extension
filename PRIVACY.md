@@ -21,7 +21,7 @@ All data below is stored in `chrome.storage.local`, which is isolated to this ex
 |---|---|---|
 | Visitor ID | `pendoVisitorId` | If the Chrome profile is signed in to a `@pendo.io` Google account, the visitor ID is that email address (read passively via `chrome.identity.getProfileUserInfo`, not cached). Otherwise a randomly generated UUID (via `crypto.randomUUID()`) is used to identify this extension installation for product analytics. |
 | Theme preference | `themePreference` | `"system"`, `"light"`, or `"dark"`. Purely cosmetic. Also mirrored to `localStorage('pendoValidateTheme')` for flash-free page loads. |
-| Share identity opt-in | `shareIncludeIdentity` | When `true`, the action-bar **Share** copy includes the validated page URL and visitor/account (and parent account when present). Default `false`. Does not affect Markdown report downloads. |
+| Share identity opt-in | `shareIncludeIdentity` | When `true`, the action-bar **Share** copy includes the validated page URL and visitor/account (and parent account when present). Default `false`. When off, those fields are omitted and known visitor/account/parent IDs, page URLs, and API-key-like strings are replaced in passing-check and recommendation lines as well. Does not affect Markdown report downloads. |
 | Log UI preferences | `logUiPrefs` | Saved log filter chips and search query on the Logs tab. |
 | AI provider | `aiProvider` | `"openai"`, `"claude"`, or `"gemini"`. Stored only when you save AI settings. |
 | AI API key | `aiApiKey` | Your API key for the selected AI provider. Stored only when you save AI settings. |

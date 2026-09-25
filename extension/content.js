@@ -57,6 +57,16 @@ if (window.__pendoValidateInjected) {
       applyResize(event.data, iframe);
     } else if (type === 'pendo-validate-resizeend') {
       resizeOrigin = null;
+    } else if (type === 'pendo-validate-request-host-tab-id') {
+      chrome.runtime.sendMessage({ type: 'pendo-validate-host-tab-id' }, (res) => {
+        if (chrome.runtime.lastError) return;
+        try {
+          iframe.contentWindow?.postMessage(
+            { type: 'pendo-validate-host-tab-id', tabId: res?.tabId ?? null },
+            '*',
+          );
+        } catch (_) { /* iframe navigated away */ }
+      });
     }
   });
 

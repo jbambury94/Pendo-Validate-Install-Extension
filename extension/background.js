@@ -7,9 +7,13 @@
  * pendo-validate-toggle to show/hide the overlay panel.
  *
  * HAR capture (CDP + reload) runs here so it survives tab reload — the panel iframe is
- * destroyed when the validated page reloads.
+ * destroyed when the validated page reloads. On Chrome (service worker), load via
+ * importScripts; on Firefox (event page), har-capture.js is listed before this file
+ * in the transformed manifest (see scripts/browser-targets.mjs).
  */
-importScripts('har-capture.js');
+if (typeof importScripts === 'function') {
+  importScripts('har-capture.js');
+}
 
 const HAR_POST_LOAD_SETTLE_MS = 2000;
 const HAR_CAPTURE_MAX_MS = 15000;
@@ -176,6 +180,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message?.type === 'pendo-validate-host-tab-id') {
+    sendResponse({ ok: true, tabId: sender.tab?.id ?? null });
+    return true;
+  }
+
   if (message?.type === 'pendo-validate-check-reopen-panel') {
     (async () => {
       const tabId = sender.tab?.id;
@@ -204,8 +213,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       } catch (_) { /* ignore */ }
       const result = await captureNetworkHarInServiceWorker(tabId, pageUrl);
       const payload = result.ok
-        ? { har: result.har, entryCount: result.entryCount, mode: result.mode, ts: Date.now() }
-        : { error: result.message || 'HAR capture failed', ts: Date.now() };
+        ? { har: result.har, entryCount: result.entryCount, mode: result.mode, ts: Date.now(), tabId }
+        : { error: result.message || 'HAR capture failed', ts: Date.now(), tabId };
       try {
         await chrome.storage.local.set({ [PENDING_HAR_STORAGE_KEY]: payload });
       } catch (_) { /* ignore */ }

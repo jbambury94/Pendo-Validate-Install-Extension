@@ -335,6 +335,12 @@ describe('background.js — Firefox privileged-API bridge', () => {
     expect(sendResponse).toHaveBeenCalledWith({ ok: false, error: 'inject blocked' })
   })
 
+  it('pendo-validate-host-tab-id returns sender tab id', () => {
+    const sendResponse = vi.fn()
+    handler({ type: 'pendo-validate-host-tab-id' }, { tab: { id: 99 } }, sendResponse)
+    expect(sendResponse).toHaveBeenCalledWith({ ok: true, tabId: 99 })
+  })
+
   it('pendo-validate-check-reopen-panel returns reopen when flag matches sender tab', async () => {
     chrome.storage.local.get.mockImplementation(() => Promise.resolve({
       ivaReopenPanel: { tabId: 5, expires: Date.now() + 60000 },

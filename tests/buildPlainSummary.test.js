@@ -163,4 +163,44 @@ describe('buildPlainSummary — redaction', () => {
     expect(text).toContain('Page: https://example.com/app')
     expect(text).toContain('Parent AccountId: parent-1')
   })
+
+  it('redacts short visitorId embedded in quality recommendations', () => {
+    const ctx = {
+      ...baseContext,
+      status: { ...baseContext.status, visitorId: 'ab' },
+      advice: [{ text: 'visitorId "ab" is very short (fewer than 3 characters).', source: 'builtin' }],
+    }
+    const text = buildPlainSummary(ctx)
+    expect(text).not.toContain('"ab"')
+    expect(text).toContain('[redacted]')
+  })
+
+  it('redacts placeholder account and parent IDs in recommendation text', () => {
+    const ctx = {
+      ...baseContext,
+      status: {
+        ...baseContext.status,
+        accountId: 'test-account',
+        parentAccountId: 'parent-org',
+      },
+      advice: [
+        { text: 'accountId is set to a placeholder value ("test-account"). Use a stable organisation identifier.', source: 'builtin' },
+        { text: 'parentAccountId is set to a placeholder value ("parent-org"). Use a stable organisation identifier.', source: 'builtin' },
+      ],
+    }
+    const text = buildPlainSummary(ctx)
+    expect(text).not.toContain('test-account')
+    expect(text).not.toContain('parent-org')
+    expect(text).toContain('[redacted]')
+  })
+
+  it('redacts page URLs embedded in recommendation text', () => {
+    const ctx = {
+      ...baseContext,
+      advice: [{ text: 'Staging URL https://staging.example.com/app detected.', source: 'builtin' }],
+    }
+    const text = buildPlainSummary(ctx)
+    expect(text).not.toContain('https://staging.example.com/app')
+    expect(text).toContain('[url redacted]')
+  })
 })
