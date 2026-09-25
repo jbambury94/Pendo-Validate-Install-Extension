@@ -1,6 +1,6 @@
-/** Injected into page MAIN world via scripting.executeScript. This file is the single source of truth for captureAndInspect — tests/helpers.js loads and runs it directly (via vm) rather than mirroring it. Re-assigns when revision changes so upgrades/re-injection replace a stale page global. Assigned as a function expression (not a top-level declaration) so it never creates a page-global `captureAndInspect` binding that could collide with the host page. Keep revision (3) in sync with popup.js _INJECTED_SCRIPTS['capture-inspect'].revision. */
-if (globalThis.__pendoValidateCaptureAndInspectRevision !== 3 || typeof globalThis.__pendoValidateCaptureAndInspect !== 'function') {
-globalThis.__pendoValidateCaptureAndInspectRevision = 3;
+/** Injected into page MAIN world via scripting.executeScript. This file is the single source of truth for captureAndInspect — tests/helpers.js loads and runs it directly (via vm) rather than mirroring it. Re-assigns when revision changes so upgrades/re-injection replace a stale page global. Assigned as a function expression (not a top-level declaration) so it never creates a page-global `captureAndInspect` binding that could collide with the host page. Keep revision (4) in sync with popup.js _INJECTED_SCRIPTS['capture-inspect'].revision. */
+if (globalThis.__pendoValidateCaptureAndInspectRevision !== 4 || typeof globalThis.__pendoValidateCaptureAndInspect !== 'function') {
+globalThis.__pendoValidateCaptureAndInspectRevision = 4;
 globalThis.__pendoValidateCaptureAndInspect = function captureAndInspect(variant = 'page') {
   const captured = []
   const original = { log: console.log, warn: console.warn, error: console.error, info: console.info }
@@ -64,6 +64,11 @@ globalThis.__pendoValidateCaptureAndInspect = function captureAndInspect(variant
     configKeys: null,
     configSource: null,
     resourceHits: [],
+    visitorAnonymous: false,
+    agentScripts: [],
+    apiKeysSeen: [],
+    otherAgentApiKey: null,
+    environment: null,
   }
 
   function extractKeyFromUrl(url) {
@@ -72,6 +77,169 @@ globalThis.__pendoValidateCaptureAndInspect = function captureAndInspect(variant
       if (m) return m[1]
     } catch {}
     return null
+  }
+
+  function readAgentApiKey(a) {
+    try {
+      if (!a) return null
+      if (typeof a.apiKey === 'string' && a.apiKey) return a.apiKey
+      const o = a._ && a._.options
+      if (o && typeof o === 'object' && typeof o.apiKey === 'string' && o.apiKey) return o.apiKey
+    } catch {}
+    return null
+  }
+
+  function clipText(v, max) {
+    let s
+    try { s = typeof v === 'string' ? v : JSON.stringify(v) } catch { s = String(v) }
+    s = s == null ? '' : String(s)
+    return s.length > max ? s.slice(0, max) + '…' : s
+  }
+
+  const CONFIG_LINE_RE = /^Config option `([^`]+)` with value `([\s\S]*)` from source `([a-z]+)`$/
+  const CONFIG_CONFLICT_HEAD_RE = /^Multiple sources found with values for (.+)$/
+
+  function serializeConfigValue(name, rawFromLog, getVal) {
+    let v
+    try {
+      if (typeof getVal === 'function') v = getVal(name)
+      else v = rawFromLog
+    } catch { v = rawFromLog }
+    if (name === 'inlineStyleNonce') return '(set)'
+    if (typeof v === 'function') return '(function)'
+    try {
+      if (v === undefined && rawFromLog != null && rawFromLog !== 'undefined') {
+        try { v = JSON.parse(rawFromLog) } catch { v = rawFromLog }
+      }
+    } catch {}
+    let s
+    try { s = typeof v === 'string' ? JSON.stringify(v) : JSON.stringify(v) } catch { s = String(v) }
+    if (s === 'undefined' && rawFromLog != null && rawFromLog !== 'undefined') s = String(rawFromLog)
+    return clipText(s, 200)
+  }
+
+  // Logging-mode validateEnvironment() prints "Validate Config options"; silence console and parse it.
+  function readAgentConfig(a) {
+    if (!a || typeof a.validateEnvironment !== 'function') return { reported: false }
+    const getVal = typeof a.getConfigValue === 'function' ? (n) => a.getConfigValue(n) : null
+    const orig = {
+      log: console.log, info: console.info, warn: console.warn, error: console.error, debug: console.debug,
+      group: console.group, groupCollapsed: console.groupCollapsed, groupEnd: console.groupEnd, table: console.table,
+    }
+    let depth = 0
+    let configGroupLevel = 0
+    const lines = []
+    const warns = []
+    function inConfigGroup() {
+      return configGroupLevel > 0 && depth >= configGroupLevel
+    }
+    function enterGroup(label) {
+      depth++
+      if (String(label) === 'Validate Config options') configGroupLevel = depth
+    }
+    function leaveGroup() {
+      if (configGroupLevel > 0 && depth === configGroupLevel) configGroupLevel = 0
+      depth = Math.max(0, depth - 1)
+    }
+    function pushLine(args) {
+      if (!inConfigGroup()) return
+      try {
+        const text = Array.from(args).map(x => (typeof x === 'string' ? x : String(x))).join(' ')
+        if (text) lines.push(text)
+      } catch {}
+    }
+    console.log = (...args) => pushLine(args)
+    console.info = (...args) => pushLine(args)
+    console.debug = (...args) => pushLine(args)
+    console.table = (...args) => pushLine(args)
+    console.warn = (...args) => {
+      if (inConfigGroup()) {
+        try {
+          const text = Array.from(args).map(x => (typeof x === 'string' ? x : String(x))).join(' ')
+          if (text) warns.push(text)
+        } catch {}
+      }
+    }
+    console.error = console.warn
+    console.group = (label) => { enterGroup(label) }
+    console.groupCollapsed = (label) => { enterGroup(label) }
+    console.groupEnd = () => { leaveGroup() }
+    try {
+      a.validateEnvironment()
+    } catch {
+      return { reported: false }
+    } finally {
+      console.log = orig.log; console.info = orig.info; console.warn = orig.warn; console.error = orig.error
+      console.debug = orig.debug; console.group = orig.group; console.groupCollapsed = orig.groupCollapsed
+      console.groupEnd = orig.groupEnd; console.table = orig.table
+    }
+    if (!lines.length) return { reported: false }
+    const seen = new Set()
+    const options = []
+    const conflicts = []
+    let pendingConflict = null
+    for (const w of warns) {
+      const hm = w.match(CONFIG_CONFLICT_HEAD_RE)
+      if (hm) {
+        pendingConflict = { name: hm[1].trim(), values: [] }
+        conflicts.push(pendingConflict)
+        continue
+      }
+      if (pendingConflict) {
+        const cm = w.match(CONFIG_LINE_RE)
+        if (cm) pendingConflict.values.push({ source: cm[3], value: serializeConfigValue(cm[1], cm[2], getVal) })
+        else pendingConflict = null
+      }
+    }
+    for (const line of lines) {
+      const m = line.match(CONFIG_LINE_RE)
+      if (!m) continue
+      const name = m[1]
+      const source = m[3]
+      if (source === 'default' || name === 'publicAppId' || seen.has(name)) continue
+      seen.add(name)
+      options.push({
+        name,
+        source,
+        value: serializeConfigValue(name, m[2], getVal),
+      })
+    }
+    return { reported: true, options: options.slice(0, 60), conflicts }
+  }
+
+  // validateEnvironment(true) returns { install, plugins, globals, url, errors, methods } without
+  // logging. Only the target page's agent is ever passed in.
+  function readAgentEnvironment(a) {
+    if (!a) return null
+    if (typeof a.validateEnvironment !== 'function') return { available: false }
+    let env
+    try { env = a.validateEnvironment(true) } catch (e) {
+      return { available: true, failed: clipText(e && e.message ? e.message : e, 300) }
+    }
+    if (!env || typeof env !== 'object') return { available: true, failed: 'validateEnvironment() returned no data.' }
+    const errors = Array.isArray(env.errors) ? env.errors : []
+    const out = {
+      available: true,
+      errorCount: errors.length,
+      // Error history entries are [message, contexts] pairs, oldest first.
+      errors: errors.slice(-20).map(e => clipText(Array.isArray(e) ? e[0] : (e && typeof e === 'object' && e.message) ? e.message : e, 300)),
+      methods: [],
+      globals: Array.isArray(env.globals) ? env.globals.slice(0, 20).map(g => clipText(g, 300)) : [],
+      url: Array.isArray(env.url) ? env.url.slice(0, 5).map(u => ({
+        type: clipText((u && (u.type || u.method)) || '', 40),
+        msg: clipText((u && u.msg) || '', 200),
+        value: clipText((u && u.value) || '', 300),
+      })) : [],
+      plugins: Array.isArray(env.plugins) ? env.plugins.slice(0, 30).map(p => clipText(p, 100)) : [],
+    }
+    const impls = env.methods && Array.isArray(env.methods.implementations) ? env.methods.implementations : []
+    for (const impl of impls.slice(0, 30)) {
+      if (!impl) continue
+      const names = Array.isArray(impl.nonNativeImplementations) ? impl.nonNativeImplementations.slice(0, 30).map(n => clipText(n, 100)) : []
+      if (names.length) out.methods.push({ type: clipText(impl.nativeType || '', 60), names })
+    }
+    out.config = readAgentConfig(a)
+    return out
   }
 
   try {
@@ -116,6 +284,14 @@ globalThis.__pendoValidateCaptureAndInspect = function captureAndInspect(variant
       status.accountMetadata = safeCloneFields(accountSrc)
       status.parentAccountMetadata = safeCloneFields(parentAccountSrc)
       if (parentAccountSrc && typeof parentAccountSrc === 'object') status.parentAccountId = parentAccountSrc.id != null ? parentAccountSrc.id : null
+    }
+  } catch {}
+
+  // isAnonymousVisitor() isn't public, but TEMP_PREFIX is.
+  try {
+    if (status.visitorId != null && status.visitorId !== '') {
+      const tempPrefix = (agent && typeof agent.TEMP_PREFIX === 'string' && agent.TEMP_PREFIX) || '_PENDO_T_'
+      status.visitorAnonymous = String(status.visitorId).indexOf(tempPrefix) === 0
     }
   } catch {}
 
@@ -209,6 +385,34 @@ globalThis.__pendoValidateCaptureAndInspect = function captureAndInspect(variant
     })
   } catch {}
 
+  // Agent script tags and agent API keys, for duplicate installs and multiple subscriptions. Keys in
+  // data request URLs are not counted: additionalApiKeys legitimately sends events to several.
+  try {
+    const keys = []
+    const addKey = (k) => {
+      if (!k || typeof k !== 'string') return
+      const lk = k.toLowerCase()
+      if (keys.indexOf(lk) === -1) keys.push(lk)
+    }
+    const agentScriptRe = /\/agent\/static\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/pendo(?:-staging)?\.js(?:[?#]|$)/i
+    for (const s of Array.from(document.scripts || [])) {
+      const src = s.src || ''
+      if (!src || src.indexOf('/agent/static/') === -1) continue
+      const m = agentScriptRe.exec(src)
+      if (!m) continue
+      status.agentScripts.push({ src: src.split(/[?#]/)[0], apiKey: m[1] })
+      addKey(m[1])
+    }
+    addKey(status.detectedApiKey)
+    status.resourceHits.forEach(r => addKey(extractKeyFromUrl(r.name)))
+    if (snippetGlobalPresent && launcherGlobalPresent) {
+      const other = pendoGlobal === 'Pendo' ? window.pendo : window.Pendo
+      status.otherAgentApiKey = readAgentApiKey(other)
+      addKey(status.otherAgentApiKey)
+    }
+    status.apiKeysSeen = keys
+  } catch {}
+
   let cspMeta = ""
   try {
     const metas = document.querySelectorAll('meta[http-equiv="Content-Security-Policy"]')
@@ -232,6 +436,9 @@ globalThis.__pendoValidateCaptureAndInspect = function captureAndInspect(variant
     console.error = original.error; console.info = original.info
   }
 
+  // Runs after console interception ends so nothing it prints can change the captured counts.
+  status.environment = readAgentEnvironment(agent)
+
   const all = captured.map(m => m.text).join('\n')
   const keyRegex = /\b[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\b/i
   const apiKeyFound = keyRegex.test(all) || !!status.detectedApiKey
@@ -253,6 +460,12 @@ globalThis.__pendoValidateCaptureAndInspect = function captureAndInspect(variant
 
   if (status.pendoPresent) {
     if (!status.visitorId) advice.push({ text: "Visitor identity is not set. Call pendo.initialize with a visitorId after authentication.", source: 'builtin', supportKey: 'chooseIdsMetadata' })
+    else if (status.visitorAnonymous) {
+      // validateInstall() logs its own anonymous-visitor warning; don't repeat it.
+      if (!captured.some(m => /anonymous/i.test(m.text))) {
+        advice.push({ text: "The visitor is anonymous: Pendo generated a temporary \"_PENDO_T_\" visitor ID because pendo.initialize() ran without one. Pass the signed-in user's ID to pendo.initialize(), or call pendo.identify() once the user signs in.", source: 'builtin', supportKey: 'chooseIdsMetadata', severity: 'warn' })
+      }
+    }
     else checks.push("visitorId present.")
     if (status.accountId == null) advice.push({ text: "accountId not found. If you use accounts, provide accountId in pendo.initialize.", source: 'builtin', supportKey: 'chooseIdsMetadata' })
     else checks.push("accountId present.")
@@ -261,7 +474,7 @@ globalThis.__pendoValidateCaptureAndInspect = function captureAndInspect(variant
     if (hasFieldsBeyondId(status.visitorMetadata)) checks.push("Visitor metadata fields detected.")
     if (hasFieldsBeyondId(status.accountMetadata)) checks.push("Account metadata fields detected.")
     if (status.parentAccountId != null && hasFieldsBeyondId(status.parentAccountMetadata)) checks.push("Parent account metadata fields detected.")
-    if (status.visitorId && !hasFieldsBeyondId(status.visitorMetadata)) {
+    if (status.visitorId && !status.visitorAnonymous && !hasFieldsBeyondId(status.visitorMetadata)) {
       advice.push({ text: "No visitor metadata fields detected beyond the ID. Consider passing name, email, and role for better segmentation.", source: 'builtin', supportKey: 'chooseIdsMetadata' })
     }
   }

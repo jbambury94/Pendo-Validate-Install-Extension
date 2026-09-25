@@ -14,6 +14,15 @@ function bucketIvaLogLines(count) {
   return '200+';
 }
 
+/** Bucket small counts (frames, requests) for low-cardinality reporting. */
+function bucketIvaSmallCount(count) {
+  const n = Number(count) || 0;
+  if (n <= 1) return String(Math.max(0, n));
+  if (n <= 5) return '2-5';
+  if (n <= 20) return '6-20';
+  return '20+';
+}
+
 /** Map validation result to ivaOutcome (aligned with Status hero semantics). */
 function deriveIvaOutcome(res) {
   const status = res.status || {};
@@ -23,14 +32,21 @@ function deriveIvaOutcome(res) {
   const launcherAttempted = res.launcherAttempted;
   const launcherDataValidated = res.launcherDataValidated;
 
+  const errCount = captured.filter((l) => l.level === 'error').length;
+  const warnCount = captured.filter((l) => l.level === 'warn').length;
+  const flagged = typeof countSeverityAdvice === 'function' ? countSeverityAdvice(res.advice) : { error: 0, warn: 0 };
+  // hasSubframeOnlyPendo lives in diagnostics.js; the guard keeps this file loadable on its own.
+  if (typeof hasSubframeOnlyPendo === 'function' && hasSubframeOnlyPendo(res)) {
+    if (errCount > 0 || flagged.error > 0) return 'err';
+    if (warnCount > 0 || flagged.warn > 0) return 'warn';
+    return 'warn';
+  }
   if (!snippetOnPage && launcherAttempted && launcherPresent === false) return 'notDetected';
   if (!status.pendoPresent) return 'notDetected';
   if (!snippetOnPage && launcherPresent === true && launcherDataValidated === false) return 'warn';
   if (!status.validatePresent) return 'warn';
-  const errCount = captured.filter((l) => l.level === 'error').length;
-  const warnCount = captured.filter((l) => l.level === 'warn').length;
-  if (errCount > 0) return 'err';
-  if (warnCount > 0) return 'warn';
+  if (errCount > 0 || flagged.error > 0) return 'err';
+  if (warnCount > 0 || flagged.warn > 0) return 'warn';
   return 'ok';
 }
 
@@ -59,6 +75,29 @@ function readIvaExtensionVersion() {
   return '';
 }
 
+/** Duplicate installs: more than one agent script ('scripts'), more than one API key ('keys'), 'both' or 'none'. */
+function deriveIvaDuplicates(status) {
+  const scripts = typeof hasDuplicateAgentScriptInstalls === 'function'
+    ? hasDuplicateAgentScriptInstalls(status)
+    : (Array.isArray(status.agentScripts) && status.agentScripts.length > 1);
+  const keys = Array.isArray(status.apiKeysSeen) && status.apiKeysSeen.length > 1;
+  if (scripts && keys) return 'both';
+  if (scripts) return 'scripts';
+  if (keys) return 'keys';
+  return 'none';
+}
+
+/** 'off' without a network capture, else the bucketed count of failed Pendo requests. */
+function bucketIvaNetworkFailures(networkCapture) {
+  const summary = networkCapture && networkCapture.summary;
+  if (!summary) return 'off';
+  const reqs = Array.isArray(summary.requests) ? summary.requests : [];
+  const failed = typeof describeNetworkFailure === 'function'
+    ? reqs.filter((r) => describeNetworkFailure(r)).length
+    : 0;
+  return bucketIvaSmallCount(failed);
+}
+
 /**
  * Build property map for validation_completed. No page URL, IDs, or console text.
  * @param {object} res - Validation result or lastContext-shaped object
@@ -71,6 +110,9 @@ function buildValidationCompletedProps(res, meta) {
   const errCount = captured.filter((l) => l.level === 'error').length;
   const warnCount = captured.filter((l) => l.level === 'warn').length;
   const opts = meta || {};
+  const status = res.status || {};
+  const env = status.environment;
+  const frameMap = res.frameMap;
 
   return {
     ivaOutcome: deriveIvaOutcome(res),
@@ -87,6 +129,12 @@ function buildValidationCompletedProps(res, meta) {
     ivaAiUsed: !!opts.aiAdviceUsed,
     ivaVersion: String(opts.ivaVersion != null ? opts.ivaVersion : readIvaExtensionVersion()),
     ivaBrowser: String(opts.browser != null ? opts.browser : detectIvaBrowser()),
+    ivaFrames: bucketIvaSmallCount(frameMap && frameMap.available ? frameMap.inspected : 0),
+    ivaSubframe: !!(frameMap && frameMap.subframePendoCount > 0),
+    ivaAgentErrs: env && env.available && !env.failed ? bucketIvaLogLines(env.errorCount) : 'na',
+    ivaDup: deriveIvaDuplicates(status),
+    ivaAnonymous: !!status.visitorAnonymous,
+    ivaNetFails: bucketIvaNetworkFailures(res.networkCapture),
   };
 }
 

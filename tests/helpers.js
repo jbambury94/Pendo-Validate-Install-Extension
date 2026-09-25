@@ -12,6 +12,37 @@ import vm from 'node:vm'
 // Pendo agent entry and re-exported here for the suite) rather than a hand-kept mirror.
 export { PENDO_VISITOR_ID_KEY, getProfileEmail, getOrCreateVisitorId, getIvaVersion } from '../src/pendo-visitor.js'
 
+// extension/diagnostics.js declares only functions and DIAG_ vars, so the shipped file runs in
+// this realm (like capture-inspect.js below) rather than being mirrored.
+vm.runInThisContext(readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), '..', 'extension', 'diagnostics.js'),
+  'utf8',
+))
+export const {
+  appendDiagnosticsAdviceToResult,
+  appendDiagnosticsToResult,
+  analyzeFrameMap,
+  summarizeFrameProbeResults,
+  classifyPendoRequest,
+  describeNetworkFailure,
+  groupNetworkRequests,
+  buildNetworkFindings,
+  networkCaptureMatchesPage,
+  hasSubframeOnlyPendo,
+  deriveSubframeHeroState,
+  resolveSubframeHeroState,
+  deriveSubframeStatusLine,
+  countValidationSeverity,
+  countSeverityAdvice,
+  hasDuplicateAgentScriptInstalls,
+  collectDiagnosticsSecrets,
+  buildDiagnosticsMetadata,
+  describeFrame,
+  buildDiagnosticsMarkdownSections,
+  summarizeAgentConfig,
+  DIAG_CONFIG_DEFAULTS,
+} = globalThis
+
 export const PENDO_SUPPORT = {
   installGuide:     'https://support.pendo.io/hc/en-us/articles/360046272771',
   installComponents:'https://support.pendo.io/hc/en-us/articles/21362607464987-Components-of-the-install-script',
@@ -206,7 +237,7 @@ export function inferSupportKeyFromText(text) {
 
 export function normalizeAdviceList(advice = []) {
   return advice.map(a => {
-    let text, source, supportUrl, supportKey, relatedSupportUrls = []
+    let text, source, supportUrl, supportKey, severity, relatedSupportUrls = []
     if (typeof a === 'string') {
       text = a; source = 'builtin'; supportUrl = PENDO_SUPPORT.helpCenter; supportKey = null
     } else if (a && typeof a === 'object') {
@@ -236,10 +267,13 @@ export function normalizeAdviceList(advice = []) {
           if (url) relatedSupportUrls.push({ url, label: SUPPORT_LABELS[k] || k })
         }
       }
+      if (a.severity === 'error' || a.severity === 'warn') severity = a.severity
     } else {
       text = String(a); source = 'builtin'; supportUrl = PENDO_SUPPORT.helpCenter; supportKey = null
     }
-    return { text, source, supportUrl, supportKey, relatedSupportUrls }
+    const out = { text, source, supportUrl, supportKey, relatedSupportUrls }
+    if (severity) out.severity = severity
+    return out
   }).filter(a => a.text)
 }
 
@@ -298,11 +332,14 @@ export function buildMarkdownReport(context, selectRelatedReadingFn) {
   const errors = (captured || []).filter(l => l.level === 'error')
   const hasError = errors.length > 0 || (context.hasError === true)
   const hasWarn = (captured || []).some(l => l.level === 'warn') || (context.hasWarn === true)
+  const flagged = countSeverityAdvice(advice)
   let statusLine = 'Looks healthy'
-  if (!status.pendoPresent) statusLine = 'Pendo not found'
+  const subframeStatus = deriveSubframeStatusLine(context)
+  if (subframeStatus) statusLine = subframeStatus
+  else if (!status.pendoPresent) statusLine = 'Pendo not found'
   else if (!status.validatePresent) statusLine = 'No validateInstall()'
-  else if (hasError) statusLine = 'Errors found'
-  else if (hasWarn) statusLine = 'Warnings found'
+  else if (hasError || flagged.error) statusLine = 'Errors found'
+  else if (hasWarn || flagged.warn) statusLine = 'Warnings found'
   const effectiveOrigin = validatedIn || origin
   if (effectiveOrigin === 'launcher') statusLine += ' (via Pendo Launcher)'
   else if (effectiveOrigin === 'launcher-beta') statusLine += ' (via Pendo Launcher Beta)'
@@ -343,6 +380,7 @@ export function buildMarkdownReport(context, selectRelatedReadingFn) {
     urlLoadTimeStrip: !!(status.urlSanitization && (status.urlSanitization.navQueryStripped || status.urlSanitization.navPendoTokenStripped)),
     capturedLineCount: (captured && captured.length) || 0,
   }
+  Object.assign(meta, buildDiagnosticsMetadata(context))
   if (status.visitorMetadata) meta.visitorMetadata = status.visitorMetadata
   if (status.accountMetadata) meta.accountMetadata = status.accountMetadata
   if (status.parentAccountMetadata) meta.parentAccountMetadata = status.parentAccountMetadata
@@ -354,13 +392,18 @@ export function buildMarkdownReport(context, selectRelatedReadingFn) {
   lines.push("")
 
   lines.push(`## Errors`)
-  if (errors.length === 0 && !hasError) {
+  const severityErrorAdvice = normalizeAdviceList((advice || []).filter(a => a && a.severity === 'error'))
+  const hasAnyError = errors.length > 0 || flagged.error > 0 || hasError
+  if (!hasAnyError) {
     lines.push(`No errors detected.`)
   } else {
     errors.forEach(l => {
       lines.push(`- ${l.text} — [Pendo Help: Installation & troubleshooting](${PENDO_SUPPORT.installGuide})`)
     })
-    if (errors.length === 0 && hasError) {
+    severityErrorAdvice.forEach(a => {
+      lines.push(`- ${a.text} — [Pendo Help](${a.supportUrl})`)
+    })
+    if (errors.length === 0 && severityErrorAdvice.length === 0 && hasError) {
       lines.push(`- Validation reported issues. See Advice and Captured Output below. — [Pendo isn't displaying — troubleshooting](${PENDO_SUPPORT.troubleshooting})`)
     }
   }
@@ -381,6 +424,8 @@ export function buildMarkdownReport(context, selectRelatedReadingFn) {
   }
   if (!adviceList.length && (!checks || !checks.length)) lines.push(`No advice items.`)
   lines.push("")
+
+  lines.push(...buildDiagnosticsMarkdownSections(context))
 
   if (typeof selectRelatedReadingFn === 'function') {
     // Derive detection signals from the validation output (advice support keys + checks text)
@@ -424,7 +469,9 @@ export function buildMarkdownReport(context, selectRelatedReadingFn) {
 }
 
 export function buildJsonReport(context) {
-  return JSON.stringify(context, null, 2)
+  const nc = context && context.networkCapture
+  if (!nc || !nc.har) return JSON.stringify(context, null, 2)
+  return JSON.stringify({ ...context, networkCapture: { ...nc, har: undefined } }, null, 2)
 }
 
 export function filterCapturedLogs(captured, logFilters, logQuery) {
@@ -485,6 +532,7 @@ export function redactShareSummaryText(text, context) {
   if (st.visitorId != null && st.visitorId !== '') secrets.push(String(st.visitorId))
   if (st.accountId != null && st.accountId !== '') secrets.push(String(st.accountId))
   if (st.parentAccountId != null && st.parentAccountId !== '') secrets.push(String(st.parentAccountId))
+  secrets.push(...collectDiagnosticsSecrets(context))
 
   secrets.sort((a, b) => b.length - a.length)
   for (const value of secrets) {
@@ -503,12 +551,14 @@ export function buildPlainSummary(context, options) {
   const warnCount = (captured || []).filter(l => l.level === 'warn').length
   const okCount = (checks || []).length
   let statusLine = 'Looks healthy'
-  if (!snippetOnPage && launcherAttempted && launcherPresent === false) statusLine = 'Pendo not found (snippet and Launcher)'
+  const subframeStatus = deriveSubframeStatusLine(context)
+  if (subframeStatus) statusLine = subframeStatus
+  else if (!snippetOnPage && launcherAttempted && launcherPresent === false) statusLine = 'Pendo not found (snippet and Launcher)'
   else if (!snippetOnPage && launcherPresent === true && launcherDataValidated === false) statusLine = 'Launcher installed (no data on this tab)'
   else if (!status.pendoPresent) statusLine = 'Pendo not found'
   else if (!status.validatePresent) statusLine = 'No validateInstall()'
-  else if (errCount > 0) statusLine = 'Errors found'
-  else if (warnCount > 0) statusLine = 'Warnings found'
+  else if (errCount > 0 || countSeverityAdvice(advice).error) statusLine = 'Errors found'
+  else if (warnCount > 0 || countSeverityAdvice(advice).warn) statusLine = 'Warnings found'
 
   const lines = []
   lines.push(`Pendo Install Validator — ${statusLine}`)
@@ -560,7 +610,9 @@ export function classifyAdvice(rawAdvice, captured, checks) {
       supportKey: a.supportKey,
       supportUrl: a.supportUrl,
     }
-    if (a.supportKey && ERR_SUPPORT_KEYS.has(a.supportKey)) errItems.push(item)
+    if (a.severity === 'error') errItems.push(item)
+    else if (a.severity === 'warn') warnItems.push(item)
+    else if (a.supportKey && ERR_SUPPORT_KEYS.has(a.supportKey)) errItems.push(item)
     else warnItems.push(item)
     seenTexts.add(a.text)
   })
@@ -590,6 +642,8 @@ export function deriveHeroState(res) {
   const { status, captured, snippetOnPage, launcherPresent, launcherAttempted, launcherDataValidated, validatedIn } = res
   const originNote = validatedIn === 'launcher' ? ' (via Pendo Launcher)'
     : validatedIn === 'launcher-beta' ? ' (via Pendo Launcher Beta)' : ''
+  const subframeHero = resolveSubframeHeroState(res, originNote)
+  if (subframeHero) return subframeHero
   if (!snippetOnPage && launcherAttempted && launcherPresent === false) {
     return { state: 'err', title: 'Install not detected', sub: 'Snippet and Pendo Launcher are both missing on this page.' }
   }
@@ -602,9 +656,11 @@ export function deriveHeroState(res) {
   if (!status.validatePresent) {
     return { state: 'warn', title: 'No validateInstall()', sub: 'Agent found but the validateInstall() helper is unavailable' + originNote + '.' }
   }
-  const errCount = captured.filter(l => l.level === 'error').length
-  const warnCount = captured.filter(l => l.level === 'warn').length
-  if (errCount > 0) return { state: 'err', title: `${errCount} error${errCount === 1 ? '' : 's'}`, sub: 'validateInstall() reported errors' + originNote + '.' }
+  const logErrCount = captured.filter(l => l.level === 'error').length
+  const flagged = countSeverityAdvice(res.advice)
+  const errCount = logErrCount + flagged.error
+  const warnCount = captured.filter(l => l.level === 'warn').length + flagged.warn
+  if (errCount > 0) return { state: 'err', title: `${errCount} error${errCount === 1 ? '' : 's'}`, sub: (logErrCount ? 'validateInstall() reported errors' : 'Validation found errors') + originNote + '.' }
   if (warnCount > 0) return { state: 'warn', title: `${warnCount} warning${warnCount === 1 ? '' : 's'}`, sub: 'Install works, but there are recommendations' + originNote + '.' }
   return { state: 'ok', title: 'Install validated', sub: 'All checks passed' + originNote + '.' }
 }
@@ -1098,7 +1154,7 @@ const _captureInspectSrc = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), '..', 'extension', 'capture-inspect.js'),
   'utf8',
 )
-const _CAPTURE_INSPECT_REVISION = 3 // keep in sync with capture-inspect.js
+const _CAPTURE_INSPECT_REVISION = 4 // keep in sync with capture-inspect.js
 export function captureAndInspect(variant = 'page') {
   if (globalThis.__pendoValidateCaptureAndInspectRevision !== _CAPTURE_INSPECT_REVISION
     || typeof globalThis.__pendoValidateCaptureAndInspect !== 'function') {
@@ -1128,7 +1184,10 @@ export function assessInstallQuality(context) {
   if (vid) {
     result.visitorId.present = true
     result.visitorId.value = vid
-    if (PLACEHOLDER_IDS.test(String(vid).trim())) {
+    if (status.visitorAnonymous) {
+      result.visitorId.quality = 'poor'
+      result.visitorId.issues.push('visitorId is a temporary anonymous ID; the visitor is not identified.')
+    } else if (PLACEHOLDER_IDS.test(String(vid).trim())) {
       result.visitorId.quality = 'poor'
       result.visitorId.issues.push(`visitorId "${vid}" is a placeholder value.`)
     } else if (String(vid).length < 3) {
@@ -1227,7 +1286,7 @@ export function assessInstallQuality(context) {
   // Environment
   const isStaging = /\b(staging|preview|dev\.|qa\.|localhost)\b/i.test(pageUrl)
   result.environment.isStaging = isStaging
-  if (isStaging && vid) {
+  if (isStaging && vid && !status.visitorAnonymous) {
     const hasPrefix = /^(dev_|staging_|test_|qa_)/i.test(String(vid))
     if (!hasPrefix) {
       result.environment.issues.push('Staging/dev URL detected but visitorId lacks a test prefix (dev_, staging_, test_, qa_).')
@@ -1248,7 +1307,8 @@ export function appendQualityAdviceToResult(result, pageUrl) {
   const quality = assessInstallQuality({ status: result.status, pageUrl: pageUrl || '' })
   result.advice = result.advice || []
   const { status } = result
-  if (quality.visitorId.quality === 'poor') {
+  // Anonymous visitors already get their own recommendation from captureAndInspect.
+  if (quality.visitorId.quality === 'poor' && !status.visitorAnonymous) {
     result.advice.push({ text: `visitorId is set to a placeholder value ("${status.visitorId}"). Use a stable authenticated identifier.`, source: 'builtin', supportKey: 'chooseIdsMetadata' })
   } else if (quality.visitorId.quality === 'weak') {
     result.advice.push({ text: quality.visitorId.issues[0] || 'visitorId may not be a stable identifier.', source: 'builtin', supportKey: 'chooseIdsMetadata' })

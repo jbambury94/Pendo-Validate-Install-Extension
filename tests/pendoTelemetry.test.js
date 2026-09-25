@@ -4,14 +4,17 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import vm from 'node:vm'
 
-const telemetrySrc = readFileSync(
-  join(dirname(fileURLToPath(import.meta.url)), '..', 'extension', 'pendo-telemetry.js'),
-  'utf8',
-)
+const extDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'extension')
+const telemetrySrc = readFileSync(join(extDir, 'pendo-telemetry.js'), 'utf8')
+// The panel loads diagnostics.js too; telemetry uses its helpers when they are defined.
+const diagnosticsSrc = readFileSync(join(extDir, 'diagnostics.js'), 'utf8')
 
 function loadTelemetry() {
+  vm.runInThisContext(diagnosticsSrc)
   vm.runInThisContext(telemetrySrc)
 }
+
+const PAGE_KEY = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa'
 
 const baseRes = {
   status: { pendoPresent: true, validatePresent: true },
@@ -79,11 +82,96 @@ describe('pendo-telemetry', () => {
       validatedIn: 'launcher-beta',
       launcherPresent: true,
       launcherDataValidated: true,
+      status: {
+        pendoPresent: true, validatePresent: true, visitorAnonymous: true,
+        environment: { available: true, errorCount: 100 },
+        agentScripts: [{}, {}], apiKeysSeen: ['k1', 'k2'],
+      },
+      frameMap: { available: true, inspected: 30, subframePendoCount: 3 },
+      networkCapture: { summary: { requests: Array.from({ length: 30 }, () => ({ url: 'https://cdn.pendo.io/x', status: 500 })) } },
     }
-    const props = buildValidationCompletedProps(res, { aiAdviceUsed: true, ivaVersion: '1.9.0', browser: 'edge' })
+    const props = buildValidationCompletedProps(res, { aiAdviceUsed: true, ivaVersion: '1.9.1', browser: 'firefox' })
     expect(JSON.stringify(props).length).toBeLessThan(450)
     expect(JSON.stringify(props)).not.toContain('customer.example.com')
     expect(JSON.stringify(props)).not.toContain('visitor')
+  })
+
+  it('reports the new checks as low-cardinality flags and buckets', () => {
+    const props = buildValidationCompletedProps({
+      ...baseRes,
+      status: {
+        pendoPresent: true, validatePresent: true, visitorId: '_PENDO_T_abc', visitorAnonymous: true, detectedApiKey: PAGE_KEY,
+        environment: { available: true, errorCount: 12, errors: ['secret error text'] },
+        agentScripts: [
+          { src: `https://cdn.pendo.io/agent/static/${PAGE_KEY}/pendo.js`, apiKey: PAGE_KEY },
+          { src: `https://cdn.pendo.io/agent/static/${PAGE_KEY}/pendo.js`, apiKey: PAGE_KEY },
+        ],
+        apiKeysSeen: [PAGE_KEY],
+      },
+      frameMap: {
+        available: true, inspected: 3, subframePendoCount: 1,
+        frames: [{ url: 'https://frame.customer.example.com/', visitorId: 'frame-visitor-id', apiKey: PAGE_KEY }],
+      },
+      networkCapture: {
+        summary: {
+          documentCsp: { enforce: ["script-src 'self' secret.example"], reportOnly: [] },
+          requests: [
+            { url: `https://data.pendo.io/data/ptm.gif/${PAGE_KEY}`, blockedReason: 'csp' },
+            { url: `https://data.pendo.io/data/ptm.gif/${PAGE_KEY}`, status: 200 },
+          ],
+        },
+        har: { log: { entries: [] } },
+      },
+    }, { ivaVersion: '1.9.1', browser: 'chrome' })
+    expect(props).toMatchObject({
+      ivaFrames: '2-5',
+      ivaSubframe: true,
+      ivaAgentErrs: '11-50',
+      ivaDup: 'scripts',
+      ivaAnonymous: true,
+      ivaNetFails: '1',
+    })
+    const serialized = JSON.stringify(props)
+    for (const leak of [PAGE_KEY, '_PENDO_T_', 'secret', 'frame.customer', 'frame-visitor-id', 'cdn.pendo.io']) {
+      expect(serialized).not.toContain(leak)
+    }
+  })
+
+  it('uses neutral values when the new checks did not run', () => {
+    const props = buildValidationCompletedProps(baseRes, {})
+    expect(props).toMatchObject({ ivaFrames: '0', ivaSubframe: false, ivaAgentErrs: 'na', ivaDup: 'none', ivaAnonymous: false, ivaNetFails: 'off' })
+    expect(buildValidationCompletedProps({ ...baseRes, status: { ...baseRes.status, apiKeysSeen: ['a', 'b'], agentScripts: [{}, {}] } }, {}).ivaDup).toBe('both')
+  })
+
+  it('counts advice severity in the outcome, like the Status hero', () => {
+    expect(deriveIvaOutcome({ ...baseRes, advice: [{ text: 'blocked', severity: 'error' }] })).toBe('err')
+    expect(deriveIvaOutcome({ ...baseRes, advice: [{ text: 'duplicate', severity: 'warn' }] })).toBe('warn')
+    expect(deriveIvaOutcome({ ...baseRes, advice: [{ text: 'legacy', supportKey: 'installGuide' }] })).toBe('ok')
+  })
+
+  it('maps Pendo found only in a subframe to warn', () => {
+    const res = {
+      ...baseRes,
+      status: { pendoPresent: false, validatePresent: false },
+      snippetOnPage: false,
+      launcherAttempted: true,
+      launcherPresent: false,
+      frameMap: { available: true, inspected: 2, subframePendoCount: 1 },
+    }
+    expect(deriveIvaOutcome(res)).toBe('warn')
+  })
+
+  it('maps subframe-only plus severity errors to err', () => {
+    const res = {
+      ...baseRes,
+      status: { pendoPresent: false, validatePresent: false },
+      snippetOnPage: false,
+      launcherAttempted: true,
+      launcherPresent: false,
+      frameMap: { available: true, inspected: 2, subframePendoCount: 1 },
+      advice: [{ text: 'blocked', severity: 'error' }],
+    }
+    expect(deriveIvaOutcome(res)).toBe('err')
   })
 
   it('bucketIvaLogLines uses low-cardinality buckets', () => {

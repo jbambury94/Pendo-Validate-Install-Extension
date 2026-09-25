@@ -467,6 +467,13 @@ body {
 .card__action:hover { background: var(--panel-soft); color: var(--ink); }
 .card__body { padding: 8px 0; }
 .card__body--flush { padding: 0; }
+.card__meta { font-size: 11px; color: var(--ink-3); }
+.card__note {
+  padding: 8px 12px;
+  font-size: 11px;
+  color: var(--ink-3);
+  border-top: 1px solid var(--line-soft);
+}
 
 /* KV rows */
 .kv-row {
@@ -495,6 +502,16 @@ body {
 .kv-row__v--sans { font-family: var(--font-sans); }
 .kv-row__v--wrap { white-space: normal; word-break: break-word; }
 .kv-row__v--muted { color: var(--ink-3); font-style: italic; font-family: var(--font-sans); }
+.kv-row__v--err { color: var(--err); }
+.kv-row__v--warn { color: var(--warn); }
+.kv-row__sub {
+  display: block;
+  margin-top: 2px;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  color: var(--ink-3);
+  white-space: normal;
+}
 .kv-row__copy {
   width: 22px; height: 22px;
   background: transparent;

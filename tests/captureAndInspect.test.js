@@ -839,3 +839,243 @@ describe('captureAndInspect — init config detection (inline script fallback)',
     expect(captureAndInspect().status.configKeys).toEqual(['visitor'])
   })
 })
+
+describe('captureAndInspect — agent environment check', () => {
+  const envFixture = {
+    install: [],
+    errors: [['first error', ['error']], ['second error', ['error']]],
+    methods: { hasNonNativeMethods: true, implementations: [{ nativeType: 'JSON', nonNativeImplementations: ['stringify'] }, { nativeType: 'String | Prototype', nonNativeImplementations: [] }] },
+    globals: ['Pendo has detected that window.Event has been modified'],
+    url: [{ type: 'sanitizedUrl', msg: 'Pendo is sanitizing the URL', value: 'https://app.example.com/page' }],
+    plugins: ['Debugger', 'Replay'],
+  }
+
+  it('calls validateEnvironment(true) on the target agent and keeps a summary', () => {
+    const validateEnvironment = vi.fn(() => envFixture)
+    window.pendo = { validateInstall: vi.fn(), validateEnvironment }
+    const env = captureAndInspect('combined').status.environment
+    expect(validateEnvironment).toHaveBeenCalledWith(true)
+    expect(env.available).toBe(true)
+    expect(env.errorCount).toBe(2)
+    expect(env.errors).toEqual(['first error', 'second error'])
+    expect(env.methods).toEqual([{ type: 'JSON', names: ['stringify'] }])
+    expect(env.globals).toEqual(['Pendo has detected that window.Event has been modified'])
+    expect(env.url).toEqual([{ type: 'sanitizedUrl', msg: 'Pendo is sanitizing the URL', value: 'https://app.example.com/page' }])
+    expect(env.plugins).toEqual(['Debugger', 'Replay'])
+  })
+
+  it('keeps only the 20 most recent error history entries, each clipped', () => {
+    const errors = Array.from({ length: 30 }, (_, i) => [`error ${i} ${'x'.repeat(400)}`, ['error']])
+    window.pendo = { validateInstall: vi.fn(), validateEnvironment: () => ({ errors }) }
+    const env = captureAndInspect().status.environment
+    expect(env.errorCount).toBe(30)
+    expect(env.errors).toHaveLength(20)
+    expect(env.errors[0].startsWith('error 10 ')).toBe(true)
+    expect(env.errors[0].length).toBeLessThanOrEqual(301)
+  })
+
+  it('runs after console interception, so anything it logs is not captured', () => {
+    window.pendo = {
+      validateInstall() { console.log('install ok') },
+      validateEnvironment() { console.warn('environment noise'); return envFixture },
+    }
+    const result = captureAndInspect()
+    expect(result.captured.some(l => l.text.includes('environment noise'))).toBe(false)
+    expect(result.captured.some(l => l.text.includes('install ok'))).toBe(true)
+  })
+
+  it('reports available: false when the agent has no validateEnvironment', () => {
+    window.pendo = { validateInstall: vi.fn() }
+    expect(captureAndInspect().status.environment).toEqual({ available: false })
+  })
+
+  it('records a failure when validateEnvironment throws', () => {
+    window.pendo = { validateInstall: vi.fn(), validateEnvironment() { throw new Error('boom') } }
+    expect(captureAndInspect().status.environment).toEqual({ available: true, failed: 'boom' })
+  })
+
+  it('leaves environment null when no agent is present', () => {
+    expect(captureAndInspect().status.environment).toBeNull()
+  })
+
+  it('checks the Launcher agent when it is the only one on the page', () => {
+    const validateEnvironment = vi.fn(() => ({ errors: [] }))
+    window.Pendo = { validateInstall: vi.fn(), validateEnvironment }
+    captureAndInspect('combined')
+    expect(validateEnvironment).toHaveBeenCalledWith(true)
+  })
+
+  function mockValidateEnvironmentWithConfig(configLines, opts) {
+    const o = opts || {}
+    return vi.fn((skipLogging) => {
+      if (skipLogging === true) return envFixture
+      console.groupCollapsed('Validate Config options')
+      for (const line of configLines) console.log(line)
+      if (o.conflict) {
+        console.warn(`Multiple sources found with values for ${o.conflict.name}`)
+        for (const c of o.conflict.lines) console.warn(c)
+      }
+      console.groupEnd()
+    })
+  }
+
+  it('parses non-default config options from logging-mode validateEnvironment()', () => {
+    const validateEnvironment = mockValidateEnvironmentWithConfig([
+      'Config option `excludeAllText` with value `true` from source `snippet`',
+      'Config option `excludeAllText` with value `false` from source `default`',
+      'Config option `publicAppId` with value `abc` from source `snippet`',
+    ])
+    window.pendo = {
+      validateInstall: vi.fn(),
+      validateEnvironment,
+      getConfigValue(name) {
+        if (name === 'excludeAllText') return true
+        return undefined
+      },
+    }
+    const cfg = captureAndInspect().status.environment.config
+    expect(validateEnvironment).toHaveBeenCalledTimes(2)
+    expect(cfg.reported).toBe(true)
+    expect(cfg.options).toEqual([{ name: 'excludeAllText', source: 'snippet', value: 'true' }])
+  })
+
+  it('redacts function config values and inlineStyleNonce', () => {
+    const validateEnvironment = mockValidateEnvironmentWithConfig([
+      'Config option `sanitizeUrl` with value `undefined` from source `snippet`',
+      'Config option `inlineStyleNonce` with value `secret` from source `snippet`',
+    ])
+    window.pendo = {
+      validateInstall: vi.fn(),
+      validateEnvironment,
+      getConfigValue(name) {
+        if (name === 'sanitizeUrl') return () => {}
+        if (name === 'inlineStyleNonce') return 'secret'
+        return undefined
+      },
+    }
+    const cfg = captureAndInspect().status.environment.config
+    expect(cfg.options.find(o => o.name === 'sanitizeUrl').value).toBe('(function)')
+    expect(cfg.options.find(o => o.name === 'inlineStyleNonce').value).toBe('(set)')
+  })
+
+  it('parses config source conflicts without adding Validate Config output to captured logs', () => {
+    const validateEnvironment = mockValidateEnvironmentWithConfig(
+      ['Config option `disableCookies` with value `true` from source `pendoconfig`'],
+      {
+        conflict: {
+          name: 'disableCookies',
+          lines: [
+            'Config option `disableCookies` with value `true` from source `snippet`',
+            'Config option `disableCookies` with value `false` from source `pendoconfig`',
+          ],
+        },
+      },
+    )
+    window.pendo = {
+      validateInstall() { console.log('install ok') },
+      validateEnvironment,
+      getConfigValue: (n) => (n === 'disableCookies' ? true : undefined),
+    }
+    const result = captureAndInspect()
+    expect(result.captured.some(l => l.text.includes('Validate Config options'))).toBe(false)
+    expect(result.captured.some(l => l.text.includes('disableCookies'))).toBe(false)
+    expect(result.status.environment.config.conflicts).toHaveLength(1)
+    expect(result.status.environment.config.conflicts[0].name).toBe('disableCookies')
+  })
+
+  it('reports config unavailable when the Validate Config options group never appears', () => {
+    window.pendo = {
+      validateInstall: vi.fn(),
+      validateEnvironment(skipLogging) {
+        if (skipLogging === true) return envFixture
+      },
+    }
+    expect(captureAndInspect().status.environment.config).toEqual({ reported: false })
+  })
+})
+
+describe('captureAndInspect — duplicate installs and API keys', () => {
+  const KEY_A = '11111111-2222-3333-4444-555555555555'
+  const KEY_B = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+
+  it('lists each agent script tag without its query string', () => {
+    document.head.innerHTML = `
+      <script src="https://cdn.pendo.io/agent/static/${KEY_A}/pendo.js?v=1"></script>
+      <script src="https://cdn.pendo.io/agent/static/${KEY_A}/pendo.js"></script>`
+    window.pendo = { validateInstall: vi.fn() }
+    const { status } = captureAndInspect()
+    expect(status.agentScripts).toEqual([
+      { src: `https://cdn.pendo.io/agent/static/${KEY_A}/pendo.js`, apiKey: KEY_A },
+      { src: `https://cdn.pendo.io/agent/static/${KEY_A}/pendo.js`, apiKey: KEY_A },
+    ])
+    expect(status.apiKeysSeen).toEqual([KEY_A])
+  })
+
+  it('collects distinct keys from agent scripts on custom domains and the agent itself', () => {
+    document.head.innerHTML = `
+      <script src="https://content.customer.com/agent/static/${KEY_A}/pendo.js"></script>
+      <script src="https://cdn.pendo.io/agent/static/${KEY_B}/pendo-staging.js"></script>`
+    window.pendo = { validateInstall: vi.fn(), apiKey: KEY_A.toUpperCase() }
+    const { status } = captureAndInspect()
+    expect(status.agentScripts).toHaveLength(2)
+    expect(status.apiKeysSeen).toEqual([KEY_A, KEY_B])
+  })
+
+  it('ignores scripts that are not the agent itself', () => {
+    document.head.innerHTML = `
+      <script src="https://cdn.pendo.io/agent/static/${KEY_A}/guide.js"></script>
+      <script src="https://app.example.com/agent/static/app.js"></script>`
+    window.pendo = { validateInstall: vi.fn() }
+    expect(captureAndInspect().status.agentScripts).toEqual([])
+  })
+
+  it('reads the other global\'s key when both the snippet and the Launcher are present', () => {
+    window.pendo = { validateInstall: vi.fn(), apiKey: KEY_A }
+    window.Pendo = { validateInstall: vi.fn(), _: { options: { apiKey: KEY_B } } }
+    const { status } = captureAndInspect('combined')
+    expect(status.otherAgentApiKey).toBe(KEY_B)
+    expect(status.apiKeysSeen).toEqual([KEY_A, KEY_B])
+  })
+
+  it('does not count keys from data request URLs', () => {
+    global.performance = {
+      getEntriesByType: vi.fn((type) => type === 'resource'
+        ? [{ name: `https://data.pendo.io/data/ptm.gif/${KEY_B}?v=2`, initiatorType: 'img' }]
+        : []),
+    }
+    window.pendo = { validateInstall: vi.fn(), apiKey: KEY_A }
+    expect(captureAndInspect().status.apiKeysSeen).toEqual([KEY_A])
+  })
+})
+
+describe('captureAndInspect — anonymous visitor', () => {
+  it('flags a _PENDO_T_ visitor as anonymous and skips the visitorId pass', () => {
+    window.pendo = { validateInstall: vi.fn(), getVisitorId: () => '_PENDO_T_abc123' }
+    const result = captureAndInspect()
+    expect(result.status.visitorAnonymous).toBe(true)
+    expect(result.checks).not.toContain('visitorId present.')
+    expect(result.advice.some(a => /visitor is anonymous/i.test(a.text) && a.supportKey === 'chooseIdsMetadata' && a.severity === 'warn')).toBe(true)
+    expect(result.advice.some(a => /No visitor metadata fields/.test(a.text))).toBe(false)
+  })
+
+  it('uses the agent\'s TEMP_PREFIX when it is set', () => {
+    window.pendo = { validateInstall: vi.fn(), TEMP_PREFIX: '_CUSTOM_', getVisitorId: () => '_CUSTOM_1' }
+    expect(captureAndInspect().status.visitorAnonymous).toBe(true)
+  })
+
+  it('does not repeat validateInstall()\'s own anonymous warning', () => {
+    window.pendo = {
+      validateInstall() { console.warn('The current visitor is not identified and will be treated as "anonymous". Is this expected?') },
+      getVisitorId: () => '_PENDO_T_abc123',
+    }
+    const result = captureAndInspect()
+    expect(result.advice.some(a => /visitor is anonymous/i.test(a.text))).toBe(false)
+  })
+
+  it('treats an identified visitor as not anonymous', () => {
+    window.pendo = { validateInstall: vi.fn(), getVisitorId: () => 'user-42' }
+    const result = captureAndInspect()
+    expect(result.status.visitorAnonymous).toBe(false)
+    expect(result.checks).toContain('visitorId present.')
+  })
+})

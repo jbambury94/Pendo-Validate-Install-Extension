@@ -94,6 +94,27 @@ describe('injected extension scripts — MAIN world idempotency', () => {
     expect(out.entries).toEqual([])
   })
 
+  it('frame-probe.js can be injected twice without redeclaration', () => {
+    const src = readExtensionScript('frame-probe.js')
+    const context = vm.createContext({ globalThis: {} })
+    context.globalThis = context
+
+    injectIntoContext(src, context)
+    expect(typeof context.__pendoValidateFrameProbe).toBe('function')
+    expect(() => injectIntoContext(src, context)).not.toThrow()
+    expect(context.__pendoValidateFrameProbeRevision).toBe(1)
+  })
+
+  it('frame-probe.js injects cleanly when the host page already has a lexical frameProbe', () => {
+    const src = readExtensionScript('frame-probe.js')
+    const context = vm.createContext({ globalThis: {} })
+    context.globalThis = context
+
+    injectIntoContext('let frameProbe = () => 1', context)
+    expect(() => injectIntoContext(src, context)).not.toThrow()
+    expect(typeof context.__pendoValidateFrameProbe).toBe('function')
+  })
+
   it('unguarded top-level binding fails on re-injection (documents the bug)', () => {
     const unguarded = [
       'const __sampleCapture = function () { return 1 }',

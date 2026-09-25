@@ -81,6 +81,21 @@
             <div class="card__body card__body--flush" id="checkGroups"></div>
           </div>
 
+          <div class="card" id="framesCard" hidden>
+            <div class="card__head">
+              <div class="card__title">Frames</div>
+              <span class="card__meta" id="framesCardMeta"></span>
+            </div>
+            <div class="card__body card__body--flush" id="framesCardBody"></div>
+          </div>
+
+          <div class="card" id="networkCard" hidden>
+            <div class="card__head">
+              <div class="card__title">Network</div>
+            </div>
+            <div class="card__body card__body--flush" id="networkCardBody"></div>
+          </div>
+
           <div class="card" id="relatedReadingCard" hidden>
             <div class="card__head">
               <div class="card__title">Related reading</div>
@@ -154,6 +169,21 @@
             </div>
           </div>
 
+          <div class="card" id="networkCaptureSettingsCard" hidden>
+            <div class="card__head"><div class="card__title">Network capture</div></div>
+            <div class="card__body card__body--flush">
+              <div class="field">
+                <label class="field--checkbox" for="networkCaptureOnValidate">
+                  <input type="checkbox" id="networkCaptureOnValidate" data-action="network-capture-on-validate" />
+                  <span class="field--checkbox__body">
+                    <span class="field--checkbox__label">Capture Pendo network requests on Validate</span>
+                    <span class="field__hint">Reloads the page on every <strong>Validate</strong> to record which Pendo requests succeed or are blocked (CSP, ad blockers, HTTP errors) and the page's CSP header. Chrome shows its "started debugging this browser" bar during the capture, and unsaved changes on the page are lost. Results stay on this device; the HAR button reuses the capture.</span>
+                  </span>
+                </label>
+              </div>
+            </div>
+          </div>
+
           <div class="card">
             <div class="card__head"><div class="card__title">Appearance</div></div>
             <div class="card__body">
@@ -221,6 +251,8 @@
     <script src="pendo-kb.js"></script>
     <script src="pendo-telemetry.js"></script>
     <script src="har-capture.js"></script>
+    <!-- Frame map, network and environment analysis (pure; used by popup.js) -->
+    <script src="diagnostics.js"></script>
     <!-- Popup logic: validation, advice, export, copy, render, tabs, drag/resize -->
     <script src="popup.js"></script>
     <!-- Pendo self-instrumentation: idle-load the agent bundle after the panel is wired -->
