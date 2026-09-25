@@ -6,14 +6,35 @@
 /** IVA self-instrumentation subscription key — exclude from customer HAR exports. */
 const IVA_SELF_INSTRUMENTATION_API_KEY = '928b3d0d-8a3b-48b1-bf35-a6af3565dcc5';
 
+/** Pendo's Cloud Storage buckets (global + per-subscription, every region) per the Web SDK's servers.json. */
+const PENDO_STATIC_BUCKET_RE = /^pendo-(?:(?:au|eu|govramp|hsbc|io|jp-prod|tv|us1)-static|(?:(?:au|eu|gov|hsb|jp-prod|tv|us1)-)?static-\d+)$/;
+
+const GCS_HOST_SUFFIX = '.storage.googleapis.com';
+
+/**
+ * Web SDK routes served from a customer CNAME or self-hosted domain. Every route carries the
+ * subscription API key as a path segment, so an unrelated host with a similar path does not match.
+ * har-timings.js pre-filters on the '/agent/static/' and '/data/' prefixes — keep them in step.
+ */
+const PENDO_CUSTOM_DOMAIN_PATH_RE = new RegExp(
+  '^/(?:agent/static|data/(?:(?:ptm|guide|poll|agentic|log)\\.gif|(?:guide|segmentflag)\\.json|guide\\.js'
+  + '|metrics|devlog|rec|recordingconf|live-replay))'
+  + '/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(?:/|$)',
+);
+
 function isPendoNetworkUrl(url) {
-  const name = String(url || '');
-  if (!name) return false;
-  if (name.indexOf('pendo') === -1 && name.indexOf('agent/static') === -1 && name.indexOf('agent/production') === -1) {
+  let parsed;
+  try {
+    parsed = new URL(String(url || ''));
+  } catch {
     return false;
   }
-  return /pendo(io)?\.com|pendo\.io|cdn\.pendo|pendo-io|data\.eu\.pendo|app\.eu\.pendo|cdn\.eu\.pendo/i.test(name)
-    || /agent\/(static|production)/.test(name);
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false;
+  const host = parsed.hostname.toLowerCase().replace(/\.$/, '');
+  if (host === 'pendo.io' || host.endsWith('.pendo.io')) return true;
+  if (host.endsWith(GCS_HOST_SUFFIX) && PENDO_STATIC_BUCKET_RE.test(host.slice(0, -GCS_HOST_SUFFIX.length))) return true;
+  if (host === 'storage.googleapis.com' && PENDO_STATIC_BUCKET_RE.test(parsed.pathname.split('/')[1] || '')) return true;
+  return PENDO_CUSTOM_DOMAIN_PATH_RE.test(parsed.pathname);
 }
 
 function urlStartsWithOrigin(url, originPrefix) {
@@ -78,6 +99,55 @@ function bucketHarEntries(count) {
   return '200+';
 }
 
+function roundHarMs(ms) {
+  return Math.round(ms * 1000) / 1000;
+}
+
+/**
+ * HAR timings for one CDP request. Prefers response.timing (ms offsets from timing.requestTime,
+ * -1 when a phase did not happen); otherwise falls back to the requestWillBeSent / responseReceived /
+ * loadingFinished|Failed timestamps (monotonic seconds). `time` excludes ssl, which HAR counts inside connect.
+ * @param {{ requestTs?: number, responseTs?: number, endTs?: number, timing?: object }} slot
+ */
+function harTimingsFromCdp(slot) {
+  const timings = { blocked: -1, dns: -1, ssl: -1, connect: -1, send: 0, wait: 0, receive: 0 };
+  const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  const startTs = num(slot.requestTs);
+  const responseTs = num(slot.responseTs);
+  const endTs = num(slot.endTs);
+  const t = slot.timing;
+
+  if (t && num(t.requestTime) != null && t.requestTime > 0) {
+    const sinceRequestTime = (ts) => (ts - t.requestTime) * 1000;
+    const phase = (start, end) => (num(start) != null && start >= 0 && num(end) != null && end >= start ? end - start : -1);
+    const phaseStarts = [t.dnsStart, t.connectStart, t.sendStart].filter((v) => num(v) != null && v >= 0);
+    const blockedEnd = phaseStarts.length ? Math.min(...phaseStarts) : 0;
+    const queued = startTs != null && t.requestTime > startTs ? (t.requestTime - startTs) * 1000 : 0;
+    timings.blocked = queued + blockedEnd;
+    timings.dns = phase(t.dnsStart, t.dnsEnd);
+    timings.connect = phase(t.connectStart, t.connectEnd);
+    timings.ssl = phase(t.sslStart, t.sslEnd);
+    timings.send = Math.max(0, phase(t.sendStart, t.sendEnd));
+    const sendEnd = num(t.sendEnd) != null && t.sendEnd >= 0 ? t.sendEnd : blockedEnd;
+    let headersEnd = sendEnd;
+    if (num(t.receiveHeadersEnd) != null && t.receiveHeadersEnd >= 0) headersEnd = t.receiveHeadersEnd;
+    else if (responseTs != null) headersEnd = sinceRequestTime(responseTs);
+    timings.wait = Math.max(0, headersEnd - sendEnd);
+    if (endTs != null) timings.receive = Math.max(0, sinceRequestTime(endTs) - headersEnd);
+  } else if (startTs != null) {
+    const headersTs = responseTs != null ? responseTs : endTs;
+    if (headersTs != null) timings.wait = Math.max(0, (headersTs - startTs) * 1000);
+    if (responseTs != null && endTs != null) timings.receive = Math.max(0, (endTs - responseTs) * 1000);
+  }
+
+  for (const key of Object.keys(timings)) {
+    if (timings[key] > 0) timings[key] = roundHarMs(timings[key]);
+  }
+  const time = roundHarMs(['blocked', 'dns', 'connect', 'send', 'wait', 'receive']
+    .reduce((sum, key) => sum + Math.max(0, timings[key]), 0));
+  return { timings, time };
+}
+
 /**
  * Build HAR 1.2 from CDP Network.* events collected during a reload capture.
  * @param {Array<{ method: string, params: object }>} events
@@ -98,6 +168,7 @@ function buildHarFromCdpEvents(events, meta) {
       byId.set(requestId, {
         requestId,
         startedDateTime: isoFromCdpTimestamp(params.wallTime, params.timestamp),
+        requestTs: params.timestamp,
         request: {
           method: req.method || 'GET',
           url: req.url || '',
@@ -129,14 +200,20 @@ function buildHarFromCdpEvents(events, meta) {
         headersSize: -1,
         bodySize: -1,
       };
+      slot.responseTs = params.timestamp;
+      slot.timing = res.timing || null;
       if (!slot.request.url) slot.request.url = res.url || '';
       byId.set(requestId, slot);
     } else if (method === 'Network.loadingFinished') {
       const slot = byId.get(requestId);
-      if (slot) slot.encodedDataLength = params.encodedDataLength || 0;
+      if (slot) {
+        slot.encodedDataLength = params.encodedDataLength || 0;
+        slot.endTs = params.timestamp;
+      }
     } else if (method === 'Network.loadingFailed') {
       const slot = byId.get(requestId) || { requestId, request: { url: '', method: 'GET', headers: [] } };
       slot.failed = params.errorText || 'loading failed';
+      slot.endTs = params.timestamp;
       byId.set(requestId, slot);
     }
   }
@@ -155,11 +232,10 @@ function buildHarFromCdpEvents(events, meta) {
       initiatorUrl,
     }, { extensionOrigin: m.extensionOrigin, selfApiKey: m.selfApiKey })) continue;
 
-    const wait = 0;
-    const receive = 0;
+    const { timings, time } = harTimingsFromCdp(slot);
     entries.push({
       startedDateTime: slot.startedDateTime || new Date().toISOString(),
-      time: wait + receive,
+      time,
       request: slot.request,
       response: slot.response || {
         status: slot.failed ? 0 : 0,
@@ -173,7 +249,7 @@ function buildHarFromCdpEvents(events, meta) {
         bodySize: slot.encodedDataLength || -1,
       },
       cache: {},
-      timings: { blocked: -1, dns: -1, ssl: -1, connect: -1, send: 0, wait, receive },
+      timings,
       comment: slot.failed || undefined,
     });
   }

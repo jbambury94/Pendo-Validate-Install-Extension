@@ -99,3 +99,34 @@ function trackIvaEvent(name, props) {
     pendo.track(name, props || {});
   } catch (_) { /* telemetry must never break the panel */ }
 }
+
+function isIvaAgentReady() {
+  try {
+    const pendo = typeof window !== 'undefined' ? window.pendo : null;
+    if (!pendo || typeof pendo.track !== 'function') return false;
+    return typeof pendo.isReady !== 'function' || !!pendo.isReady();
+  } catch (_) {
+    return false;
+  }
+}
+
+/**
+ * trackIvaEvent for events that can fire as the panel opens, before pendo-agent-loader.js has
+ * idle-loaded and initialized the agent. Polls until ready; drops the event after maxWaitMs.
+ * @param {{ intervalMs?: number, maxWaitMs?: number }} [opts]
+ */
+function trackIvaEventWhenReady(name, props, opts) {
+  const o = opts || {};
+  const intervalMs = o.intervalMs > 0 ? o.intervalMs : 500;
+  const maxWaitMs = o.maxWaitMs >= 0 ? o.maxWaitMs : 30000;
+  const deadline = Date.now() + maxWaitMs;
+  const attempt = () => {
+    if (isIvaAgentReady()) {
+      trackIvaEvent(name, props);
+      return;
+    }
+    if (Date.now() >= deadline) return;
+    setTimeout(attempt, intervalMs);
+  };
+  attempt();
+}

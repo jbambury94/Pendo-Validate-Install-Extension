@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -97,6 +97,56 @@ describe('pendo-telemetry', () => {
     globalThis.window = {}
     expect(() => trackIvaEvent('validation_completed', { ivaOutcome: 'ok' })).not.toThrow()
     globalThis.window = prev
+  })
+
+  describe('trackIvaEventWhenReady', () => {
+    let prevWindow
+
+    beforeEach(() => {
+      prevWindow = globalThis.window
+      vi.useFakeTimers()
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+      globalThis.window = prevWindow
+    })
+
+    it('fires immediately when the agent is ready', () => {
+      const track = vi.fn()
+      globalThis.window = { pendo: { track, isReady: () => true } }
+      trackIvaEventWhenReady('har_downloaded', { ivaOutcome: 'ok' })
+      expect(track).toHaveBeenCalledWith('har_downloaded', { ivaOutcome: 'ok' })
+    })
+
+    it('waits for the idle-loaded agent to become ready, then fires once', () => {
+      const track = vi.fn()
+      globalThis.window = {}
+      trackIvaEventWhenReady('har_downloaded', { ivaOutcome: 'warn' }, { intervalMs: 500 })
+      vi.advanceTimersByTime(1000)
+      expect(track).not.toHaveBeenCalled()
+
+      let ready = false
+      globalThis.window.pendo = { track, isReady: () => ready }
+      vi.advanceTimersByTime(1000)
+      expect(track).not.toHaveBeenCalled()
+
+      ready = true
+      vi.advanceTimersByTime(500)
+      expect(track).toHaveBeenCalledOnce()
+      vi.advanceTimersByTime(5000)
+      expect(track).toHaveBeenCalledOnce()
+    })
+
+    it('drops the event once maxWaitMs elapses without the agent', () => {
+      const track = vi.fn()
+      globalThis.window = {}
+      trackIvaEventWhenReady('har_downloaded', {}, { intervalMs: 500, maxWaitMs: 2000 })
+      vi.advanceTimersByTime(2500)
+      globalThis.window.pendo = { track, isReady: () => true }
+      vi.advanceTimersByTime(5000)
+      expect(track).not.toHaveBeenCalled()
+    })
   })
 
   it('har_downloaded props avoid page URL and identity', () => {

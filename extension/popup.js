@@ -1154,9 +1154,9 @@ async function captureNetworkHarViaTimings(tabId, pageUrl) {
   return { ok: true, har, mode: 'timings', entryCount: har.log.entries.length };
 }
 
-async function captureNetworkHar(tabId, pageUrl) {
+async function captureNetworkHar(tabId, pageUrl, outcome) {
   if (typeof chrome !== 'undefined' && chrome.debugger && typeof chrome.debugger.attach === 'function') {
-    const res = await sendExtMessage({ type: 'pendo-validate-har-capture', tabId, pageUrl });
+    const res = await sendExtMessage({ type: 'pendo-validate-har-capture', tabId, pageUrl, outcome });
     if (!res?.ok) return { ok: false, message: res?.error || 'Could not start HAR capture' };
     return { ok: true, pendingReload: true };
   }
@@ -2469,7 +2469,7 @@ function initPopup() {
       }
       const json = JSON.stringify(pending.har, null, 2);
       downloadBlob(`pendo-network_${Date.now()}.har`, 'application/json', json);
-      trackHarDownloaded(pending.mode || 'cdp', pending.entryCount || 0);
+      trackHarDownloaded(pending.mode || 'cdp', pending.entryCount || 0, pending.outcome);
       const n = pending.entryCount || 0;
       showToast(`HAR downloaded (${n} Pendo request${n === 1 ? '' : 's'})`);
     });
@@ -2675,13 +2675,22 @@ function initPopup() {
     });
   }
 
-  function trackHarDownloaded(mode, entryCount) {
-    if (typeof trackIvaEvent !== 'function' || !lastContext) return;
-    const ivaOutcome = typeof deriveIvaOutcome === 'function' ? deriveIvaOutcome(lastContext) : 'unknown';
+  function currentIvaOutcome() {
+    if (!lastContext || typeof deriveIvaOutcome !== 'function') return 'unknown';
+    return String(deriveIvaOutcome(lastContext));
+  }
+
+  /**
+   * CDP captures pass `outcome` from the pending payload: the panel reopened after the reload has
+   * no lastContext, and delivers before the idle-loaded agent is ready (hence trackIvaEventWhenReady).
+   */
+  function trackHarDownloaded(mode, entryCount, outcome) {
+    if (typeof trackIvaEventWhenReady !== 'function') return;
+    const ivaOutcome = outcome || currentIvaOutcome();
     const bucket = typeof bucketIvaLogLines === 'function'
       ? bucketIvaLogLines(entryCount)
       : String(entryCount);
-    trackIvaEvent('har_downloaded', {
+    trackIvaEventWhenReady('har_downloaded', {
       ivaHarMode: String(mode || 'unknown'),
       ivaHarEntries: String(bucket),
       ivaOutcome: String(ivaOutcome),
@@ -2857,7 +2866,7 @@ function initPopup() {
     syncShareExportControls();
     showToast(harUsesReload ? 'Capturing Pendo network (reloading page)…' : 'Building partial HAR from Resource Timing…', 4000);
     try {
-      const result = await captureNetworkHar(tabId, lastContext.pageUrl || 'unknown');
+      const result = await captureNetworkHar(tabId, lastContext.pageUrl || 'unknown', currentIvaOutcome());
       if (result.pendingReload) {
         showToast('Page reloading… Panel will reopen when capture finishes.', 5500);
         return;
