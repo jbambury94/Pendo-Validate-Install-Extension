@@ -69,16 +69,20 @@ async function injectScriptFileAndRun(api, { target, world, file, func, args, in
 // the global the file defines (so the heavy logic lives in one place — the .js file).
 const _INJECTED_SCRIPTS = {
   // revision must match PENDO_VALIDATE_CAPTURE_INSPECT_REVISION in capture-inspect.js
-  'capture-inspect': { file: 'capture-inspect.js', revision: 3, func: (variant) => globalThis.__pendoValidateCaptureAndInspect(variant) },
+  'capture-inspect': { file: 'capture-inspect.js', revision: 4, func: (variant) => globalThis.__pendoValidateCaptureAndInspect(variant) },
   'enable-debugging': { file: 'enable-debugging.js', func: () => globalThis.__pendoValidateEnableDebugging() },
   'har-timings': { file: 'har-timings.js', func: () => globalThis.__pendoValidateHarTimings() },
+  // allFrames: frames added since the last run have no global yet, so never invoke-only.
+  'frame-probe': { file: 'frame-probe.js', alwaysInject: true, func: (opts) => globalThis.__pendoValidateFrameProbe(opts) },
 };
+
+const _INJECTED_SCRIPTS_WITH_ARGS = new Set(['capture-inspect', 'frame-probe']);
 
 function _isStaleCombinedCaptureResult(result, injectedScript, args) {
   if (injectedScript !== 'capture-inspect' || args[0] !== 'combined') return false;
   const status = result?.status;
   if (!status || typeof status !== 'object') return false;
-  return !('snippetGlobalPresent' in status) || !('launcherGlobalPresent' in status);
+  return !('snippetGlobalPresent' in status) || !('launcherGlobalPresent' in status) || !('apiKeysSeen' in status);
 }
 
 // MAIN worlds known to already hold the injected global this panel session, keyed by
@@ -92,7 +96,7 @@ async function executeScript(details) {
   const spec = _INJECTED_SCRIPTS[details.injectedScript];
 
   if (spec) {
-    const args = details.injectedScript === 'capture-inspect' ? (details.args || []) : [];
+    const args = _INJECTED_SCRIPTS_WITH_ARGS.has(details.injectedScript) ? (details.args || []) : [];
 
     const runOnce = async (invokeOnly) => {
       if (_hasLocalScriptingApi()) {
@@ -109,6 +113,8 @@ async function executeScript(details) {
       if (!res?.ok) throw new Error(res?.error || 'executeScript failed');
       return res.results;
     };
+
+    if (spec.alwaysInject) return runOnce(false);
 
     const revision = spec.revision ?? 0;
     const key = `${target?.tabId}:${details.injectedScript}:${world}:${revision}`;
@@ -337,7 +343,7 @@ function inferSupportKeyFromText(text) {
 /** Normalize advice items to { text, source, supportUrl, supportKey, relatedSupportUrls } and filter empty. Resolves supportKey (and optional supportKeys array) to URLs. */
 function normalizeAdviceList(advice = []) {
   return advice.map(a => {
-    let text, source, supportUrl, supportKey, relatedSupportUrls = [];
+    let text, source, supportUrl, supportKey, severity, relatedSupportUrls = [];
     if (typeof a === 'string') {
       text = a; source = 'builtin'; supportUrl = PENDO_SUPPORT.helpCenter; supportKey = null;
     }
@@ -369,10 +375,14 @@ function normalizeAdviceList(advice = []) {
           if (url) relatedSupportUrls.push({ url, label: SUPPORT_LABELS[k] || k });
         }
       }
+      // Optional override of the supportKey-derived severity (see classifyAdvice).
+      if (a.severity === 'error' || a.severity === 'warn') severity = a.severity;
     } else {
       text = String(a); source = 'builtin'; supportUrl = PENDO_SUPPORT.helpCenter; supportKey = null;
     }
-    return { text, source, supportUrl, supportKey, relatedSupportUrls };
+    const out = { text, source, supportUrl, supportKey, relatedSupportUrls };
+    if (severity) out.severity = severity;
+    return out;
   }).filter(a => a.text);
 }
 
@@ -398,7 +408,10 @@ function assessInstallQuality(context) {
   if (vid) {
     result.visitorId.present = true;
     result.visitorId.value = vid;
-    if (PLACEHOLDER_IDS.test(String(vid).trim())) {
+    if (status.visitorAnonymous) {
+      result.visitorId.quality = 'poor';
+      result.visitorId.issues.push('visitorId is a temporary anonymous ID; the visitor is not identified.');
+    } else if (PLACEHOLDER_IDS.test(String(vid).trim())) {
       result.visitorId.quality = 'poor';
       result.visitorId.issues.push(`visitorId "${vid}" is a placeholder value.`);
     } else if (String(vid).length < 3) {
@@ -492,7 +505,7 @@ function assessInstallQuality(context) {
   // Lower environments (staging/dev/localhost) should use test-prefixed IDs to keep production analytics clean.
   const isStaging = /\b(staging|preview|dev\.|qa\.|localhost)\b/i.test(pageUrl);
   result.environment.isStaging = isStaging;
-  if (isStaging && vid) {
+  if (isStaging && vid && !status.visitorAnonymous) {
     const hasPrefix = /^(dev_|staging_|test_|qa_)/i.test(String(vid));
     if (!hasPrefix) {
       result.environment.issues.push('Staging/dev URL detected but visitorId lacks a test prefix (dev_, staging_, test_, qa_).');
@@ -508,7 +521,8 @@ function appendQualityAdviceToResult(result, pageUrl) {
   const quality = assessInstallQuality({ status: result.status, pageUrl: pageUrl || '' });
   result.advice = result.advice || [];
   const { status } = result;
-  if (quality.visitorId.quality === 'poor') {
+  // Anonymous visitors already get their own recommendation from captureAndInspect.
+  if (quality.visitorId.quality === 'poor' && !status.visitorAnonymous) {
     result.advice.push({ text: `visitorId is set to a placeholder value ("${status.visitorId}"). Use a stable authenticated identifier.`, source: 'builtin', supportKey: 'chooseIdsMetadata' });
   } else if (quality.visitorId.quality === 'weak') {
     result.advice.push({ text: quality.visitorId.issues[0] || 'visitorId may not be a stable identifier.', source: 'builtin', supportKey: 'chooseIdsMetadata' });
@@ -706,11 +720,14 @@ function buildMarkdownReport(context) {
   const errors = (captured || []).filter(l => l.level === 'error');
   const hasError = errors.length > 0 || (context.hasError === true);
   const hasWarn = (captured || []).some(l => l.level === 'warn') || (context.hasWarn === true);
+  const flagged = countSeverityAdvice(advice);
   let statusLine = 'Looks healthy';
-  if (!status.pendoPresent) statusLine = 'Pendo not found';
+  const subframeStatus = deriveSubframeStatusLine(context);
+  if (subframeStatus) statusLine = subframeStatus;
+  else if (!status.pendoPresent) statusLine = 'Pendo not found';
   else if (!status.validatePresent) statusLine = 'No validateInstall()';
-  else if (hasError) statusLine = 'Errors found';
-  else if (hasWarn) statusLine = 'Warnings found';
+  else if (hasError || flagged.error) statusLine = 'Errors found';
+  else if (hasWarn || flagged.warn) statusLine = 'Warnings found';
   const effectiveOrigin = validatedIn || origin;
   if (effectiveOrigin === 'launcher') statusLine += ' (via Pendo Launcher)';
   else if (effectiveOrigin === 'launcher-beta') statusLine += ' (via Pendo Launcher Beta)';
@@ -751,6 +768,7 @@ function buildMarkdownReport(context) {
     urlLoadTimeStrip: !!(status.urlSanitization && (status.urlSanitization.navQueryStripped || status.urlSanitization.navPendoTokenStripped)),
     capturedLineCount: (captured && captured.length) || 0
   };
+  Object.assign(meta, buildDiagnosticsMetadata(context));
   if (status.visitorMetadata) meta.visitorMetadata = status.visitorMetadata;
   if (status.accountMetadata) meta.accountMetadata = status.accountMetadata;
   if (status.parentAccountMetadata) meta.parentAccountMetadata = status.parentAccountMetadata;
@@ -762,13 +780,18 @@ function buildMarkdownReport(context) {
   lines.push("");
 
   lines.push(`## Errors`);
-  if (errors.length === 0 && !hasError) {
+  const severityErrorAdvice = normalizeAdviceList((advice || []).filter(a => a && a.severity === 'error'));
+  const hasAnyError = errors.length > 0 || flagged.error > 0 || hasError;
+  if (!hasAnyError) {
     lines.push(`No errors detected.`);
   } else {
     errors.forEach(l => {
       lines.push(`- ${l.text} — [Pendo Help: Installation & troubleshooting](${PENDO_SUPPORT.installGuide})`);
     });
-    if (errors.length === 0 && hasError) {
+    severityErrorAdvice.forEach(a => {
+      lines.push(`- ${a.text} — [Pendo Help](${a.supportUrl})`);
+    });
+    if (errors.length === 0 && severityErrorAdvice.length === 0 && hasError) {
       lines.push(`- Validation reported issues. See Advice and Captured Output below. — [Pendo isn't displaying — troubleshooting](${PENDO_SUPPORT.troubleshooting})`);
     }
   }
@@ -789,6 +812,8 @@ function buildMarkdownReport(context) {
   }
   if (!adviceList.length && (!checks || !checks.length)) lines.push(`No advice items.`);
   lines.push("");
+
+  lines.push(...buildDiagnosticsMarkdownSections(context));
 
   if (typeof selectRelatedReading === 'function') {
     // Derive detection signals from the validation output (advice support keys + checks text)
@@ -830,8 +855,12 @@ function buildMarkdownReport(context) {
   lines.push("");
   return lines.join("\n");
 }
-/** Serialize full context as pretty-printed JSON (still used by some report flows). */
-function buildJsonReport(context) { return JSON.stringify(context, null, 2); }
+/** Serialize full context as pretty-printed JSON (still used by some report flows). The raw HAR is left out. */
+function buildJsonReport(context) {
+  const nc = context && context.networkCapture;
+  if (!nc || !nc.har) return JSON.stringify(context, null, 2);
+  return JSON.stringify({ ...context, networkCapture: { ...nc, har: undefined } }, null, 2);
+}
 
 /** Filter captured console lines by level chips and search query. */
 function filterCapturedLogs(captured, logFilters, logQuery) {
@@ -922,6 +951,7 @@ function redactShareSummaryText(text, context) {
   if (st.visitorId != null && st.visitorId !== '') secrets.push(String(st.visitorId));
   if (st.accountId != null && st.accountId !== '') secrets.push(String(st.accountId));
   if (st.parentAccountId != null && st.parentAccountId !== '') secrets.push(String(st.parentAccountId));
+  secrets.push(...collectDiagnosticsSecrets(context));
 
   secrets.sort((a, b) => b.length - a.length);
   for (const value of secrets) {
@@ -941,12 +971,14 @@ function buildPlainSummary(context, options) {
   const warnCount = (captured || []).filter(l => l.level === 'warn').length;
   const okCount = (checks || []).length;
   let statusLine = 'Looks healthy';
-  if (!snippetOnPage && launcherAttempted && launcherPresent === false) statusLine = 'Pendo not found (snippet and Launcher)';
+  const subframeStatus = deriveSubframeStatusLine(context);
+  if (subframeStatus) statusLine = subframeStatus;
+  else if (!snippetOnPage && launcherAttempted && launcherPresent === false) statusLine = 'Pendo not found (snippet and Launcher)';
   else if (!snippetOnPage && launcherPresent === true && launcherDataValidated === false) statusLine = 'Launcher installed (no data on this tab)';
   else if (!status.pendoPresent) statusLine = 'Pendo not found';
   else if (!status.validatePresent) statusLine = 'No validateInstall()';
-  else if (errCount > 0) statusLine = 'Errors found';
-  else if (warnCount > 0) statusLine = 'Warnings found';
+  else if (errCount > 0 || countSeverityAdvice(advice).error) statusLine = 'Errors found';
+  else if (warnCount > 0 || countSeverityAdvice(advice).warn) statusLine = 'Warnings found';
 
   const lines = [];
   lines.push(`Pendo Install Validator — ${statusLine}`);
@@ -1154,8 +1186,13 @@ async function captureNetworkHarViaTimings(tabId, pageUrl) {
   return { ok: true, har, mode: 'timings', entryCount: har.log.entries.length };
 }
 
+/** CDP network capture (HAR reload, Validate network capture) is Chrome/Edge only. */
+function canCaptureNetworkWithCdp() {
+  return typeof chrome !== 'undefined' && !!chrome.debugger && typeof chrome.debugger.attach === 'function';
+}
+
 async function captureNetworkHar(tabId, pageUrl, outcome) {
-  if (typeof chrome !== 'undefined' && chrome.debugger && typeof chrome.debugger.attach === 'function') {
+  if (canCaptureNetworkWithCdp()) {
     const res = await sendExtMessage({ type: 'pendo-validate-har-capture', tabId, pageUrl, outcome });
     if (!res?.ok) return { ok: false, message: res?.error || 'Could not start HAR capture' };
     return { ok: true, pendingReload: true };
@@ -1193,9 +1230,13 @@ async function enableDebuggingViaLauncherCdp(tabId, launcher) {
  *            on the primary agent — no second full pass on snippet-only pages.
  *   1.75.    If neither is present and the Launcher extension is installed, run validation in
  *            the Launcher's content-script world via CDP.
- * Returns: pageUrl (always the active tab URL), snippetOnPage, launcherPresent, launcherAttempted, validatedIn, launcherUrl (optional), plus status/captured/advice/checks.
+ * The frame probe (allFrames) runs alongside phase 1; its frame map, the optional network
+ * capture and the environment / duplicate-install findings are attached to every result.
+ * Returns: pageUrl (always the active tab URL), snippetOnPage, launcherPresent, launcherAttempted, validatedIn, launcherUrl (optional), frameMap, networkCapture (optional), plus status/captured/advice/checks.
+ * @param {{ networkCapture?: object }} [opts] - networkCapture: the finished reload capture to include
  */
-async function runInPage() {
+async function runInPage(opts) {
+  const options = opts || {};
   /**
    * Use the Chrome DevTools Protocol (chrome.debugger) to run captureAndInspect
    * inside the Pendo Launcher extension's content-script isolated world.
@@ -1219,17 +1260,47 @@ async function runInPage() {
     captured: [], advice: [], checks: [], cspMeta: '', apiKeyFound: false, hasError: true, hasWarn: false
   };
 
+  async function runFrameProbe(tabId) {
+    try {
+      const results = await executeScript({
+        target: { tabId, allFrames: true },
+        world: 'MAIN',
+        injectedScript: 'frame-probe',
+        args: [{
+          selfApiKey: typeof IVA_SELF_INSTRUMENTATION_API_KEY === 'string' ? IVA_SELF_INSTRUMENTATION_API_KEY : '',
+          overlayIframeId: DIAG_OVERLAY_IFRAME_ID,
+        }],
+      });
+      return Array.isArray(results) ? results : null;
+    } catch (e) {
+      console.warn('Frame probe failed:', e);
+      return null;
+    }
+  }
+
   const [tab] = await tabsQuery({ active: true, currentWindow: true });
   if (!tab || !tab.id) throw new Error('No active tab found.');
 
   // Phase 1 + 1.5 combined: a single MAIN-world injection detects both the snippet
   // (window.pendo) and the Launcher-injected agent (window.Pendo) and runs
   // validateInstall() once on the primary agent — avoiding a second full pass.
-  const [{ result: pageResult }] = await executeScript({
-    target: { tabId: tab.id },
-    world: 'MAIN',
-    injectedScript: 'capture-inspect',
-    args: ['combined']
+  const [combinedResults, frameProbeResults] = await Promise.all([
+    executeScript({
+      target: { tabId: tab.id },
+      world: 'MAIN',
+      injectedScript: 'capture-inspect',
+      args: ['combined']
+    }),
+    runFrameProbe(tab.id),
+  ]);
+  const [{ result: pageResult }] = combinedResults;
+
+  const networkCapture = options.networkCapture && networkCaptureMatchesPage(options.networkCapture, tab && tab.url)
+    ? options.networkCapture : null;
+  const finalize = (result) => appendDiagnosticsToResult(result, {
+    frames: summarizeFrameProbeResults(frameProbeResults),
+    networkCapture,
+    networkCaptureAvailable: canCaptureNetworkWithCdp(),
   });
 
   const basePageUrl = tab && tab.url ? tab.url : 'unknown';
@@ -1242,7 +1313,7 @@ async function runInPage() {
   const launcherInPage = !!pageStatus.launcherGlobalPresent;
 
   if (snippetOnPage) {
-    return {
+    return finalize({
       ...pageResult,
       pageUrl: basePageUrl,
       snippetOnPage: true,
@@ -1253,14 +1324,14 @@ async function runInPage() {
       origin: 'page',
       validationPath: 'page',
       validationTabId: tab.id
-    };
+    });
   }
 
   if (launcherInPage) {
     const lStatus = pageResult.status;
     // "Launcher validated" = the agent ran validateInstall and returned at least visitor identity or metadata on this tab.
     const launcherDataValidated = !!(lStatus.pendoPresent && lStatus.validatePresent && (lStatus.visitorId || lStatus.visitorMetadata));
-    return {
+    return finalize({
       ...pageResult,
       pageUrl: basePageUrl,
       snippetOnPage: false,
@@ -1272,7 +1343,7 @@ async function runInPage() {
       origin: 'launcher',
       validationPath: 'launcher-main',
       validationTabId: tab.id
-    };
+    });
   }
 
   // Phase 1.75: Launcher extension installed — use chrome.debugger (CDP) to run
@@ -1287,7 +1358,7 @@ async function runInPage() {
       const lStatus = cdpResult.result.status;
       // "Launcher validated" = the agent ran validateInstall and returned at least visitor identity or metadata on this tab.
       const launcherDataValidated = !!(lStatus.pendoPresent && lStatus.validatePresent && (lStatus.visitorId || lStatus.visitorMetadata));
-      return {
+      return finalize({
         ...cdpResult.result,
         pageUrl: basePageUrl,
         snippetOnPage: false,
@@ -1300,7 +1371,7 @@ async function runInPage() {
         validationPath: 'launcher-cdp',
         validationTabId: tab.id,
         launcherExtensionId: installedLauncher.id
-      };
+      });
     }
 
     const base = pageResult || EMPTY_RESULT;
@@ -1310,7 +1381,7 @@ async function runInPage() {
     base.advice = (base.advice || []).concat([
       { text: 'Navigate to the application where the Pendo Launcher is configured, then re-run validation. The Launcher must inject its agent into the page before data can be validated.', source: 'builtin', supportKey: 'installGuide' }
     ]);
-    return {
+    return finalize({
       ...base,
       pageUrl: basePageUrl,
       snippetOnPage: false,
@@ -1321,14 +1392,14 @@ async function runInPage() {
       origin: 'page',
       validationPath: 'page',
       validationTabId: tab.id
-    };
+    });
   }
 
   const base = pageResult || EMPTY_RESULT;
   base.captured = (base.captured || []).concat([
     { level: 'info', text: 'Pendo snippet not found and Pendo Launcher extension is not installed.' }
   ]);
-  return {
+  return finalize({
     ...base,
     pageUrl: basePageUrl,
     snippetOnPage: false,
@@ -1339,7 +1410,7 @@ async function runInPage() {
     origin: 'page',
     validationPath: 'page',
     validationTabId: tab.id
-  };
+  });
 }
 
 // ========== AI advice (optional) ==========
@@ -1782,6 +1853,12 @@ function initPopup() {
   const checkGroupsEl = document.getElementById('checkGroups');
   const copyAdviceBtn = document.getElementById('copyAdvice');
 
+  const framesCard = document.getElementById('framesCard');
+  const framesCardBody = document.getElementById('framesCardBody');
+  const framesCardMeta = document.getElementById('framesCardMeta');
+  const networkCard = document.getElementById('networkCard');
+  const networkCardBody = document.getElementById('networkCardBody');
+
   const relatedReadingCard = document.getElementById('relatedReadingCard');
   const relatedReadingBody = document.getElementById('relatedReadingBody');
   const statusEmpty = document.getElementById('statusEmpty');
@@ -1806,6 +1883,8 @@ function initPopup() {
   const downloadLogsBtn = document.getElementById('downloadLogs');
   const downloadHarBtn = document.getElementById('downloadHar');
   const shareIncludeIdentityInput = document.getElementById('shareIncludeIdentity');
+  const networkCaptureSettingsCard = document.getElementById('networkCaptureSettingsCard');
+  const networkCaptureOnValidateInput = document.getElementById('networkCaptureOnValidate');
 
   const toastEl = document.getElementById('toast');
 
@@ -1830,6 +1909,7 @@ function initPopup() {
   let qualityGuideCache = null;
   let harReloadArmedUntil = 0;
   let harCaptureInProgress = false;
+  let networkCaptureOnValidate = false;
 
   // Prefetch quality guide for AI prompt enrichment
   try {
@@ -2042,7 +2122,9 @@ function initPopup() {
         supportKey: a.supportKey,
         supportUrl: a.supportUrl
       };
-      if (a.supportKey && ERR_SUPPORT_KEYS.has(a.supportKey)) errItems.push(item);
+      if (a.severity === 'error') errItems.push(item);
+      else if (a.severity === 'warn') warnItems.push(item);
+      else if (a.supportKey && ERR_SUPPORT_KEYS.has(a.supportKey)) errItems.push(item);
       else warnItems.push(item);
       seenTexts.add(a.text);
     });
@@ -2332,6 +2414,41 @@ function initPopup() {
       appendKvRow(installDetailsBody, { label: 'Parent AccountId', value: String(status.parentAccountId), copyId: 'installDetailsCopyParentAccountId' });
     }
     appendKvRow(installDetailsBody, { label: 'API key', value: status.detectedApiKey || '—', copyId: 'installDetailsCopyApiKey' });
+    if (status.visitorId) {
+      appendKvRow(installDetailsBody, { label: 'Anonymous visitor', value: yn(!!status.visitorAnonymous), mono: false, copyId: 'installDetailsCopyAnonymousVisitor' });
+    }
+
+    appendSectionTitle(installDetailsBody, 'Environment');
+    const env = status.environment;
+    if (env && env.available === false) {
+      appendKvRow(installDetailsBody, { label: 'Environment check', value: 'Not available on this agent', mono: false, wrap: true, copyId: 'installDetailsCopyEnvironmentCheck' });
+    } else if (env && env.failed) {
+      appendKvRow(installDetailsBody, { label: 'Environment check', value: `Failed: ${env.failed}`, mono: false, wrap: true, copyId: 'installDetailsCopyEnvironmentCheck' });
+    } else if (env && env.available && !env.failed) {
+      const cfgSum = summarizeAgentConfig(env.config);
+      let cfgDisplay = 'Not reported by this agent';
+      if (cfgSum.reported) cfgDisplay = cfgSum.options.length ? `${cfgSum.options.length} non-default` : 'All defaults';
+      appendKvRow(installDetailsBody, { label: 'Config options', value: cfgDisplay, mono: false, wrap: true, copyId: 'installDetailsCopyConfigOptions' });
+      if (cfgSum.reported && (cfgSum.options.length || cfgSum.conflicts.length)) {
+        const cfgPre = document.createElement('pre');
+        cfgPre.className = 'kv-json';
+        const cfgLines = [];
+        cfgSum.options.forEach((o) => cfgLines.push(`${o.name}: ${o.value} (${o.sourceLabel})`));
+        cfgSum.conflicts.forEach((c) => { if (c.detail) cfgLines.push(`Conflict — ${c.name}: ${c.detail}`); });
+        cfgPre.textContent = cfgLines.join('\n');
+        installDetailsBody.appendChild(cfgPre);
+      }
+    }
+    appendKvRow(installDetailsBody, { label: 'Agent errors', value: env && env.available && !env.failed ? String(env.errorCount || 0) : '—', copyId: 'installDetailsCopyAgentErrors' });
+    if (env && Array.isArray(env.errors) && env.errors.length) {
+      const pre = document.createElement('pre');
+      pre.className = 'kv-json';
+      pre.textContent = env.errors.slice().reverse().join('\n');
+      installDetailsBody.appendChild(pre);
+    }
+    appendKvRow(installDetailsBody, { label: 'Plugins', value: env && env.plugins && env.plugins.length ? env.plugins.join(', ') : '—', mono: false, wrap: true, copyId: 'installDetailsCopyPlugins' });
+    appendKvRow(installDetailsBody, { label: 'Agent scripts', value: String((status.agentScripts || []).length), copyId: 'installDetailsCopyAgentScripts' });
+    appendKvRow(installDetailsBody, { label: 'API keys seen', value: (status.apiKeysSeen || []).join(', ') || '—', wrap: true, copyId: 'installDetailsCopyApiKeysSeen' });
 
     appendSectionTitle(installDetailsBody, 'Metadata');
     appendMetadataSections(installDetailsBody, {
@@ -2345,6 +2462,104 @@ function initPopup() {
     appendKvRow(installDetailsBody, { label: 'Lines captured', value: String((captured || []).length), copyId: 'installDetailsCopyLinesCaptured' });
 
     installDetailsCard.hidden = false;
+  }
+
+  /** A read-only .kv-row: label, value (with an optional second line), no copy button. */
+  function appendInfoRow(container, { label, value, sub, tone }) {
+    const row = document.createElement('div');
+    row.className = 'kv-row kv-row--top';
+    const k = document.createElement('div');
+    k.className = 'kv-row__k';
+    k.textContent = label;
+    row.appendChild(k);
+    const v = document.createElement('div');
+    v.className = 'kv-row__v kv-row__v--wrap' + (tone ? ` kv-row__v--${tone}` : '');
+    v.textContent = value;
+    if (sub) {
+      const s = document.createElement('span');
+      s.className = 'kv-row__sub';
+      s.textContent = sub;
+      v.appendChild(s);
+    }
+    row.appendChild(v);
+    const spacer = document.createElement('span');
+    spacer.className = 'kv-row__copy-spacer';
+    row.appendChild(spacer);
+    container.appendChild(row);
+  }
+
+  function appendCardNote(container, text) {
+    const note = document.createElement('div');
+    note.className = 'card__note';
+    note.textContent = text;
+    container.appendChild(note);
+  }
+
+  /** Status tab Frames card: shown when subframes were inspected or Pendo is only in a subframe. */
+  function renderFramesCard(frameMap, res) {
+    if (!framesCard || !framesCardBody) return;
+    framesCardBody.replaceChildren();
+    const show = !!frameMap && frameMap.available
+      && (frameMap.inspected > 1 || frameMap.notInspectable > 0 || hasSubframeOnlyPendo(res));
+    framesCard.hidden = !show;
+    if (!show) return;
+    if (framesCardMeta) framesCardMeta.textContent = `${frameMap.inspected} inspected`;
+    let subIndex = 0;
+    for (const f of frameMap.frames) {
+      const d = describeFrame(f);
+      appendInfoRow(framesCardBody, {
+        label: f.isTop ? 'Top page' : `Frame ${++subIndex}`,
+        value: d.where,
+        sub: d.detail,
+        tone: f.agent ? (f.anonymous || f.ready === false ? 'warn' : null) : null,
+      });
+    }
+    if (frameMap.notInspectable) {
+      appendCardNote(framesCardBody, `${frameMap.notInspectable} frame${frameMap.notInspectable === 1 ? '' : 's'} could not be inspected (sandboxed, restricted or still loading).`);
+    }
+    if (frameMap.note) appendCardNote(framesCardBody, frameMap.note);
+  }
+
+  /** Status tab Network card: only when this validation included a network capture. */
+  function renderNetworkCard(networkCapture) {
+    if (!networkCard || !networkCardBody) return;
+    networkCardBody.replaceChildren();
+    const summary = networkCapture && networkCapture.summary;
+    networkCard.hidden = !summary;
+    if (!summary) return;
+    const groups = groupNetworkRequests(summary);
+    if (!groups.length) {
+      appendInfoRow(networkCardBody, { label: 'Requests', value: 'No Pendo requests during the reload', tone: 'warn' });
+    }
+    for (const g of groups) {
+      const label = g.label.charAt(0).toUpperCase() + g.label.slice(1);
+      if (!g.failures.length) {
+        appendInfoRow(networkCardBody, { label, value: `${g.total} request${g.total === 1 ? '' : 's'}, all OK` });
+      } else {
+        const first = g.failures[0];
+        appendInfoRow(networkCardBody, {
+          label,
+          value: `${g.failures.length} of ${g.total} failed`,
+          sub: `${first.text}: ${first.url}`,
+          tone: g.kind === 'agent' ? 'err' : 'warn',
+        });
+      }
+    }
+    const csp = summary.documentCsp || {};
+    const enforce = csp.enforce || [];
+    const reportOnly = csp.reportOnly || [];
+    const cspLabel = enforce.length && reportOnly.length ? 'Enforced and report-only'
+      : enforce.length ? 'Enforced' : reportOnly.length ? 'Report-only' : 'None';
+    appendInfoRow(networkCardBody, { label: 'CSP header', value: cspLabel });
+    if (enforce.length || reportOnly.length) {
+      const pre = document.createElement('pre');
+      pre.className = 'kv-json';
+      pre.textContent = enforce.map(p => `enforced: ${p}`).concat(reportOnly.map(p => `report-only: ${p}`)).join('\n\n');
+      networkCardBody.appendChild(pre);
+    }
+    if (summary.truncated) {
+      appendCardNote(networkCardBody, `Only the first ${summary.requests.length} of ${summary.requestCount} Pendo requests were kept.`);
+    }
   }
 
   function persistLogUiPrefs() {
@@ -2506,6 +2721,8 @@ function initPopup() {
     const { status, captured, snippetOnPage, launcherPresent, launcherAttempted, launcherDataValidated, validatedIn } = res;
     const originNote = validatedIn === 'launcher' ? ' (via Pendo Launcher)'
       : validatedIn === 'launcher-beta' ? ' (via Pendo Launcher Beta)' : '';
+    const subframeHero = resolveSubframeHeroState(res, originNote);
+    if (subframeHero) return subframeHero;
     if (!snippetOnPage && launcherAttempted && launcherPresent === false) {
       return { state: 'err', title: 'Install not detected', sub: 'Snippet and Pendo Launcher are both missing on this page.' };
     }
@@ -2518,9 +2735,11 @@ function initPopup() {
     if (!status.validatePresent) {
       return { state: 'warn', title: 'No validateInstall()', sub: 'Agent found but the validateInstall() helper is unavailable' + originNote + '.' };
     }
-    const errCount = captured.filter(l => l.level === 'error').length;
-    const warnCount = captured.filter(l => l.level === 'warn').length;
-    if (errCount > 0) return { state: 'err', title: `${errCount} error${errCount === 1 ? '' : 's'}`, sub: 'validateInstall() reported errors' + originNote + '.' };
+    const logErrCount = captured.filter(l => l.level === 'error').length;
+    const flagged = countSeverityAdvice(res.advice);
+    const errCount = logErrCount + flagged.error;
+    const warnCount = captured.filter(l => l.level === 'warn').length + flagged.warn;
+    if (errCount > 0) return { state: 'err', title: `${errCount} error${errCount === 1 ? '' : 's'}`, sub: (logErrCount ? 'validateInstall() reported errors' : 'Validation found errors') + originNote + '.' };
     if (warnCount > 0) return { state: 'warn', title: `${warnCount} warning${warnCount === 1 ? '' : 's'}`, sub: 'Install works, but there are recommendations' + originNote + '.' };
     return { state: 'ok', title: 'Install validated', sub: 'All checks passed' + originNote + '.' };
   }
@@ -2529,6 +2748,8 @@ function initPopup() {
   function resetStatusUi() {
     quickStats.hidden = true;
     checksCard.hidden = true;
+    if (framesCard) framesCard.hidden = true;
+    if (networkCard) networkCard.hidden = true;
     installDetailsCard.hidden = true;
     statusEmpty.hidden = true;
     statusTabCount.hidden = true;
@@ -2558,7 +2779,7 @@ function initPopup() {
       checksToRender.push('Pendo Launcher (browser extension) present and validated.');
     }
     let adviceList = advice || [];
-    if (snippetOnPage === false && launcherPresent === false && launcherAttempted) {
+    if (snippetOnPage === false && launcherPresent === false && launcherAttempted && !hasSubframeOnlyPendo(res)) {
       adviceList = adviceList.concat([{ text: 'Ensure the snippet is installed on this page, or open the Pendo Launcher (or Beta) extension in a tab.', source: 'builtin', supportKey: 'installGuide' }]);
     }
 
@@ -2598,6 +2819,8 @@ function initPopup() {
     });
 
     renderInstallDetails(res);
+    renderFramesCard(res.frameMap, res);
+    renderNetworkCard(res.networkCapture);
 
     lastContext = {
       pageUrl: pageUrl || 'unknown',
@@ -2607,7 +2830,9 @@ function initPopup() {
       snippetOnPage, launcherPresent, launcherAttempted, launcherDataValidated: res.launcherDataValidated, validatedIn: validatedIn || 'page', launcherUrl: res.launcherUrl,
       validationPath: res.validationPath || (validatedIn === 'page' ? 'page' : 'unknown'),
       validationTabId: res.validationTabId,
-      launcherExtensionId: res.launcherExtensionId
+      launcherExtensionId: res.launcherExtensionId,
+      frameMap: res.frameMap || null,
+      networkCapture: res.networkCapture || null,
     };
     renderLogs();
 
@@ -2642,6 +2867,8 @@ function initPopup() {
         downloadHarBtn.title = 'Run a validation first';
       } else if (harCaptureInProgress) {
         downloadHarBtn.title = 'Capturing network…';
+      } else if (lastContext.networkCapture && lastContext.networkCapture.har) {
+        downloadHarBtn.title = 'Download the Pendo network HAR captured by this validation (no reload)';
       } else if (harUsesReload) {
         downloadHarBtn.title = 'Download Pendo network HAR (reloads the page — click twice to confirm)';
       } else {
@@ -2697,17 +2924,45 @@ function initPopup() {
     });
   }
 
-  runBtn?.addEventListener('click', async () => {
+  /** Ask the background to reload the tab under CDP; true when the reload started (this panel is about to go). */
+  async function startNetworkCaptureValidation() {
+    let res;
+    try {
+      const [tab] = await tabsQuery({ active: true, currentWindow: true });
+      if (!tab || !tab.id) return false;
+      res = await sendExtMessage({ type: 'pendo-validate-network-validate', tabId: tab.id, pageUrl: tab.url || 'unknown' });
+    } catch (e) {
+      res = { ok: false, error: e && e.message };
+    }
+    if (res && res.ok) return true;
+    showToast(`Network capture didn't start (${(res && res.error) || 'unknown error'}). Validating without it.`, 4200);
+    return false;
+  }
+
+  /**
+   * @param {{ networkCapture?: object, skipNetworkCapture?: boolean }} [opts] - networkCapture is the
+   *   stored result of a capture reload; a run that carries one (or skips) never reloads again.
+   */
+  async function runValidation(opts) {
+    const options = opts || {};
     const runId = ++validationSeq;
     activateTab('status');
     runState = 'running';
     setRunningVisual(true);
     resetStatusUi();
+
+    if (!options.networkCapture && !options.skipNetworkCapture && networkCaptureOnValidate && canCaptureNetworkWithCdp()) {
+      setStatusHero({ state: 'running', title: 'Capturing network…', sub: 'Reloading the page to record Pendo requests. The panel reopens when it finishes.' });
+      startStatusHeroTimeRefresh(null);
+      if (await startNetworkCaptureValidation()) return;
+      if (runId !== validationSeq) return;
+    }
+
     setStatusHero({ state: 'running', title: 'Validating…', sub: 'Running pendo.validateInstall() in the active tab.' });
     startStatusHeroTimeRefresh(null);
 
     try {
-      const res = await runInPage();
+      const res = await runInPage({ networkCapture: options.networkCapture || null });
       if (!res || !res.status) {
         if (runId === validationSeq) {
           setStatusHero({ state: 'err', title: 'Failed', sub: 'Validation did not return a result.' });
@@ -2717,11 +2972,12 @@ function initPopup() {
 
       if (runId !== validationSeq) return;
 
-      const { status, captured, hasError, hasWarn } = res;
+      const { status, captured } = res;
       let { adviceList, checksToRender } = renderValidationResult(res);
       let aiAdviceUsed = false;
 
-      const failureDetected = !status.validatePresent || hasError || hasWarn;
+      const validationSeverity = countValidationSeverity({ captured, advice: res.advice });
+      const failureDetected = !status.validatePresent || validationSeverity.error > 0 || validationSeverity.warn > 0;
       if (failureDetected) {
         // Core results are already rendered; end the running spinner before the (possibly
         // slow) AI request so the button returns to idle instead of spinning up to timeoutMs.
@@ -2759,7 +3015,94 @@ function initPopup() {
         setRunningVisual(false);
       }
     }
-  });
+  }
+
+  runBtn?.addEventListener('click', () => { runValidation(); });
+
+  // ── Validate with network capture: resume after the reload ─────────────
+  const PENDING_NETWORK_KEY = 'pendingNetworkCapture';
+  const NETWORK_CAPTURE_WAIT_MS = 25_000;
+  const NETWORK_CAPTURE_STALE_MS = 2 * 60_000;
+  const NETWORK_CAPTURE_RESULT_TTL_MS = 30_000;
+
+  function readPendingNetworkCapture() {
+    return new Promise((resolve) => {
+      try {
+        chrome.storage.local.get({ [PENDING_NETWORK_KEY]: null }, (d) => resolve((d && d[PENDING_NETWORK_KEY]) || null));
+      } catch (_) {
+        resolve(null);
+      }
+    });
+  }
+
+  function clearPendingNetworkCapture() {
+    try { chrome.storage.local.remove(PENDING_NETWORK_KEY); } catch (_) { /* ignore */ }
+  }
+
+  const isFinishedCapture = (p, tabId) => !!p && p.tabId === tabId && (p.state === 'done' || p.state === 'error');
+
+  function validateAfterNetworkCapture(pending) {
+    clearPendingNetworkCapture();
+    if (!pending) {
+      showToast("Network capture didn't finish. Validating without it.", 4200);
+      runValidation({ skipNetworkCapture: true });
+    } else if (pending.state === 'error') {
+      showToast(`Network capture failed (${pending.error || 'unknown error'}). Validating without it.`, 4200);
+      runValidation({ skipNetworkCapture: true });
+    } else {
+      runValidation({ networkCapture: pending });
+    }
+  }
+
+  /** The panel reopened after a Validate reload: wait for the capture, then validate with it. */
+  async function resumeNetworkCaptureValidation() {
+    if (!chrome.storage?.local || !chrome.storage.onChanged) return;
+    const hostTabId = await getHostTabIdForPanel();
+    if (hostTabId == null) return;
+    const pending = await readPendingNetworkCapture();
+    if (!pending || pending.tabId !== hostTabId) return;
+    if (pending.state === 'capturing') {
+      if (Date.now() - (pending.startedAt || 0) > NETWORK_CAPTURE_STALE_MS) { clearPendingNetworkCapture(); return; }
+    } else if (Date.now() - (pending.ts || 0) > NETWORK_CAPTURE_RESULT_TTL_MS) {
+      clearPendingNetworkCapture();
+      return;
+    }
+    if (isFinishedCapture(pending, hostTabId)) { validateAfterNetworkCapture(pending); return; }
+
+    activateTab('status');
+    runState = 'running';
+    setRunningVisual(true);
+    resetStatusUi();
+    setStatusHero({ state: 'running', title: 'Capturing network…', sub: 'Recording Pendo requests while the page loads.' });
+    startStatusHeroTimeRefresh(null);
+
+    let settled = false;
+    let timer = null;
+    const onChanged = (changes, area) => {
+      if (area !== 'local' || !changes[PENDING_NETWORK_KEY]) return;
+      const next = changes[PENDING_NETWORK_KEY].newValue;
+      if (!isFinishedCapture(next, hostTabId)) return;
+      if (settled) {
+        // Arrived after the timeout: drop it so a later panel open doesn't validate with it.
+        clearPendingNetworkCapture();
+        chrome.storage.onChanged.removeListener(onChanged);
+        return;
+      }
+      finish(next);
+    };
+    const finish = (p) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (p) chrome.storage.onChanged.removeListener(onChanged);
+      validateAfterNetworkCapture(p);
+    };
+    chrome.storage.onChanged.addListener(onChanged);
+    timer = setTimeout(() => finish(null), NETWORK_CAPTURE_WAIT_MS);
+    const again = await readPendingNetworkCapture();
+    if (isFinishedCapture(again, hostTabId)) finish(again);
+  }
+  resumeNetworkCaptureValidation();
 
   /** Run enable-debugging.js in the active tab (MAIN world) and return its result. */
   async function runInActiveTab() {
@@ -2849,6 +3192,14 @@ function initPopup() {
 
   downloadHarBtn?.addEventListener('click', async () => {
     if (!lastContext || downloadHarBtn.disabled) return;
+    const captured = lastContext.networkCapture;
+    if (captured && captured.har) {
+      const n = captured.entryCount || 0;
+      downloadBlob(`pendo-network_${Date.now()}.har`, 'application/json', JSON.stringify(captured.har, null, 2));
+      trackHarDownloaded('cdp', n);
+      showToast(`HAR downloaded (${n} Pendo request${n === 1 ? '' : 's'})`);
+      return;
+    }
     const harUsesReload = typeof chrome !== 'undefined' && chrome.debugger && typeof chrome.debugger.attach === 'function';
     const now = Date.now();
     if (harUsesReload && now > harReloadArmedUntil) {
@@ -2958,12 +3309,14 @@ function initPopup() {
   }
 
   chrome.storage.local.get(
-    { themePreference: 'system', shareIncludeIdentity: false, logUiPrefs: null },
-    ({ themePreference, shareIncludeIdentity: sharePref, logUiPrefs }) => {
+    { themePreference: 'system', shareIncludeIdentity: false, logUiPrefs: null, networkCaptureOnValidate: false },
+    ({ themePreference, shareIncludeIdentity: sharePref, logUiPrefs, networkCaptureOnValidate: networkPref }) => {
       themeSelect.value = themePreference;
       applyTheme(themePreference);
       shareIncludeIdentity = !!sharePref;
       if (shareIncludeIdentityInput) shareIncludeIdentityInput.checked = shareIncludeIdentity;
+      networkCaptureOnValidate = !!networkPref && canCaptureNetworkWithCdp();
+      if (networkCaptureOnValidateInput) networkCaptureOnValidateInput.checked = networkCaptureOnValidate;
       syncShareExportControls();
       if (logUiPrefs && typeof logUiPrefs === 'object') {
         if (logUiPrefs.filters && typeof logUiPrefs.filters === 'object') {
@@ -2985,6 +3338,14 @@ function initPopup() {
     shareIncludeIdentity = !!shareIncludeIdentityInput.checked;
     chrome.storage.local.set({ shareIncludeIdentity });
     syncShareExportControls();
+  });
+
+  // chrome.debugger is Chrome/Edge only; the Firefox build has no way to capture the reload.
+  if (networkCaptureSettingsCard) networkCaptureSettingsCard.hidden = !canCaptureNetworkWithCdp();
+  networkCaptureOnValidateInput?.addEventListener('change', () => {
+    networkCaptureOnValidate = !!networkCaptureOnValidateInput.checked;
+    chrome.storage.local.set({ networkCaptureOnValidate });
+    showToast(networkCaptureOnValidate ? 'Validate will reload the page to capture network' : 'Network capture off');
   });
 
   themeSelect.addEventListener('change', () => {

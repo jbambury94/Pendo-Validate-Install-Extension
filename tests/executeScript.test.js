@@ -136,6 +136,25 @@ describe('executeScript — invoke-only world cache (local scripting API)', () =
     expect(chrome.scripting.executeScript).toHaveBeenCalledTimes(2)
     expect(chrome.scripting.executeScript.mock.calls[0][0].files).toEqual(['enable-debugging.js'])
   })
+
+  it('always injects frame-probe into every frame, since new frames never hold the global', async () => {
+    chrome.scripting.executeScript.mockResolvedValue([{ frameId: 0, result: { isTop: true } }])
+    const api = loadPopupExports()
+    const opts = { selfApiKey: 'self', overlayIframeId: 'pendo-validate-overlay-iframe' }
+    const details = { target: { tabId: 5, allFrames: true }, world: 'MAIN', injectedScript: 'frame-probe', args: [opts] }
+
+    await api.executeScript({ ...details })
+    chrome.scripting.executeScript.mockClear()
+    await api.executeScript({ ...details })
+
+    expect(chrome.scripting.executeScript).toHaveBeenCalledTimes(2)
+    expect(chrome.scripting.executeScript.mock.calls[0][0]).toMatchObject({
+      target: { tabId: 5, allFrames: true }, world: 'MAIN', files: ['frame-probe.js'],
+    })
+    const invoke = chrome.scripting.executeScript.mock.calls[1][0]
+    expect(invoke.target).toEqual({ tabId: 5, allFrames: true })
+    expect(invoke.args).toEqual([opts])
+  })
 })
 
 // ── executeScript: background bridge route (Firefox iframe — no local scripting API) ──────────────
