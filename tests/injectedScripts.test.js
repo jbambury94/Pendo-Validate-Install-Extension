@@ -79,6 +79,21 @@ describe('injected extension scripts — MAIN world idempotency', () => {
     expect(typeof context.__pendoValidateEnableDebugging).toBe('function')
   })
 
+  it('har-timings.js can be injected twice without redeclaration', () => {
+    const src = readExtensionScript('har-timings.js')
+    const context = vm.createContext({
+      globalThis: {},
+      performance: { timeOrigin: 1000, getEntriesByType: () => [] },
+    })
+    context.globalThis = context
+
+    injectIntoContext(src, context)
+    expect(typeof context.__pendoValidateHarTimings).toBe('function')
+    expect(() => injectIntoContext(src, context)).not.toThrow()
+    const out = context.__pendoValidateHarTimings()
+    expect(out.entries).toEqual([])
+  })
+
   it('unguarded top-level binding fails on re-injection (documents the bug)', () => {
     const unguarded = [
       'const __sampleCapture = function () { return 1 }',

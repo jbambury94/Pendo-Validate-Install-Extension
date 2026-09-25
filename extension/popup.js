@@ -71,6 +71,7 @@ const _INJECTED_SCRIPTS = {
   // revision must match PENDO_VALIDATE_CAPTURE_INSPECT_REVISION in capture-inspect.js
   'capture-inspect': { file: 'capture-inspect.js', revision: 3, func: (variant) => globalThis.__pendoValidateCaptureAndInspect(variant) },
   'enable-debugging': { file: 'enable-debugging.js', func: () => globalThis.__pendoValidateEnableDebugging() },
+  'har-timings': { file: 'har-timings.js', func: () => globalThis.__pendoValidateHarTimings() },
 };
 
 function _isStaleCombinedCaptureResult(result, injectedScript, args) {
@@ -832,8 +833,109 @@ function buildMarkdownReport(context) {
 /** Serialize full context as pretty-printed JSON (still used by some report flows). */
 function buildJsonReport(context) { return JSON.stringify(context, null, 2); }
 
+/** Filter captured console lines by level chips and search query. */
+function filterCapturedLogs(captured, logFilters, logQuery) {
+  const q = (logQuery || '').toLowerCase();
+  let errCount = 0;
+  let warnCount = 0;
+  let infoCount = 0;
+  const visible = [];
+  for (const l of captured || []) {
+    const lev = l.level === 'error' ? 'error' : l.level === 'warn' ? 'warn' : 'info';
+    if (lev === 'error') errCount++;
+    else if (lev === 'warn') warnCount++;
+    else infoCount++;
+    if (lev === 'error' && !logFilters.error) continue;
+    if (lev === 'warn' && !logFilters.warn) continue;
+    if (lev === 'info' && !logFilters.info) continue;
+    if (q && !(l.text || '').toLowerCase().includes(q)) continue;
+    visible.push({ level: lev, text: l.text || '' });
+  }
+  return { errCount, warnCount, infoCount, visible };
+}
+
+/** Text rendered on a check row — AI items drop stale embedded help links. */
+function checkItemDisplayText(item) {
+  const text = String((item && item.text) || '');
+  return item && item.source === 'ai' ? stripAllUrls(stripEmbeddedHelpUrl(text)) : text;
+}
+
+/** Logs search token for a check row. Derive it from the displayed text so the
+ *  "View in Logs" availability check and the click handler search for the same string. */
+function checkLogSearchToken(text) {
+  return stripAllUrls(String(text || '')).replace(/\s+/g, ' ').trim().slice(0, 40);
+}
+
+/** Whether a check row should offer "View in Logs" (captured lines only, or search matches captured output). */
+function shouldOfferViewInLogsLink(item, kind, captured) {
+  if (!item || (kind !== 'err' && kind !== 'warn')) return false;
+  if (item.source === 'captured') return true;
+  const token = checkLogSearchToken(checkItemDisplayText(item));
+  const filters = kind === 'err'
+    ? { error: true, warn: false, info: false }
+    : { error: false, warn: true, info: false };
+  const { visible } = filterCapturedLogs(captured || [], filters, token);
+  return visible.length > 0;
+}
+
+/** Tab hosting this panel (overlay iframe), not merely the focused tab in the window. */
+function getHostTabIdForPanel() {
+  return new Promise(async (resolve) => {
+    if (window === window.parent) {
+      try {
+        const [tab] = await tabsQuery({ active: true, currentWindow: true });
+        resolve(tab?.id ?? null);
+      } catch {
+        resolve(null);
+      }
+      return;
+    }
+    const timeout = setTimeout(() => {
+      window.removeEventListener('message', onMsg);
+      resolve(null);
+    }, 3000);
+    function onMsg(e) {
+      if (e.source !== window.parent) return;
+      if (e.data?.type === 'pendo-validate-host-tab-id') {
+        clearTimeout(timeout);
+        window.removeEventListener('message', onMsg);
+        const id = e.data.tabId;
+        resolve(typeof id === 'number' ? id : null);
+      }
+    }
+    window.addEventListener('message', onMsg);
+    window.parent.postMessage({ type: 'pendo-validate-request-host-tab-id' }, '*');
+  });
+}
+
+/** Redact identity-bearing values from Share summary lines when includeIdentity is off. */
+function redactShareSummaryText(text, context) {
+  let out = String(text || '');
+  const { pageUrl, status } = context || {};
+  const st = status || {};
+
+  out = out.replace(/\b(api[_-]?key|apikey)\b[\s:]*[^\s,.)]+/gi, 'api key [redacted]');
+
+  const secrets = [];
+  if (pageUrl) secrets.push(String(pageUrl));
+  if (st.detectedApiKey) secrets.push(String(st.detectedApiKey));
+  if (st.visitorId != null && st.visitorId !== '') secrets.push(String(st.visitorId));
+  if (st.accountId != null && st.accountId !== '') secrets.push(String(st.accountId));
+  if (st.parentAccountId != null && st.parentAccountId !== '') secrets.push(String(st.parentAccountId));
+
+  secrets.sort((a, b) => b.length - a.length);
+  for (const value of secrets) {
+    if (!value) continue;
+    out = out.split(value).join('[redacted]');
+  }
+
+  out = out.replace(/https?:\/\/\S+/gi, '[url redacted]');
+  return out;
+}
+
 /** Build a plain-text summary suitable for clipboard (status + counts + advice + checks). */
-function buildPlainSummary(context) {
+function buildPlainSummary(context, options) {
+  const includeIdentity = options && options.includeIdentity === true;
   const { pageUrl, timestamp, status, captured, advice, checks, snippetOnPage, launcherPresent, launcherAttempted, launcherDataValidated, validatedIn } = context;
   const errCount = (captured || []).filter(l => l.level === 'error').length;
   const warnCount = (captured || []).filter(l => l.level === 'warn').length;
@@ -848,17 +950,24 @@ function buildPlainSummary(context) {
 
   const lines = [];
   lines.push(`Pendo Install Validator — ${statusLine}`);
-  lines.push(`Page: ${pageUrl || 'unknown'}`);
+  if (includeIdentity) {
+    lines.push(`Page: ${pageUrl || 'unknown'}`);
+    lines.push(`VisitorId: ${status.visitorId || 'not set'}`);
+    lines.push(`AccountId: ${status.accountId == null ? 'not set' : status.accountId}`);
+  }
   lines.push(`Timestamp: ${timestamp}`);
   lines.push(`Validated in: ${validatedIn || 'page'}`);
-  if (status.parentAccountId != null) {
+  if (includeIdentity && status.parentAccountId != null) {
     lines.push(`Parent AccountId: ${status.parentAccountId}`);
   }
   lines.push(`Errors: ${errCount}   Warnings: ${warnCount}   Passing: ${okCount}`);
   lines.push('');
   if (checks && checks.length) {
     lines.push('Passing:');
-    checks.forEach(c => lines.push(`  • ${c}`));
+    checks.forEach(c => {
+      const line = includeIdentity ? c : redactShareSummaryText(c, context);
+      lines.push(`  • ${line}`);
+    });
     lines.push('');
   }
   const adviceList = normalizeAdviceList(advice || []);
@@ -866,10 +975,21 @@ function buildPlainSummary(context) {
     lines.push('Recommendations:');
     adviceList.forEach(a => {
       const prefix = a.source === 'ai' ? '[AI] ' : '';
-      lines.push(`  • ${prefix}${a.text}`);
+      let text = a.text;
+      if (!includeIdentity) {
+        text = redactShareSummaryText(text, context);
+      }
+      lines.push(`  • ${prefix}${text}`);
     });
   }
   return lines.join('\n');
+}
+
+/** Fire validation_completed Track Event from panel context; never throws. */
+function emitValidationCompletedTelemetry(context, aiAdviceUsed) {
+  if (!context || typeof buildValidationCompletedProps !== 'function' || typeof trackIvaEvent !== 'function') return;
+  const props = buildValidationCompletedProps(context, { aiAdviceUsed: !!aiAdviceUsed });
+  trackIvaEvent('validation_completed', props);
 }
 
 /** Trigger browser download of a blob (report file). */
@@ -995,6 +1115,54 @@ async function evaluateInLauncherWorld(tabId, launcherId, expression) {
   }
 }
 
+const HAR_RELOAD_ARM_MS = 6000;
+
+function getExtensionOriginForHar() {
+  const rt = _extRuntime();
+  if (!rt?.getURL) return '';
+  try {
+    return rt.getURL('').replace(/\/$/, '');
+  } catch {
+    return '';
+  }
+}
+
+function readPanelExtensionVersion() {
+  try {
+    const rt = _extRuntime();
+    if (rt?.getManifest) return String(rt.getManifest().version || '');
+  } catch { /* ignore */ }
+  return '';
+}
+
+async function captureNetworkHarViaTimings(tabId, pageUrl) {
+  const results = await executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    injectedScript: 'har-timings',
+  });
+  const raw = results && results[0] ? results[0].result : null;
+  if (raw && raw.error) return { ok: false, message: raw.error };
+  const entries = Array.isArray(raw) ? raw : (raw && Array.isArray(raw.entries) ? raw.entries : []);
+  const timeOrigin = raw && typeof raw.timeOrigin === 'number' ? raw.timeOrigin : Date.now();
+  const har = buildHarFromResourceTimings(entries, {
+    pageUrl,
+    extensionOrigin: getExtensionOriginForHar(),
+    creatorVersion: readPanelExtensionVersion(),
+    timeOrigin,
+  });
+  return { ok: true, har, mode: 'timings', entryCount: har.log.entries.length };
+}
+
+async function captureNetworkHar(tabId, pageUrl, outcome) {
+  if (typeof chrome !== 'undefined' && chrome.debugger && typeof chrome.debugger.attach === 'function') {
+    const res = await sendExtMessage({ type: 'pendo-validate-har-capture', tabId, pageUrl, outcome });
+    if (!res?.ok) return { ok: false, message: res?.error || 'Could not start HAR capture' };
+    return { ok: true, pendingReload: true };
+  }
+  return captureNetworkHarViaTimings(tabId, pageUrl);
+}
+
 /** Enable pendo.enableDebugging() inside the Launcher content-script world (Phase 1.75 path). */
 async function enableDebuggingViaLauncherCdp(tabId, launcher) {
   let expression;
@@ -1082,7 +1250,9 @@ async function runInPage() {
       launcherPresent: launcherInPage,
       launcherDataValidated: undefined,
       validatedIn: 'page',
-      origin: 'page'
+      origin: 'page',
+      validationPath: 'page',
+      validationTabId: tab.id
     };
   }
 
@@ -1148,7 +1318,9 @@ async function runInPage() {
       launcherPresent: true,
       launcherDataValidated: false,
       validatedIn: 'page',
-      origin: 'page'
+      origin: 'page',
+      validationPath: 'page',
+      validationTabId: tab.id
     };
   }
 
@@ -1164,7 +1336,9 @@ async function runInPage() {
     launcherPresent: false,
     launcherDataValidated: false,
     validatedIn: 'page',
-    origin: 'page'
+    origin: 'page',
+    validationPath: 'page',
+    validationTabId: tab.id
   };
 }
 
@@ -1582,8 +1756,8 @@ function makeIcon(name, size = 16) {
 function initPopup() {
   // ── DOM refs ─────────────────────────────────────────────────────────────
   const ivaHeader = document.getElementById('ivaHeader');
-  const resizeHandle = document.getElementById('resizeHandle');
   const closeBtn = document.getElementById('closeBtn');
+  const resizeHandle = document.getElementById('resizeHandle');
 
   const tabStatusBtn = document.getElementById('tabStatusBtn');
   const tabLogsBtn = document.getElementById('tabLogsBtn');
@@ -1610,10 +1784,6 @@ function initPopup() {
 
   const relatedReadingCard = document.getElementById('relatedReadingCard');
   const relatedReadingBody = document.getElementById('relatedReadingBody');
-  const identityCard = document.getElementById('identityCard');
-  const identityBody = document.getElementById('identityBody');
-  const metadataCard = document.getElementById('metadataCard');
-  const metadataBody = document.getElementById('metadataBody');
   const statusEmpty = document.getElementById('statusEmpty');
 
   const logsListEl = document.getElementById('logsList');
@@ -1625,19 +1795,17 @@ function initPopup() {
   const logFilterWarn = document.getElementById('logFilterWarn');
   const logFilterInfo = document.getElementById('logFilterInfo');
   const copyLogsBtn = document.getElementById('copyLogs');
-  const pageFactsCard = document.getElementById('pageFactsCard');
-  const pageFactsBody = document.getElementById('pageFactsBody');
-
-  const pageSnapshotCard = document.getElementById('pageSnapshotCard');
-  const pageSnapshotBody = document.getElementById('pageSnapshotBody');
+  const installDetailsCard = document.getElementById('installDetailsCard');
+  const installDetailsBody = document.getElementById('installDetailsBody');
 
   const runBtn = document.getElementById('run');
   const runBtnLabel = runBtn?.querySelector('.btn__label');
   const launchDebuggerBtn = document.getElementById('launchDebugger');
-  const exportMenuBtn = document.getElementById('exportMenuBtn');
-  const exportMenu = document.getElementById('exportMenu');
-  const exportMdBtn = document.getElementById('exportMd');
-  const exportCopyBtn = document.getElementById('exportCopy');
+  const shareSummaryBtn = document.getElementById('shareSummary');
+  const downloadMarkdownReportBtn = document.getElementById('downloadMarkdownReport');
+  const downloadLogsBtn = document.getElementById('downloadLogs');
+  const downloadHarBtn = document.getElementById('downloadHar');
+  const shareIncludeIdentityInput = document.getElementById('shareIncludeIdentity');
 
   const toastEl = document.getElementById('toast');
 
@@ -1655,10 +1823,13 @@ function initPopup() {
   let validationSeq = 0; // incremented per Validate click; stale AI callbacks compare before mutating UI
   let logFilters = { error: true, warn: true, info: true };
   let logQuery = '';
+  let shareIncludeIdentity = false;
   let toastTimer = null;
   let statusHeroTimeTimer = null;
   const STATUS_HERO_TIME_INTERVAL_MS = 5_000;
   let qualityGuideCache = null;
+  let harReloadArmedUntil = 0;
+  let harCaptureInProgress = false;
 
   // Prefetch quality guide for AI prompt enrichment
   try {
@@ -1684,6 +1855,36 @@ function initPopup() {
     }
     bindHeaderDrag(ivaHeader);
     bindResizeHandle(resizeHandle);
+  }
+
+  /** Corner resize: posts {dw, dh} deltas; content.js clamps and applies width/height. */
+  function bindResizeHandle(handle) {
+    if (!handle) return;
+    handle.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const startScreenX = e.screenX;
+      const startScreenY = e.screenY;
+      try { handle.setPointerCapture(e.pointerId); } catch (_) {}
+      window.parent.postMessage({ type: 'pendo-validate-resizestart' }, '*');
+
+      function onMove(ev) {
+        const dw = ev.screenX - startScreenX;
+        const dh = ev.screenY - startScreenY;
+        window.parent.postMessage({ type: 'pendo-validate-resize', dw, dh }, '*');
+      }
+      function teardown(ev) {
+        try { handle.releasePointerCapture(ev.pointerId); } catch (_) {}
+        handle.removeEventListener('pointermove', onMove);
+        handle.removeEventListener('pointerup', teardown);
+        handle.removeEventListener('pointercancel', teardown);
+        window.parent.postMessage({ type: 'pendo-validate-resizeend' }, '*');
+      }
+      handle.addEventListener('pointermove', onMove);
+      handle.addEventListener('pointerup', teardown);
+      handle.addEventListener('pointercancel', teardown);
+    });
   }
 
   /**
@@ -1712,36 +1913,6 @@ function initPopup() {
         handle.removeEventListener('pointerup', teardown);
         handle.removeEventListener('pointercancel', teardown);
         window.parent.postMessage({ type: 'pendo-validate-dragend' }, '*');
-      }
-      handle.addEventListener('pointermove', onMove);
-      handle.addEventListener('pointerup', teardown);
-      handle.addEventListener('pointercancel', teardown);
-    });
-  }
-
-  /** Corner resize: posts {dw, dh} deltas; content.js clamps and applies width/height. */
-  function bindResizeHandle(handle) {
-    if (!handle) return;
-    handle.addEventListener('pointerdown', (e) => {
-      if (e.pointerType === 'mouse' && e.button !== 0) return;
-      e.preventDefault();
-      e.stopPropagation();
-      const startScreenX = e.screenX;
-      const startScreenY = e.screenY;
-      try { handle.setPointerCapture(e.pointerId); } catch (_) {}
-      window.parent.postMessage({ type: 'pendo-validate-resizestart' }, '*');
-
-      function onMove(ev) {
-        const dw = ev.screenX - startScreenX;
-        const dh = ev.screenY - startScreenY;
-        window.parent.postMessage({ type: 'pendo-validate-resize', dw, dh }, '*');
-      }
-      function teardown(ev) {
-        try { handle.releasePointerCapture(ev.pointerId); } catch (_) {}
-        handle.removeEventListener('pointermove', onMove);
-        handle.removeEventListener('pointerup', teardown);
-        handle.removeEventListener('pointercancel', teardown);
-        window.parent.postMessage({ type: 'pendo-validate-resizeend' }, '*');
       }
       handle.addEventListener('pointermove', onMove);
       handle.addEventListener('pointerup', teardown);
@@ -1786,12 +1957,22 @@ function initPopup() {
     return makeIcon('zap', 16);
   }
 
+  /** Append debugger session hint to hero sub when debugging was enabled this session. */
+  function heroSubWithDebuggerNote(sub) {
+    const base = sub || '';
+    if (lastContext && lastContext.debuggerEnabledAt) {
+      const extra = 'Debugging enabled — validate again for verbose logs.';
+      return base.includes(extra) ? base : (base ? `${base} ${extra}` : extra);
+    }
+    return base;
+  }
+
   /** Set the hero state, icon, title, sub. */
   function setStatusHero({ state, title, sub }) {
     statusHero.dataset.state = state;
     statusHeroIcon.replaceChildren(severityIcon(state));
     statusHeroTitle.textContent = title;
-    statusHeroSub.textContent = sub;
+    statusHeroSub.textContent = heroSubWithDebuggerNote(sub);
   }
 
   /** Format last-run time relative to now. */
@@ -1951,8 +2132,21 @@ function initPopup() {
           tag.textContent = 'AI';
           cell.appendChild(tag);
         }
-        const displayText = it.source === 'ai' ? stripAllUrls(stripEmbeddedHelpUrl(it.text)) : it.text;
+        const displayText = checkItemDisplayText(it);
         cell.appendChild(document.createTextNode(displayText));
+        const capturedForLogs = (lastContext && lastContext.captured) || [];
+        if (shouldOfferViewInLogsLink(it, g.kind, capturedForLogs)) {
+          const logsLink = document.createElement('button');
+          logsLink.type = 'button';
+          logsLink.className = 'check-item__logs-link';
+          logsLink.dataset.action = 'view-check-in-logs';
+          logsLink.textContent = 'View in Logs';
+          logsLink.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            openCheckInLogs(displayText, g.kind);
+          });
+          cell.appendChild(logsLink);
+        }
         if (it.supportUrl) {
           const docWrap = document.createElement('div');
           const a = document.createElement('a');
@@ -2046,23 +2240,17 @@ function initPopup() {
     return row;
   }
 
-  /** Render Identity card (visitor, account, API key). */
-  function renderIdentityCard({ visitorId, accountId, parentAccountId, detectedApiKey }) {
-    identityBody.replaceChildren();
-    appendKvRow(identityBody, { label: 'VisitorId', value: visitorId || '—', copyId: 'identityCopyVisitorId' });
-    appendKvRow(identityBody, { label: 'AccountId', value: accountId == null ? '—' : String(accountId), copyId: 'identityCopyAccountId' });
-    if (parentAccountId != null) {
-      appendKvRow(identityBody, { label: 'Parent AccountId', value: String(parentAccountId), copyId: 'identityCopyParentAccountId' });
-    }
-    appendKvRow(identityBody, { label: 'API key', value: detectedApiKey || '—', copyId: 'identityCopyApiKey' });
-    identityCard.hidden = false;
+  function appendSectionTitle(container, title) {
+    const h = document.createElement('div');
+    h.className = 'install-details__section';
+    h.textContent = title;
+    container.appendChild(h);
   }
 
-  /** Render the Metadata card (visitor + account JSON previews). */
-  function renderMetadataCard({ visitorMetadata, accountMetadata, parentAccountMetadata }) {
-    metadataBody.replaceChildren();
+  /** Render metadata JSON sections into a container (shared by Install details). */
+  function appendMetadataSections(container, { visitorMetadata, accountMetadata, parentAccountMetadata }) {
     const fields = (meta) => meta && typeof meta === 'object' ? Object.keys(meta).length : 0;
-    const renderSection = (label, meta) => {
+    const renderSection = (label, meta, copyIdPrefix) => {
       const count = fields(meta);
       const row = document.createElement('div');
       row.className = 'kv-row kv-row--top';
@@ -2081,7 +2269,7 @@ function initPopup() {
       row.appendChild(v);
       if (count > 0) {
         const btn = document.createElement('button');
-        btn.id = 'metadataCopy' + label;
+        btn.id = copyIdPrefix;
         btn.type = 'button';
         btn.className = 'kv-row__copy';
         btn.dataset.action = 'copy-kv';
@@ -2097,81 +2285,93 @@ function initPopup() {
         spacer.className = 'kv-row__copy-spacer';
         row.appendChild(spacer);
       }
-      metadataBody.appendChild(row);
+      container.appendChild(row);
 
       if (count > 0) {
         const pre = document.createElement('pre');
         pre.className = 'kv-json';
         pre.textContent = JSON.stringify(meta, null, 2);
-        metadataBody.appendChild(pre);
+        container.appendChild(pre);
       }
     };
-    renderSection('Visitor', visitorMetadata);
-    renderSection('Account', accountMetadata);
+    renderSection('Visitor', visitorMetadata, 'installDetailsCopyVisitorMeta');
+    renderSection('Account', accountMetadata, 'installDetailsCopyAccountMeta');
     if (parentAccountMetadata && typeof parentAccountMetadata === 'object' && Object.keys(parentAccountMetadata).length > 0) {
-      renderSection('Parent Account', parentAccountMetadata);
+      renderSection('Parent Account', parentAccountMetadata, 'installDetailsCopyParentMeta');
     }
-    metadataCard.hidden = false;
   }
 
-  /** Render the page-snapshot section in the Settings tab. */
-  function renderPageSnapshot(res) {
-    pageSnapshotBody.replaceChildren();
-    const { status, apiKeyFound, snippetOnPage, launcherPresent, launcherAttempted, launcherDataValidated, validatedIn } = res;
+  /** Logs tab: install, identity, metadata, and capture summary (no duplicate Status cards). */
+  function renderInstallDetails(res) {
+    installDetailsBody.replaceChildren();
+    const { status, captured, snippetOnPage, launcherPresent, launcherAttempted, launcherDataValidated, validatedIn } = res;
     const yn = (v) => v === true ? 'Yes' : v === false ? 'No' : '—';
     const launcherDisplay = !launcherAttempted ? 'Not checked' : launcherPresent === true ? 'Found' : 'Not found';
     const validatedInDisplay = validatedIn === 'launcher' ? 'Pendo Launcher'
       : validatedIn === 'launcher-beta' ? 'Pendo Launcher Beta'
       : validatedIn === 'page' ? 'Page' : '—';
 
-    appendKvRow(pageSnapshotBody, { label: 'Pendo present', value: yn(status.pendoPresent), mono: false, copyId: 'pageSnapshotCopyPendoPresent' });
-    appendKvRow(pageSnapshotBody, { label: 'validateInstall', value: yn(status.validatePresent), mono: false, copyId: 'pageSnapshotCopyValidateInstall' });
-    appendKvRow(pageSnapshotBody, { label: 'Agent version', value: status.version || 'unknown', copyId: 'pageSnapshotCopyAgentVersion' });
-    appendKvRow(pageSnapshotBody, { label: 'API key found', value: yn(apiKeyFound), mono: false, copyId: 'pageSnapshotCopyApiKeyFound' });
-    appendKvRow(pageSnapshotBody, { label: 'Detected key', value: status.detectedApiKey || '—', copyId: 'pageSnapshotCopyDetectedKey' });
-    appendKvRow(pageSnapshotBody, { label: 'Snippet on page', value: yn(snippetOnPage), mono: false, copyId: 'pageSnapshotCopySnippetOnPage' });
-    appendKvRow(pageSnapshotBody, { label: 'Pendo Launcher', value: launcherDisplay, mono: false, copyId: 'pageSnapshotCopyPendoLauncher' });
-    appendKvRow(pageSnapshotBody, {
+    appendSectionTitle(installDetailsBody, 'Install');
+    appendKvRow(installDetailsBody, { label: 'Pendo present', value: yn(status.pendoPresent), mono: false, copyId: 'installDetailsCopyPendoPresent' });
+    appendKvRow(installDetailsBody, { label: 'validateInstall', value: yn(status.validatePresent), mono: false, copyId: 'installDetailsCopyValidateInstall' });
+    appendKvRow(installDetailsBody, { label: 'Agent version', value: status.version || 'unknown', copyId: 'installDetailsCopyAgentVersion' });
+    appendKvRow(installDetailsBody, { label: 'Snippet', value: yn(snippetOnPage), mono: false, copyId: 'installDetailsCopySnippet' });
+    appendKvRow(installDetailsBody, { label: 'Pendo Launcher', value: launcherDisplay, mono: false, copyId: 'installDetailsCopyPendoLauncher' });
+    appendKvRow(installDetailsBody, {
       label: 'Launcher validated',
       value: formatLauncherValidatedSnapshot({ launcherAttempted, snippetOnPage, validatedIn, launcherDataValidated }),
       mono: false,
-      copyId: 'pageSnapshotCopyLauncherValidated'
+      copyId: 'installDetailsCopyLauncherValidated',
     });
-    appendKvRow(pageSnapshotBody, { label: 'Validated in', value: validatedInDisplay, mono: false, copyId: 'pageSnapshotCopyValidatedIn' });
-    appendKvRow(pageSnapshotBody, { label: 'Resource hits', value: String(status.resourceHits.length), mono: false, copyId: 'pageSnapshotCopyResourceHits' });
-    pageSnapshotCard.hidden = false;
+    appendKvRow(installDetailsBody, { label: 'Validated in', value: validatedInDisplay, mono: false, copyId: 'installDetailsCopyValidatedIn' });
+
+    appendSectionTitle(installDetailsBody, 'Identity');
+    appendKvRow(installDetailsBody, { label: 'VisitorId', value: status.visitorId || '—', copyId: 'installDetailsCopyVisitorId' });
+    appendKvRow(installDetailsBody, { label: 'AccountId', value: status.accountId == null ? '—' : String(status.accountId), copyId: 'installDetailsCopyAccountId' });
+    if (status.parentAccountId != null) {
+      appendKvRow(installDetailsBody, { label: 'Parent AccountId', value: String(status.parentAccountId), copyId: 'installDetailsCopyParentAccountId' });
+    }
+    appendKvRow(installDetailsBody, { label: 'API key', value: status.detectedApiKey || '—', copyId: 'installDetailsCopyApiKey' });
+
+    appendSectionTitle(installDetailsBody, 'Metadata');
+    appendMetadataSections(installDetailsBody, {
+      visitorMetadata: status.visitorMetadata,
+      accountMetadata: status.accountMetadata,
+      parentAccountMetadata: status.parentAccountMetadata,
+    });
+
+    appendSectionTitle(installDetailsBody, 'Capture');
+    appendKvRow(installDetailsBody, { label: 'Resource hits', value: String((status.resourceHits || []).length), mono: false, copyId: 'installDetailsCopyResourceHits' });
+    appendKvRow(installDetailsBody, { label: 'Lines captured', value: String((captured || []).length), copyId: 'installDetailsCopyLinesCaptured' });
+
+    installDetailsCard.hidden = false;
   }
 
-  /** Render the optional Page facts card on the Logs tab. */
-  function renderPageFacts(res) {
-    pageFactsBody.replaceChildren();
-    const { snippetOnPage, validatedIn } = res;
-    const validatedInDisplay = validatedIn === 'launcher' ? 'Pendo Launcher'
-      : validatedIn === 'launcher-beta' ? 'Pendo Launcher Beta'
-      : validatedIn === 'page' ? 'Active tab' : '—';
-    appendKvRow(pageFactsBody, { label: 'Snippet', value: snippetOnPage ? 'Found' : 'Not found', mono: false, copyId: 'pageFactsCopySnippet' });
-    appendKvRow(pageFactsBody, { label: 'Validated in', value: validatedInDisplay, mono: false, copyId: 'pageFactsCopyValidatedIn' });
-    appendKvRow(pageFactsBody, { label: 'Lines captured', value: String((res.captured || []).length), copyId: 'pageFactsCopyLinesCaptured' });
-    pageFactsCard.hidden = false;
+  function persistLogUiPrefs() {
+    try {
+      if (!chrome.storage || !chrome.storage.local) return;
+      chrome.storage.local.set({
+        logUiPrefs: { filters: { ...logFilters }, query: logQuery || '' },
+      });
+    } catch (_) { /* ignore */ }
+  }
+
+  /** Jump to Logs tab with a search token derived from a check line. */
+  function openCheckInLogs(checkText, kind) {
+    const token = checkLogSearchToken(checkText);
+    logQuery = token;
+    if (logsSearch) logsSearch.value = token;
+    if (kind === 'err') logFilters = { error: true, warn: false, info: false };
+    else if (kind === 'warn') logFilters = { error: false, warn: true, info: false };
+    persistLogUiPrefs();
+    activateTab('logs');
+    renderLogs();
   }
 
   /** Render the logs list using the current filter + query state. */
   function renderLogs() {
     const captured = (lastContext && lastContext.captured) || [];
-    const q = (logQuery || '').toLowerCase();
-
-    // Single pass: tally per-level counts and collect the visible lines together.
-    let errCount = 0, warnCount = 0, infoCount = 0;
-    const visible = [];
-    for (const l of captured) {
-      const lev = l.level === 'error' ? 'error' : l.level === 'warn' ? 'warn' : 'info';
-      if (lev === 'error') errCount++; else if (lev === 'warn') warnCount++; else infoCount++;
-      if (lev === 'error' && !logFilters.error) continue;
-      if (lev === 'warn' && !logFilters.warn) continue;
-      if (lev === 'info' && !logFilters.info) continue;
-      if (q && !(l.text || '').toLowerCase().includes(q)) continue;
-      visible.push(l);
-    }
+    const { errCount, warnCount, infoCount, visible } = filterCapturedLogs(captured, logFilters, logQuery);
 
     logCountErr.textContent = String(errCount);
     logCountWarn.textContent = String(warnCount);
@@ -2231,6 +2431,7 @@ function initPopup() {
     else if (level === 'warn') logFilters.warn = !logFilters.warn;
     else if (level === 'info') logFilters.info = !logFilters.info;
     renderLogs();
+    persistLogUiPrefs();
   }
   logFilterErr.addEventListener('click', () => toggleFilter('error'));
   logFilterWarn.addEventListener('click', () => toggleFilter('warn'));
@@ -2240,17 +2441,41 @@ function initPopup() {
   logsSearch.addEventListener('input', (e) => {
     const value = e.target.value;
     if (logSearchTimer) clearTimeout(logSearchTimer);
-    logSearchTimer = setTimeout(() => { logQuery = value; renderLogs(); }, 150);
+    logSearchTimer = setTimeout(() => { logQuery = value; renderLogs(); persistLogUiPrefs(); }, 150);
   });
 
   // ── Toast ────────────────────────────────────────────────────────────────
-  function showToast(message) {
+  function showToast(message, durationMs) {
     if (!message) return;
     toastEl.textContent = message;
     toastEl.hidden = false;
     if (toastTimer) clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { toastEl.hidden = true; }, 1800);
+    const ms = typeof durationMs === 'number' && durationMs > 0 ? durationMs : 1800;
+    toastTimer = setTimeout(() => { toastEl.hidden = true; }, ms);
   }
+
+  /** Deliver HAR saved by the background worker after a CDP reload (panel iframe is destroyed on reload). */
+  async function tryDeliverPendingHarDownload() {
+    if (!chrome.storage?.local) return;
+    const hostTabId = await getHostTabIdForPanel();
+    if (hostTabId == null) return;
+    chrome.storage.local.get({ pendingHarDownload: null }, ({ pendingHarDownload: pending }) => {
+      if (!pending || (!pending.har && !pending.error)) return;
+      if (pending.tabId != null && pending.tabId !== hostTabId) return;
+      chrome.storage.local.remove('pendingHarDownload');
+      if (pending.error) {
+        showToast(String(pending.error), 4200);
+        return;
+      }
+      const json = JSON.stringify(pending.har, null, 2);
+      downloadBlob(`pendo-network_${Date.now()}.har`, 'application/json', json);
+      trackHarDownloaded(pending.mode || 'cdp', pending.entryCount || 0, pending.outcome);
+      const n = pending.entryCount || 0;
+      showToast(`HAR downloaded (${n} Pendo request${n === 1 ? '' : 's'})`);
+    });
+  }
+  tryDeliverPendingHarDownload();
+  [4000, 10000, 18000].forEach((ms) => setTimeout(tryDeliverPendingHarDownload, ms));
 
   // ── Run validation ───────────────────────────────────────────────────────
   /** Toggle the primary button between idle and running visuals. */
@@ -2304,25 +2529,19 @@ function initPopup() {
   function resetStatusUi() {
     quickStats.hidden = true;
     checksCard.hidden = true;
-    identityCard.hidden = true;
-    metadataCard.hidden = true;
-    pageFactsCard.hidden = true;
-    pageSnapshotCard.hidden = true;
+    installDetailsCard.hidden = true;
     statusEmpty.hidden = true;
     statusTabCount.hidden = true;
     logsTabCount.hidden = true;
     checkGroupsEl.replaceChildren();
-    identityBody.replaceChildren();
-    metadataBody.replaceChildren();
-    pageFactsBody.replaceChildren();
-    pageSnapshotBody.replaceChildren();
+    installDetailsBody.replaceChildren();
     logsListEl.replaceChildren();
   }
 
   /**
    * Render a completed validation result into the Status tab (hero, quick stats, check
    * groups, related reading, identity/metadata cards, page snapshot/facts), set lastContext,
-   * and enable Export. Returns the normalized adviceList/checksToRender so the caller can run
+   * and enable Share / Markdown download. Returns the normalized adviceList/checksToRender so the caller can run
    * the optional AI follow-up. Kept separate from the run orchestration so the localhost-only
    * screenshot hook can render fixture data without a live validation.
    */
@@ -2378,20 +2597,7 @@ function initPopup() {
       logCount: captured.length
     });
 
-    renderIdentityCard({
-      visitorId: status.visitorId,
-      accountId: status.accountId,
-      parentAccountId: status.parentAccountId,
-      detectedApiKey: status.detectedApiKey
-    });
-    renderMetadataCard({
-      visitorMetadata: status.visitorMetadata,
-      accountMetadata: status.accountMetadata,
-      parentAccountMetadata: status.parentAccountMetadata
-    });
-
-    renderPageSnapshot(res);
-    renderPageFacts(res);
+    renderInstallDetails(res);
 
     lastContext = {
       pageUrl: pageUrl || 'unknown',
@@ -2405,10 +2611,90 @@ function initPopup() {
     };
     renderLogs();
 
-    exportMenuBtn.disabled = false;
-    exportMenuBtn.title = 'Export results';
+    syncShareExportControls();
 
     return { adviceList, checksToRender, captured };
+  }
+
+  /** Enable Share / Markdown when lastContext exists; set Share title from identity pref. */
+  function syncShareExportControls() {
+    const hasContext = !!lastContext;
+    if (shareSummaryBtn) {
+      shareSummaryBtn.disabled = !hasContext;
+      if (!hasContext) {
+        shareSummaryBtn.title = 'Run a validation first';
+      } else if (shareIncludeIdentity) {
+        shareSummaryBtn.title = 'Copy summary including page URL and identity';
+      } else {
+        shareSummaryBtn.title = 'Copy summary for Slack or Jira (identity redacted by default)';
+      }
+    }
+    if (downloadMarkdownReportBtn) {
+      downloadMarkdownReportBtn.disabled = !hasContext;
+      downloadMarkdownReportBtn.title = hasContext
+        ? 'Download full Markdown report (always includes identity and logs)'
+        : 'Run a validation first';
+    }
+    const harUsesReload = typeof chrome !== 'undefined' && chrome.debugger && typeof chrome.debugger.attach === 'function';
+    if (downloadHarBtn) {
+      downloadHarBtn.disabled = !hasContext || harCaptureInProgress;
+      if (!hasContext) {
+        downloadHarBtn.title = 'Run a validation first';
+      } else if (harCaptureInProgress) {
+        downloadHarBtn.title = 'Capturing network…';
+      } else if (harUsesReload) {
+        downloadHarBtn.title = 'Download Pendo network HAR (reloads the page — click twice to confirm)';
+      } else {
+        downloadHarBtn.title = 'Download partial Pendo network HAR from Resource Timing (no reload)';
+      }
+    }
+  }
+
+  async function copyPlainSummaryToClipboard() {
+    if (!lastContext) return false;
+    const text = buildPlainSummary(lastContext, { includeIdentity: shareIncludeIdentity });
+    await copyTextToClipboard(text);
+    return true;
+  }
+
+  function trackShareSummaryCopied() {
+    if (typeof trackIvaEvent !== 'function' || !lastContext) return;
+    const ivaOutcome = typeof deriveIvaOutcome === 'function' ? deriveIvaOutcome(lastContext) : 'unknown';
+    trackIvaEvent('share_summary_copied', {
+      ivaRedacted: !shareIncludeIdentity,
+      ivaOutcome: String(ivaOutcome),
+    });
+  }
+
+  function trackMarkdownReportDownloaded() {
+    if (typeof trackIvaEvent !== 'function' || !lastContext) return;
+    const ivaOutcome = typeof deriveIvaOutcome === 'function' ? deriveIvaOutcome(lastContext) : 'unknown';
+    trackIvaEvent('markdown_report_downloaded', {
+      ivaOutcome: String(ivaOutcome),
+      ivaValidationPath: String(lastContext.validationPath || 'unknown'),
+    });
+  }
+
+  function currentIvaOutcome() {
+    if (!lastContext || typeof deriveIvaOutcome !== 'function') return 'unknown';
+    return String(deriveIvaOutcome(lastContext));
+  }
+
+  /**
+   * CDP captures pass `outcome` from the pending payload: the panel reopened after the reload has
+   * no lastContext, and delivers before the idle-loaded agent is ready (hence trackIvaEventWhenReady).
+   */
+  function trackHarDownloaded(mode, entryCount, outcome) {
+    if (typeof trackIvaEventWhenReady !== 'function') return;
+    const ivaOutcome = outcome || currentIvaOutcome();
+    const bucket = typeof bucketIvaLogLines === 'function'
+      ? bucketIvaLogLines(entryCount)
+      : String(entryCount);
+    trackIvaEventWhenReady('har_downloaded', {
+      ivaHarMode: String(mode || 'unknown'),
+      ivaHarEntries: String(bucket),
+      ivaOutcome: String(ivaOutcome),
+    });
   }
 
   runBtn?.addEventListener('click', async () => {
@@ -2433,6 +2719,7 @@ function initPopup() {
 
       const { status, captured, hasError, hasWarn } = res;
       let { adviceList, checksToRender } = renderValidationResult(res);
+      let aiAdviceUsed = false;
 
       const failureDetected = !status.validatePresent || hasError || hasWarn;
       if (failureDetected) {
@@ -2445,6 +2732,7 @@ function initPopup() {
         const aiAdvice = await requestAiAdvice(aiContext);
         if (runId !== validationSeq) return;
         if (aiAdvice && aiAdvice.length) {
+          aiAdviceUsed = true;
           adviceList = adviceList.concat(aiAdvice);
           lastContext.advice = adviceList;
           const newBuckets = classifyAdvice(adviceList, captured, checksToRender);
@@ -2456,6 +2744,9 @@ function initPopup() {
             logCount: captured.length
           });
         }
+      }
+      if (runId === validationSeq && lastContext) {
+        emitValidationCompletedTelemetry(lastContext, aiAdviceUsed);
       }
     } catch (e) {
       console.error(e);
@@ -2498,47 +2789,104 @@ function initPopup() {
     } else {
       res = await runInActiveTab();
     }
-    if (res.ok) showToast('Debugger enabled');
-    else showToast(res.message || 'Debugger failed');
+    const validationPath = (lastContext && lastContext.validationPath) || 'unknown';
+    if (res.ok) {
+      if (lastContext) lastContext.debuggerEnabledAt = Date.now();
+      if (typeof trackIvaEvent === 'function') {
+        trackIvaEvent('debugger_enabled', { ivaOk: true, ivaValidationPath: String(validationPath) });
+      }
+      launchDebuggerBtn.title = 'Debugging enabled (this session)';
+      launchDebuggerBtn.setAttribute('aria-label', 'Debugging enabled (this session)');
+      launchDebuggerBtn.disabled = true;
+      setTimeout(() => { launchDebuggerBtn.disabled = false; }, 3000);
+      if (lastContext) setStatusHero(deriveHeroState(lastContext));
+      showToast('SDK debugging enabled. Re-run Validate to refresh console output.', 4200);
+    } else {
+      if (typeof trackIvaEvent === 'function') {
+        trackIvaEvent('debugger_enabled', { ivaOk: false, ivaValidationPath: String(validationPath) });
+      }
+      const msg = res.message || 'Debugger failed';
+      const hint = /not found|not available/i.test(msg)
+        ? `${msg} See Web SDK debugger docs in Related reading.`
+        : msg;
+      showToast(hint, 4200);
+    }
   });
 
-  // ── Export menu ──────────────────────────────────────────────────────────
-  /** Toggle the export dropdown, only when a validation result exists. */
-  function setExportMenuOpen(open) {
-    exportMenu.hidden = !open;
-    exportMenuBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
-  }
-  exportMenuBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    if (exportMenuBtn.disabled) return;
-    setExportMenuOpen(exportMenu.hidden);
-  });
-  document.addEventListener('click', (e) => {
-    if (exportMenu.hidden) return;
-    if (e.target.closest('#exportMenu') || e.target.closest('#exportMenuBtn')) return;
-    setExportMenuOpen(false);
+  shareSummaryBtn?.addEventListener('click', async () => {
+    if (!lastContext || shareSummaryBtn.disabled) return;
+    try {
+      await copyPlainSummaryToClipboard();
+      trackShareSummaryCopied();
+      showToast(shareIncludeIdentity ? 'Summary copied' : 'Summary copied (identity redacted)');
+    } catch (e) { console.error(e); showToast('Copy failed'); }
   });
 
-  exportMdBtn.addEventListener('click', () => {
-    setExportMenuOpen(false);
-    if (!lastContext) return;
+  downloadMarkdownReportBtn?.addEventListener('click', () => {
+    if (!lastContext || downloadMarkdownReportBtn.disabled) return;
     try {
       const md = buildMarkdownReport(lastContext);
-      const host = (() => { try { return (new URL(lastContext.pageUrl)).host; } catch { return 'page'; } })().replace(/[^a-z0-9\.-]/gi, '_');
-      const fname = `pendo-install-validator-report_${host}_${Date.now()}.md`;
-      downloadBlob(fname, 'text/markdown', md);
+      downloadBlob(`pendo-validate-report_${Date.now()}.md`, 'text/markdown', md);
+      trackMarkdownReportDownloaded();
       showToast('Markdown report downloaded');
-    } catch (e) { console.error(e); showToast('Export failed'); }
+    } catch (e) {
+      console.error(e);
+      showToast('Download failed');
+    }
   });
 
-  exportCopyBtn.addEventListener('click', async () => {
-    setExportMenuOpen(false);
-    if (!lastContext) return;
+  downloadLogsBtn?.addEventListener('click', () => {
+    const captured = (lastContext && lastContext.captured) || [];
+    const { visible } = filterCapturedLogs(captured, logFilters, logQuery);
+    if (!visible.length) {
+      showToast('No lines match filter');
+      return;
+    }
+    const text = visible.map(({ level, text }) => `[${level}] ${text}`).join('\n');
+    downloadBlob(`pendo-validate-logs_${Date.now()}.txt`, 'text/plain', text);
+    showToast('Logs downloaded');
+  });
+
+  downloadHarBtn?.addEventListener('click', async () => {
+    if (!lastContext || downloadHarBtn.disabled) return;
+    const harUsesReload = typeof chrome !== 'undefined' && chrome.debugger && typeof chrome.debugger.attach === 'function';
+    const now = Date.now();
+    if (harUsesReload && now > harReloadArmedUntil) {
+      harReloadArmedUntil = now + HAR_RELOAD_ARM_MS;
+      showToast('HAR capture reloads the page. Click HAR again within 6 seconds to start.', 5200);
+      return;
+    }
+    harReloadArmedUntil = 0;
+    const tabId = lastContext.validationTabId;
+    if (!tabId) {
+      showToast('No validation tab — run Validate again');
+      return;
+    }
+    harCaptureInProgress = true;
+    syncShareExportControls();
+    showToast(harUsesReload ? 'Capturing Pendo network (reloading page)…' : 'Building partial HAR from Resource Timing…', 4000);
     try {
-      const text = buildPlainSummary(lastContext);
-      await copyTextToClipboard(text);
-      showToast('Summary copied');
-    } catch (e) { console.error(e); showToast('Copy failed'); }
+      const result = await captureNetworkHar(tabId, lastContext.pageUrl || 'unknown', currentIvaOutcome());
+      if (result.pendingReload) {
+        showToast('Page reloading… Panel will reopen when capture finishes.', 5500);
+        return;
+      }
+      if (!result.ok) {
+        showToast(result.message || 'HAR capture failed', 4200);
+        return;
+      }
+      const json = JSON.stringify(result.har, null, 2);
+      downloadBlob(`pendo-network_${Date.now()}.har`, 'application/json', json);
+      trackHarDownloaded(result.mode, result.entryCount);
+      const partial = result.mode === 'timings' ? ' (partial, no reload)' : '';
+      showToast(`HAR downloaded (${result.entryCount} Pendo request${result.entryCount === 1 ? '' : 's'})${partial}`);
+    } catch (e) {
+      console.error(e);
+      showToast('HAR capture failed', 4200);
+    } finally {
+      harCaptureInProgress = false;
+      syncShareExportControls();
+    }
   });
 
   // ── Clipboard ────────────────────────────────────────────────────────────
@@ -2588,11 +2936,14 @@ function initPopup() {
 
   copyLogsBtn.addEventListener('click', () => {
     const captured = (lastContext && lastContext.captured) || [];
-    const text = captured.length
-      ? captured.map(({ level, text }) => `[${level}] ${text}`).join('\n')
-      : 'No logs captured.';
+    const { visible } = filterCapturedLogs(captured, logFilters, logQuery);
+    if (!visible.length) {
+      showToast('No lines match filter');
+      return;
+    }
+    const text = visible.map(({ level, text }) => `[${level}] ${text}`).join('\n');
     copyTextToClipboard(text)
-      .then(() => showToast('Logs copied'))
+      .then(() => showToast('Visible logs copied'))
       .catch(err => { console.warn('Copy logs failed:', err); showToast('Copy failed'); });
   });
 
@@ -2606,9 +2957,34 @@ function initPopup() {
     }
   }
 
-  chrome.storage.local.get({ themePreference: 'system' }, ({ themePreference }) => {
-    themeSelect.value = themePreference;
-    applyTheme(themePreference);
+  chrome.storage.local.get(
+    { themePreference: 'system', shareIncludeIdentity: false, logUiPrefs: null },
+    ({ themePreference, shareIncludeIdentity: sharePref, logUiPrefs }) => {
+      themeSelect.value = themePreference;
+      applyTheme(themePreference);
+      shareIncludeIdentity = !!sharePref;
+      if (shareIncludeIdentityInput) shareIncludeIdentityInput.checked = shareIncludeIdentity;
+      syncShareExportControls();
+      if (logUiPrefs && typeof logUiPrefs === 'object') {
+        if (logUiPrefs.filters && typeof logUiPrefs.filters === 'object') {
+          logFilters = {
+            error: logUiPrefs.filters.error !== false,
+            warn: logUiPrefs.filters.warn !== false,
+            info: logUiPrefs.filters.info !== false,
+          };
+        }
+        if (typeof logUiPrefs.query === 'string') {
+          logQuery = logUiPrefs.query;
+          if (logsSearch) logsSearch.value = logQuery;
+        }
+      }
+    },
+  );
+
+  shareIncludeIdentityInput?.addEventListener('change', () => {
+    shareIncludeIdentity = !!shareIncludeIdentityInput.checked;
+    chrome.storage.local.set({ shareIncludeIdentity });
+    syncShareExportControls();
   });
 
   themeSelect.addEventListener('change', () => {

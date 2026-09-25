@@ -6,6 +6,7 @@ global.chrome = {
     local: {
       get: vi.fn(),
       set: vi.fn(),
+      remove: vi.fn((keys, cb) => { if (cb) cb() }),
     },
   },
   scripting: {

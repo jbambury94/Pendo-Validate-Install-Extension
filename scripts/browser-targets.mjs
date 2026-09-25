@@ -29,7 +29,10 @@ export function transformManifest(manifest, target) {
     (p) => !FIREFOX_UNSUPPORTED_PERMISSIONS.includes(p),
   );
   // Firefox MV3 runs the background script as an event page, not a service worker.
-  out.background = { scripts: [manifest.background.service_worker] };
+  // importScripts is unavailable there — load HAR helpers as a preceding script.
+  out.background = {
+    scripts: ['har-capture.js', manifest.background.service_worker],
+  };
   out.browser_specific_settings = structuredClone(FIREFOX_GECKO_SETTINGS);
   return out;
 }

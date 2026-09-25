@@ -27,6 +27,9 @@ describe('manifest web_accessible_resources', () => {
         'enable-debugging.js',
         'theme-init.js',
         'pendo-kb.js',
+        'pendo-telemetry.js',
+        'har-capture.js',
+        'har-timings.js',
         'pendo-install-quality.md',
         'vendor/pendo-agent.bundle.js',
         'pendo/*',
@@ -41,7 +44,7 @@ describe('manifest web_accessible_resources', () => {
 })
 describe('manifest version', () => {
   it('version matches the current release', () => {
-    expect(manifest.version).toBe('1.8.8')
+    expect(manifest.version).toBe('1.9.0')
   })
 })
 

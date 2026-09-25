@@ -50,7 +50,7 @@ describe('transformManifest', () => {
     })
 
     it('runs the background script as an event page, not a service worker', () => {
-      expect(out.background).toEqual({ scripts: ['background.js'] })
+      expect(out.background).toEqual({ scripts: ['har-capture.js', 'background.js'] })
       expect(out.background.service_worker).toBeUndefined()
     })
 

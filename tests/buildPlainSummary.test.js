@@ -60,10 +60,12 @@ describe('buildPlainSummary — status line', () => {
 })
 
 describe('buildPlainSummary — content', () => {
-  it('includes page URL and timestamp', () => {
-    const text = buildPlainSummary(baseContext)
+  it('includes page URL and timestamp when includeIdentity is true', () => {
+    const text = buildPlainSummary(baseContext, { includeIdentity: true })
     expect(text).toContain('https://example.com/app')
     expect(text).toContain('2026-05-27T12:00:00.000Z')
+    expect(text).toContain('VisitorId: visitor-1')
+    expect(text).toContain('AccountId: acct-1')
   })
 
   it('prefixes the summary with the Pendo Install Validator name', () => {
@@ -117,9 +119,9 @@ describe('buildPlainSummary — content', () => {
     expect(() => buildPlainSummary(ctx)).not.toThrow()
   })
 
-  it('shows "unknown" for missing pageUrl', () => {
+  it('shows "unknown" for missing pageUrl when includeIdentity is true', () => {
     const ctx = { ...baseContext, pageUrl: undefined }
-    expect(buildPlainSummary(ctx)).toContain('Page: unknown')
+    expect(buildPlainSummary(ctx, { includeIdentity: true })).toContain('Page: unknown')
   })
 
   it('includes Parent AccountId when present', () => {
@@ -131,10 +133,74 @@ describe('buildPlainSummary — content', () => {
         parentAccountMetadata: { id: 'parent-1', name: 'Parent Corp' },
       },
     }
-    expect(buildPlainSummary(ctx)).toContain('Parent AccountId: parent-1')
+    expect(buildPlainSummary(ctx, { includeIdentity: true })).toContain('Parent AccountId: parent-1')
   })
 
   it('omits Parent AccountId when absent', () => {
     expect(buildPlainSummary(baseContext)).not.toContain('Parent AccountId')
+  })
+})
+
+describe('buildPlainSummary — redaction', () => {
+  it('omits page URL and parent account by default', () => {
+    const ctx = {
+      ...baseContext,
+      status: { ...baseContext.status, parentAccountId: 'parent-1' },
+    }
+    const text = buildPlainSummary(ctx)
+    expect(text).not.toContain('https://example.com')
+    expect(text).not.toContain('Parent AccountId')
+    expect(text).not.toContain('VisitorId:')
+    expect(text).not.toContain('AccountId:')
+  })
+
+  it('includes page URL and parent account when includeIdentity is true', () => {
+    const ctx = {
+      ...baseContext,
+      status: { ...baseContext.status, parentAccountId: 'parent-1' },
+    }
+    const text = buildPlainSummary(ctx, { includeIdentity: true })
+    expect(text).toContain('Page: https://example.com/app')
+    expect(text).toContain('Parent AccountId: parent-1')
+  })
+
+  it('redacts short visitorId embedded in quality recommendations', () => {
+    const ctx = {
+      ...baseContext,
+      status: { ...baseContext.status, visitorId: 'ab' },
+      advice: [{ text: 'visitorId "ab" is very short (fewer than 3 characters).', source: 'builtin' }],
+    }
+    const text = buildPlainSummary(ctx)
+    expect(text).not.toContain('"ab"')
+    expect(text).toContain('[redacted]')
+  })
+
+  it('redacts placeholder account and parent IDs in recommendation text', () => {
+    const ctx = {
+      ...baseContext,
+      status: {
+        ...baseContext.status,
+        accountId: 'test-account',
+        parentAccountId: 'parent-org',
+      },
+      advice: [
+        { text: 'accountId is set to a placeholder value ("test-account"). Use a stable organisation identifier.', source: 'builtin' },
+        { text: 'parentAccountId is set to a placeholder value ("parent-org"). Use a stable organisation identifier.', source: 'builtin' },
+      ],
+    }
+    const text = buildPlainSummary(ctx)
+    expect(text).not.toContain('test-account')
+    expect(text).not.toContain('parent-org')
+    expect(text).toContain('[redacted]')
+  })
+
+  it('redacts page URLs embedded in recommendation text', () => {
+    const ctx = {
+      ...baseContext,
+      advice: [{ text: 'Staging URL https://staging.example.com/app detected.', source: 'builtin' }],
+    }
+    const text = buildPlainSummary(ctx)
+    expect(text).not.toContain('https://staging.example.com/app')
+    expect(text).toContain('[url redacted]')
   })
 })

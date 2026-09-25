@@ -427,7 +427,77 @@ export function buildJsonReport(context) {
   return JSON.stringify(context, null, 2)
 }
 
-export function buildPlainSummary(context) {
+export function filterCapturedLogs(captured, logFilters, logQuery) {
+  const q = (logQuery || '').toLowerCase()
+  let errCount = 0
+  let warnCount = 0
+  let infoCount = 0
+  const visible = []
+  for (const l of captured || []) {
+    const lev = l.level === 'error' ? 'error' : l.level === 'warn' ? 'warn' : 'info'
+    if (lev === 'error') errCount++
+    else if (lev === 'warn') warnCount++
+    else infoCount++
+    if (lev === 'error' && !logFilters.error) continue
+    if (lev === 'warn' && !logFilters.warn) continue
+    if (lev === 'info' && !logFilters.info) continue
+    if (q && !(l.text || '').toLowerCase().includes(q)) continue
+    visible.push({ level: lev, text: l.text || '' })
+  }
+  return { errCount, warnCount, infoCount, visible }
+}
+
+/** Text rendered on a check row — AI items drop stale embedded help links. */
+export function checkItemDisplayText(item) {
+  const text = String((item && item.text) || '')
+  return item && item.source === 'ai' ? stripAllUrls(stripEmbeddedHelpUrl(text)) : text
+}
+
+/** Logs search token for a check row. Derive it from the displayed text so the
+ *  "View in Logs" availability check and the click handler search for the same string. */
+export function checkLogSearchToken(text) {
+  return stripAllUrls(String(text || '')).replace(/\s+/g, ' ').trim().slice(0, 40)
+}
+
+/** Whether a check row should offer "View in Logs" (captured lines only, or search matches captured output). */
+export function shouldOfferViewInLogsLink(item, kind, captured) {
+  if (!item || (kind !== 'err' && kind !== 'warn')) return false
+  if (item.source === 'captured') return true
+  const token = checkLogSearchToken(checkItemDisplayText(item))
+  const filters = kind === 'err'
+    ? { error: true, warn: false, info: false }
+    : { error: false, warn: true, info: false }
+  const { visible } = filterCapturedLogs(captured || [], filters, token)
+  return visible.length > 0
+}
+
+/** Redact identity-bearing values from Share summary lines when includeIdentity is off. */
+export function redactShareSummaryText(text, context) {
+  let out = String(text || '')
+  const { pageUrl, status } = context || {}
+  const st = status || {}
+
+  out = out.replace(/\b(api[_-]?key|apikey)\b[\s:]*[^\s,.)]+/gi, 'api key [redacted]')
+
+  const secrets = []
+  if (pageUrl) secrets.push(String(pageUrl))
+  if (st.detectedApiKey) secrets.push(String(st.detectedApiKey))
+  if (st.visitorId != null && st.visitorId !== '') secrets.push(String(st.visitorId))
+  if (st.accountId != null && st.accountId !== '') secrets.push(String(st.accountId))
+  if (st.parentAccountId != null && st.parentAccountId !== '') secrets.push(String(st.parentAccountId))
+
+  secrets.sort((a, b) => b.length - a.length)
+  for (const value of secrets) {
+    if (!value) continue
+    out = out.split(value).join('[redacted]')
+  }
+
+  out = out.replace(/https?:\/\/\S+/gi, '[url redacted]')
+  return out
+}
+
+export function buildPlainSummary(context, options) {
+  const includeIdentity = options && options.includeIdentity === true
   const { pageUrl, timestamp, status, captured, advice, checks, snippetOnPage, launcherPresent, launcherAttempted, launcherDataValidated, validatedIn } = context
   const errCount = (captured || []).filter(l => l.level === 'error').length
   const warnCount = (captured || []).filter(l => l.level === 'warn').length
@@ -442,17 +512,24 @@ export function buildPlainSummary(context) {
 
   const lines = []
   lines.push(`Pendo Install Validator — ${statusLine}`)
-  lines.push(`Page: ${pageUrl || 'unknown'}`)
+  if (includeIdentity) {
+    lines.push(`Page: ${pageUrl || 'unknown'}`)
+    lines.push(`VisitorId: ${status.visitorId || 'not set'}`)
+    lines.push(`AccountId: ${status.accountId == null ? 'not set' : status.accountId}`)
+  }
   lines.push(`Timestamp: ${timestamp}`)
   lines.push(`Validated in: ${validatedIn || 'page'}`)
-  if (status.parentAccountId != null) {
+  if (includeIdentity && status.parentAccountId != null) {
     lines.push(`Parent AccountId: ${status.parentAccountId}`)
   }
   lines.push(`Errors: ${errCount}   Warnings: ${warnCount}   Passing: ${okCount}`)
   lines.push('')
   if (checks && checks.length) {
     lines.push('Passing:')
-    checks.forEach(c => lines.push(`  • ${c}`))
+    checks.forEach(c => {
+      const line = includeIdentity ? c : redactShareSummaryText(c, context)
+      lines.push(`  • ${line}`)
+    })
     lines.push('')
   }
   const adviceList = normalizeAdviceList(advice || [])
@@ -460,7 +537,11 @@ export function buildPlainSummary(context) {
     lines.push('Recommendations:')
     adviceList.forEach(a => {
       const prefix = a.source === 'ai' ? '[AI] ' : ''
-      lines.push(`  • ${prefix}${a.text}`)
+      let text = a.text
+      if (!includeIdentity) {
+        text = redactShareSummaryText(text, context)
+      }
+      lines.push(`  • ${prefix}${text}`)
     })
   }
   return lines.join('\n')

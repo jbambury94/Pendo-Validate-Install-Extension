@@ -14,11 +14,28 @@ if (window.__pendoValidateInjected) {
   const MIN_HEIGHT = 480;
   const MAX_RATIO = 0.92; // max 92vw × 92vh
 
-  // ── Toggle handler (message from background.js) ────────────────────────────
+  // ── Toggle / auto-open handler (messages from background.js) ─────────────
   chrome.runtime.onMessage.addListener((msg) => {
-    if (msg.type !== 'pendo-validate-toggle') return;
-    document.getElementById(IFRAME_ID) ? removeOverlay() : createOverlay();
+    if (msg.type === 'pendo-validate-toggle') {
+      document.getElementById(IFRAME_ID) ? removeOverlay() : createOverlay();
+      return;
+    }
+    if (msg.type === 'pendo-validate-open-panel') {
+      if (!document.getElementById(IFRAME_ID)) createOverlay();
+    }
   });
+
+  function maybeReopenPanelAfterHarReload() {
+    chrome.runtime.sendMessage({ type: 'pendo-validate-check-reopen-panel' }, (res) => {
+      if (chrome.runtime.lastError) return;
+      if (res?.reopen && !document.getElementById(IFRAME_ID)) createOverlay();
+    });
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', maybeReopenPanelAfterHarReload, { once: true });
+  } else {
+    maybeReopenPanelAfterHarReload();
+  }
 
   // ── postMessage handler (messages from inside the iframe) ──────────────────
   window.addEventListener('message', (event) => {
@@ -40,6 +57,16 @@ if (window.__pendoValidateInjected) {
       applyResize(event.data, iframe);
     } else if (type === 'pendo-validate-resizeend') {
       resizeOrigin = null;
+    } else if (type === 'pendo-validate-request-host-tab-id') {
+      chrome.runtime.sendMessage({ type: 'pendo-validate-host-tab-id' }, (res) => {
+        if (chrome.runtime.lastError) return;
+        try {
+          iframe.contentWindow?.postMessage(
+            { type: 'pendo-validate-host-tab-id', tabId: res?.tabId ?? null },
+            '*',
+          );
+        } catch (_) { /* iframe navigated away */ }
+      });
     }
   });
 

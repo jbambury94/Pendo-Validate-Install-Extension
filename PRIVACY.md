@@ -1,7 +1,7 @@
 # Privacy Policy — Pendo Install Validator
 
 **Last updated:** 21 September 2026
-**Extension version:** 1.8.8
+**Extension version:** 1.9.0
 
 ---
 
@@ -21,6 +21,8 @@ All data below is stored in `chrome.storage.local`, which is isolated to this ex
 |---|---|---|
 | Visitor ID | `pendoVisitorId` | If the Chrome profile is signed in to a `@pendo.io` Google account, the visitor ID is that email address (read passively via `chrome.identity.getProfileUserInfo`, not cached). Otherwise a randomly generated UUID (via `crypto.randomUUID()`) is used to identify this extension installation for product analytics. |
 | Theme preference | `themePreference` | `"system"`, `"light"`, or `"dark"`. Purely cosmetic. Also mirrored to `localStorage('pendoValidateTheme')` for flash-free page loads. |
+| Share identity opt-in | `shareIncludeIdentity` | When `true`, the action-bar **Share** copy includes the validated page URL and visitor/account (and parent account when present). Default `false`. When off, those fields are omitted and known visitor/account/parent IDs, page URLs, and API-key-like strings are replaced in passing-check and recommendation lines as well. Does not affect Markdown report downloads. |
+| Log UI preferences | `logUiPrefs` | Saved log filter chips and search query on the Logs tab. |
 | AI provider | `aiProvider` | `"openai"`, `"claude"`, or `"gemini"`. Stored only when you save AI settings. |
 | AI API key | `aiApiKey` | Your API key for the selected AI provider. Stored only when you save AI settings. |
 
@@ -37,8 +39,20 @@ The extension bundles the Pendo Web SDK — built from the official [`@pendo/web
 - The persistent visitor ID described above (for `@pendo.io` Chrome profiles this is the work email; for everyone else it is a random UUID with no personal information).
 - Interaction events within the panel (button clicks, tab switches).
 - Standard browser metadata: user agent string, viewport size, locale, extension version.
+- **Track Events** (client-side `pendo.track()` from the panel), which do **not** include the URL of the page you are validating or visitor/account/API key data from that page:
+  - **`validation_completed`** — outcome (`ok` / `warn` / `err` / `notDetected`), validation path, snippet/Launcher flags, error/warning/pass counts, advice count, log-line bucket, whether AI advice ran, extension version, and browser family.
+  - **`share_summary_copied`** — whether identity was redacted in the copied summary and the validation outcome.
+  - **`markdown_report_downloaded`** — validation outcome and validation path (no page URL or customer identity).
+  - **`debugger_enabled`** — success flag and validation path.
+  - **`har_downloaded`** — capture mode (`cdp` or `timings`), bucketed Pendo request count, validation outcome (no URLs or customer identity).
 
-This telemetry covers **only the extension's own panel UI**. It does **not** capture or transmit the content of the pages you visit, your browsing history, or any data from the Pendo installation you are validating.
+Client-side Track Events also record the **panel URL** where the event fired (the extension’s own `chrome-extension://…/popup.html/…` tab path from tab switching), not the customer site under validation.
+
+This telemetry covers **only the extension's own panel UI**. It does **not** capture or transmit the content of the pages you visit, your browsing history, or any data from the Pendo installation you are validating (except when you explicitly opt in to **Include identity & page URL in Share**, which affects clipboard copy only, not these Track Events).
+
+**Markdown report** (Settings → Sharing → Download Markdown report) is saved to your device only when you click download. It always includes full validation context (page URL, visitor/account IDs, metadata, and captured logs). That file is not sent to Pendo analytics; only the **`markdown_report_downloaded`** Track Event (outcome and path) is recorded.
+
+**Pendo network HAR** (Logs tab → **HAR**) is saved to your device only when you click download after a validation run. On Chrome and Edge it reloads the validated tab once (you confirm with a second click) and records Pendo network requests via the same `debugger` permission used for Launcher validation; on Firefox it builds a partial HAR from Resource Timing without reloading. A request is included only when its hostname belongs to Pendo (`pendo.io` and its subdomains, or one of Pendo's Cloud Storage buckets) or, on a custom (CNAME) domain, when its path is a Pendo Web SDK agent or data endpoint that carries a subscription API key — other requests from the page are never written to the file. Cookie, `Authorization`, and `Set-Cookie` headers are stripped before download. Requests from the extension panel’s self-instrumentation agent are excluded. The HAR is not sent to Pendo analytics; only the **`har_downloaded`** Track Event (capture mode, bucketed entry count, outcome) is recorded.
 
 ### 2. AI remediation advice — opt-in only
 
