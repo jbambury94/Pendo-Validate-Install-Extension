@@ -99,6 +99,13 @@ globalThis.__pendoValidateCaptureAndInspect = function captureAndInspect(variant
   const CONFIG_LINE_RE = /^Config option `([^`]+)` with value `([\s\S]*)` from source `([a-z]+)`$/
   const CONFIG_CONFLICT_HEAD_RE = /^Multiple sources found with values for (.+)$/
 
+  function serializeLoggedConfigValue(name, rawFromLog) {
+    if (name === 'inlineStyleNonce') return '(set)'
+    const raw = rawFromLog == null ? '' : String(rawFromLog)
+    if (/^\s*function\b/.test(raw) || /^\s*\([^)]*\)\s*=>/.test(raw)) return '(function)'
+    return clipText(raw, 200)
+  }
+
   function serializeConfigValue(name, rawFromLog, getVal) {
     let v
     try {
@@ -187,7 +194,7 @@ globalThis.__pendoValidateCaptureAndInspect = function captureAndInspect(variant
       }
       if (pendingConflict) {
         const cm = w.match(CONFIG_LINE_RE)
-        if (cm) pendingConflict.values.push({ source: cm[3], value: serializeConfigValue(cm[1], cm[2], getVal) })
+        if (cm) pendingConflict.values.push({ source: cm[3], value: serializeLoggedConfigValue(cm[1], cm[2]) })
         else pendingConflict = null
       }
     }

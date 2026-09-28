@@ -937,6 +937,18 @@ function getHostTabIdForPanel() {
   });
 }
 
+/** Tab a Validate network capture reloads: the host tab resumeNetworkCaptureValidation() waits on, with its URL. */
+async function resolveNetworkCaptureTab() {
+  const id = await getHostTabIdForPanel();
+  if (id == null) return null;
+  let url = 'unknown';
+  try {
+    const tab = (await tabsQuery({})).find(t => t && t.id === id);
+    if (tab && tab.url) url = tab.url;
+  } catch { /* the URL only labels the HAR */ }
+  return { id, url };
+}
+
 /** Redact identity-bearing values from Share summary lines when includeIdentity is off. */
 function redactShareSummaryText(text, context) {
   let out = String(text || '');
@@ -967,8 +979,9 @@ function redactShareSummaryText(text, context) {
 function buildPlainSummary(context, options) {
   const includeIdentity = options && options.includeIdentity === true;
   const { pageUrl, timestamp, status, captured, advice, checks, snippetOnPage, launcherPresent, launcherAttempted, launcherDataValidated, validatedIn } = context;
-  const errCount = (captured || []).filter(l => l.level === 'error').length;
-  const warnCount = (captured || []).filter(l => l.level === 'warn').length;
+  const flagged = countSeverityAdvice(advice);
+  const errCount = (captured || []).filter(l => l.level === 'error').length + flagged.error;
+  const warnCount = (captured || []).filter(l => l.level === 'warn').length + flagged.warn;
   const okCount = (checks || []).length;
   let statusLine = 'Looks healthy';
   const subframeStatus = deriveSubframeStatusLine(context);
@@ -977,8 +990,8 @@ function buildPlainSummary(context, options) {
   else if (!snippetOnPage && launcherPresent === true && launcherDataValidated === false) statusLine = 'Launcher installed (no data on this tab)';
   else if (!status.pendoPresent) statusLine = 'Pendo not found';
   else if (!status.validatePresent) statusLine = 'No validateInstall()';
-  else if (errCount > 0 || countSeverityAdvice(advice).error) statusLine = 'Errors found';
-  else if (warnCount > 0 || countSeverityAdvice(advice).warn) statusLine = 'Warnings found';
+  else if (errCount > 0) statusLine = 'Errors found';
+  else if (warnCount > 0) statusLine = 'Warnings found';
 
   const lines = [];
   lines.push(`Pendo Install Validator — ${statusLine}`);
@@ -1232,8 +1245,8 @@ async function enableDebuggingViaLauncherCdp(tabId, launcher) {
  *            the Launcher's content-script world via CDP.
  * The frame probe (allFrames) runs alongside phase 1; its frame map, the optional network
  * capture and the environment / duplicate-install findings are attached to every result.
- * Returns: pageUrl (always the active tab URL), snippetOnPage, launcherPresent, launcherAttempted, validatedIn, launcherUrl (optional), frameMap, networkCapture (optional), plus status/captured/advice/checks.
- * @param {{ networkCapture?: object }} [opts] - networkCapture: the finished reload capture to include
+ * Returns: pageUrl (the validated tab's URL), snippetOnPage, launcherPresent, launcherAttempted, validatedIn, launcherUrl (optional), frameMap, networkCapture (optional), plus status/captured/advice/checks.
+ * @param {{ networkCapture?: object, tabId?: number }} [opts] - networkCapture: the finished reload capture to include; tabId: tab to validate (defaults to active tab)
  */
 async function runInPage(opts) {
   const options = opts || {};
@@ -1278,8 +1291,15 @@ async function runInPage(opts) {
     }
   }
 
-  const [tab] = await tabsQuery({ active: true, currentWindow: true });
-  if (!tab || !tab.id) throw new Error('No active tab found.');
+  let tab;
+  if (options.tabId != null) {
+    const tabs = await tabsQuery({});
+    tab = tabs.find((t) => t && t.id === options.tabId);
+    if (!tab || !tab.id) throw new Error('Validation tab not found.');
+  } else {
+    [tab] = await tabsQuery({ active: true, currentWindow: true });
+    if (!tab || !tab.id) throw new Error('No active tab found.');
+  }
 
   // Phase 1 + 1.5 combined: a single MAIN-world injection detects both the snippet
   // (window.pendo) and the Launcher-injected agent (window.Pendo) and runs
@@ -2616,15 +2636,23 @@ function initPopup() {
     }
     for (const g of groups) {
       const label = g.label.charAt(0).toUpperCase() + g.label.slice(1);
-      if (!g.failures.length) {
+      if (!g.failures.length && !g.incomplete.length) {
         appendInfoRow(networkCardBody, { label, value: `${g.total} request${g.total === 1 ? '' : 's'}, all OK` });
-      } else {
+      } else if (g.failures.length) {
         const first = g.failures[0];
         appendInfoRow(networkCardBody, {
           label,
-          value: `${g.failures.length} of ${g.total} failed`,
+          value: `${g.failures.length} of ${g.total} failed` + (g.incomplete.length ? `, ${g.incomplete.length} incomplete` : ''),
           sub: `${first.text}: ${first.url}`,
           tone: g.kind === 'agent' ? 'err' : 'warn',
+        });
+      } else {
+        const first = g.incomplete[0];
+        appendInfoRow(networkCardBody, {
+          label,
+          value: `${g.incomplete.length} of ${g.total} incomplete`,
+          sub: `${first.text}: ${first.url}`,
+          tone: 'warn',
         });
       }
     }
@@ -3008,12 +3036,15 @@ function initPopup() {
   }
 
   /** Ask the background to reload the tab under CDP; true when the reload started (this panel is about to go). */
-  async function startNetworkCaptureValidation() {
+  async function startNetworkCaptureValidation(prefetchedTab) {
     let res;
     try {
-      const [tab] = await tabsQuery({ active: true, currentWindow: true });
-      if (!tab || !tab.id) return false;
-      res = await sendExtMessage({ type: 'pendo-validate-network-validate', tabId: tab.id, pageUrl: tab.url || 'unknown' });
+      const tab = prefetchedTab || await resolveNetworkCaptureTab();
+      if (!tab) {
+        showToast("Network capture didn't start (couldn't identify this panel's tab). Validating without it.", 4200);
+        return false;
+      }
+      res = await sendExtMessage({ type: 'pendo-validate-network-validate', tabId: tab.id, pageUrl: tab.url });
     } catch (e) {
       res = { ok: false, error: e && e.message };
     }
@@ -3023,11 +3054,12 @@ function initPopup() {
   }
 
   /**
-   * @param {{ networkCapture?: object, skipNetworkCapture?: boolean }} [opts] - networkCapture is the
-   *   stored result of a capture reload; a run that carries one (or skips) never reloads again.
+   * @param {{ networkCapture?: object, skipNetworkCapture?: boolean, tabId?: number }} [opts] - networkCapture is the
+   *   stored result of a capture reload; a run that carries one (or skips) never reloads again; tabId: tab to validate
    */
   async function runValidation(opts) {
     const options = opts || {};
+    let validationTabId = options.tabId;
     const runId = ++validationSeq;
     activateTab('status');
     runState = 'running';
@@ -3037,7 +3069,9 @@ function initPopup() {
     if (!options.networkCapture && !options.skipNetworkCapture && networkCaptureOnValidate && canCaptureNetworkWithCdp()) {
       setStatusHero({ state: 'running', title: 'Capturing network…', sub: 'Reloading the page to record Pendo requests. The panel reopens when it finishes.' });
       startStatusHeroTimeRefresh(null);
-      if (await startNetworkCaptureValidation()) return;
+      const captureTab = await resolveNetworkCaptureTab();
+      if (captureTab && validationTabId == null) validationTabId = captureTab.id;
+      if (await startNetworkCaptureValidation(captureTab)) return;
       if (runId !== validationSeq) return;
     }
 
@@ -3045,7 +3079,7 @@ function initPopup() {
     startStatusHeroTimeRefresh(null);
 
     try {
-      const res = await runInPage({ networkCapture: options.networkCapture || null });
+      const res = await runInPage({ networkCapture: options.networkCapture || null, tabId: validationTabId });
       if (!res || !res.status) {
         if (runId === validationSeq) {
           setStatusHero({ state: 'err', title: 'Failed', sub: 'Validation did not return a result.' });
@@ -3124,16 +3158,16 @@ function initPopup() {
 
   const isFinishedCapture = (p, tabId) => !!p && p.tabId === tabId && (p.state === 'done' || p.state === 'error');
 
-  function validateAfterNetworkCapture(pending) {
+  function validateAfterNetworkCapture(pending, tabId) {
     clearPendingNetworkCapture();
     if (!pending) {
       showToast("Network capture didn't finish. Validating without it.", 4200);
-      runValidation({ skipNetworkCapture: true });
+      runValidation({ skipNetworkCapture: true, tabId });
     } else if (pending.state === 'error') {
       showToast(`Network capture failed (${pending.error || 'unknown error'}). Validating without it.`, 4200);
-      runValidation({ skipNetworkCapture: true });
+      runValidation({ skipNetworkCapture: true, tabId });
     } else {
-      runValidation({ networkCapture: pending });
+      runValidation({ networkCapture: pending, tabId });
     }
   }
 
@@ -3150,7 +3184,7 @@ function initPopup() {
       clearPendingNetworkCapture();
       return;
     }
-    if (isFinishedCapture(pending, hostTabId)) { validateAfterNetworkCapture(pending); return; }
+    if (isFinishedCapture(pending, hostTabId)) { validateAfterNetworkCapture(pending, hostTabId); return; }
 
     activateTab('status');
     runState = 'running';
@@ -3178,7 +3212,7 @@ function initPopup() {
       settled = true;
       clearTimeout(timer);
       if (p) chrome.storage.onChanged.removeListener(onChanged);
-      validateAfterNetworkCapture(p);
+      validateAfterNetworkCapture(p, hostTabId);
     };
     chrome.storage.onChanged.addListener(onChanged);
     timer = setTimeout(() => finish(null), NETWORK_CAPTURE_WAIT_MS);

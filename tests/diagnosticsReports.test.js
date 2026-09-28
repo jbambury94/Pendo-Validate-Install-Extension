@@ -187,6 +187,7 @@ describe('hero and status lines count the new checks', () => {
     expect(deriveHeroState(ctx)).toEqual({ state: 'err', title: '1 error', sub: 'Validation found errors.' })
     expect(buildMarkdownReport(ctx)).toContain('- **Status:** Errors found')
     expect(buildPlainSummary(ctx)).toMatch(/^Pendo Install Validator — Errors found/)
+    expect(buildPlainSummary(ctx)).toContain('Errors: 1   Warnings: 1')
   })
 
   it('adds severity warnings to the console warning count', () => {

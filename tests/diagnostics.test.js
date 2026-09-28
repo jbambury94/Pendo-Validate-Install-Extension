@@ -9,6 +9,7 @@ import {
   summarizeFrameProbeResults,
   classifyPendoRequest,
   describeNetworkFailure,
+  isIncompleteNetworkRequest,
   groupNetworkRequests,
   buildNetworkFindings,
   networkCaptureMatchesPage,
@@ -58,6 +59,11 @@ function sdkDefaultLiteralToJs(raw) {
 const KEY_A = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa'
 const KEY_B = 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb'
 const HEALTHY = 'Installation looks healthy based on current checks.'
+// summarizePendoNetworkFromCdp shape for a request with no response when the capture stopped.
+const IN_FLIGHT = {
+  url: `https://data.pendo.io/data/guide.js/${KEY_A}`, method: 'GET', type: 'Script',
+  status: null, errorText: null, blockedReason: null, corsError: null, canceled: false,
+}
 
 function envOk(overrides) {
   return { available: true, errorCount: 0, errors: [], methods: [], globals: [], url: [], plugins: [], ...overrides }
@@ -282,6 +288,14 @@ describe('analyzeFrameMap', () => {
 describe('network classification', () => {
   it('classifies Pendo request kinds', () => {
     expect(classifyPendoRequest(`https://cdn.pendo.io/agent/static/${KEY_A}/pendo.js`)).toBe('agent')
+    expect(classifyPendoRequest(`https://cdn.pendo.io/agent/static/${KEY_A}/pendo-staging.js`)).toBe('agent')
+    expect(classifyPendoRequest(`https://cdn.pendo.io/agent/static/${KEY_A}/pendo.min.js`)).toBe('agent')
+    expect(classifyPendoRequest(`https://cdn.pendo.io/agent/static/${KEY_A}/pendo.xhr.js`)).toBe('agent')
+    expect(classifyPendoRequest(`https://cdn.pendo.io/agent/production/${KEY_A}/pendo.js`)).toBe('agent')
+    expect(classifyPendoRequest(`https://cdn.pendo.io/agent/beta/${KEY_A}/pendo.min.js`)).toBe('agent')
+    expect(classifyPendoRequest(`https://cdn.pendo.io/agent/releases/2.341.0/pendo.debugger.min.js`)).toBe('other')
+    expect(classifyPendoRequest(`https://cdn.pendo.io/agent/static/${KEY_A}/guide.js`)).toBe('other')
+    expect(classifyPendoRequest(`https://cdn.pendo.io/agent/static/${KEY_A}/agent.js`)).toBe('other')
     expect(classifyPendoRequest(`https://data.pendo.io/data/ptm.gif/${KEY_A}`)).toBe('events')
     expect(classifyPendoRequest(`https://data.pendo.io/data/guide.js/${KEY_A}`)).toBe('guides')
     expect(classifyPendoRequest(`https://data.pendo.io/data/poll.gif/${KEY_A}`)).toBe('polls')
@@ -302,6 +316,16 @@ describe('network classification', () => {
     expect(describeNetworkFailure({ status: 200 })).toBeNull()
   })
 
+  it('treats a request with no response, no failure and no cancel as incomplete', () => {
+    expect(describeNetworkFailure(IN_FLIGHT)).toBeNull()
+    expect(isIncompleteNetworkRequest(IN_FLIGHT)).toBe(true)
+    expect(isIncompleteNetworkRequest({ ...IN_FLIGHT, status: 200 })).toBe(false)
+    expect(isIncompleteNetworkRequest({ ...IN_FLIGHT, status: 500 })).toBe(false)
+    expect(isIncompleteNetworkRequest({ ...IN_FLIGHT, errorText: 'net::ERR_ABORTED', canceled: true })).toBe(false)
+    expect(isIncompleteNetworkRequest({ ...IN_FLIGHT, errorText: 'net::ERR_NAME_NOT_RESOLVED' })).toBe(false)
+    expect(isIncompleteNetworkRequest({ ...IN_FLIGHT, blockedReason: 'csp' })).toBe(false)
+  })
+
   it('groups requests by kind in display order', () => {
     const groups = groupNetworkRequests({ requests: [
       { url: `https://data.pendo.io/data/ptm.gif/${KEY_A}`, status: 200 },
@@ -311,6 +335,16 @@ describe('network classification', () => {
     expect(groups.map(g => g.kind)).toEqual(['agent', 'events'])
     expect(groups[1]).toMatchObject({ total: 2, label: 'event data' })
     expect(groups[1].failures).toHaveLength(1)
+    expect(groups[1].incomplete).toEqual([])
+  })
+
+  it('keeps in-flight requests out of both the passing and failed counts', () => {
+    const [guides] = groupNetworkRequests({ requests: [
+      { url: `https://data.pendo.io/data/guide.js/${KEY_A}`, status: 200 },
+      IN_FLIGHT,
+    ] })
+    expect(guides).toMatchObject({ kind: 'guides', total: 2, failures: [] })
+    expect(guides.incomplete).toEqual([{ url: IN_FLIGHT.url, text: 'no response before the capture stopped' }])
   })
 })
 
@@ -322,6 +356,15 @@ describe('buildNetworkFindings', () => {
     expect(advice).toHaveLength(1)
     expect(advice[0]).toMatchObject({ severity: 'error', supportKey: 'csp' })
     expect(advice[0].text).toContain("blocked by the page's Content Security Policy")
+  })
+
+  it('reports a blocked agent on /agent/production/ as an error, not a warning', () => {
+    const { advice } = buildNetworkFindings({ requests: [
+      { url: `https://cdn.pendo.io/agent/production/${KEY_A}/pendo.min.js`, blockedReason: 'csp' },
+    ] })
+    expect(advice).toHaveLength(1)
+    expect(advice[0]).toMatchObject({ severity: 'error', supportKey: 'csp' })
+    expect(advice[0].text).toContain('agent script was')
   })
 
   it('reports other failed requests as warnings', () => {
@@ -342,6 +385,33 @@ describe('buildNetworkFindings', () => {
     ] })
     expect(advice).toEqual([])
     expect(checks[0]).toContain('all 2 Pendo requests completed')
+  })
+
+  it('reports requests still in flight when the capture stopped instead of passing them', () => {
+    const { advice, checks } = buildNetworkFindings({ requests: [
+      { url: `https://cdn.pendo.io/agent/static/${KEY_A}/pendo.js`, status: 200 },
+      { url: `https://data.pendo.io/data/ptm.gif/${KEY_A}`, status: 200 },
+      IN_FLIGHT,
+    ] })
+    expect(checks.some(c => /completed/.test(c))).toBe(false)
+    expect(advice).toHaveLength(1)
+    expect(advice[0]).toMatchObject({ source: 'builtin', supportKey: 'troubleshooting' })
+    expect(advice[0].severity).toBeUndefined()
+    expect(advice[0].text).toBe(`1 Pendo request had no response before the capture stopped (1 guide), for example ${IN_FLIGHT.url}. `
+      + 'It may have finished later, so the outcome is unknown. Validate again to recheck.')
+  })
+
+  it('reports failures and in-flight requests side by side', () => {
+    const { advice, checks } = buildNetworkFindings({ requests: [
+      { url: `https://cdn.pendo.io/agent/static/${KEY_A}/pendo.js`, status: 200 },
+      { url: `https://data.pendo.io/data/ptm.gif/${KEY_A}`, status: 503 },
+      { ...IN_FLIGHT, url: `https://data.pendo.io/data/ptm.gif/${KEY_A}` },
+      IN_FLIGHT,
+    ] })
+    expect(checks.some(c => /completed/.test(c))).toBe(false)
+    expect(advice.map(a => a.severity)).toEqual(['warn', undefined])
+    expect(advice[0].text).toMatch(/^1 of 2 event data requests was returned HTTP 503/)
+    expect(advice[1].text).toMatch(/^2 Pendo requests had no response before the capture stopped \(1 event data, 1 guide\)/)
   })
 
   it('treats no event data in the capture window as informational', () => {
@@ -441,6 +511,29 @@ describe('summarizeAgentConfig', () => {
 
   it('returns reported false when capture did not produce a config audit', () => {
     expect(summarizeAgentConfig({ reported: false })).toEqual({ reported: false, options: [], hiddenAsDefault: 0, conflicts: [] })
+  })
+
+  it('treats explicit empty-looking values as non-default when the pinned default is undefined', () => {
+    const sum = summarizeAgentConfig({
+      reported: true,
+      options: [
+        { name: 'queryStringWhitelist', value: '[]', source: 'snippet' },
+        { name: 'disableCookies', value: 'false', source: 'snippet' },
+        { name: 'annotateUrl', value: '""', source: 'snippet' },
+        { name: 'customObjectOption', value: '{}', source: 'snippet' },
+        { name: 'unsetOption', value: '', source: 'snippet' },
+        { name: 'nullOption', value: 'null', source: 'snippet' },
+        { name: 'undefinedOption', value: 'undefined', source: 'snippet' },
+      ],
+      conflicts: [],
+    })
+    expect(sum.options.map((o) => o.name)).toEqual([
+      'queryStringWhitelist',
+      'disableCookies',
+      'annotateUrl',
+      'customObjectOption',
+    ])
+    expect(sum.hiddenAsDefault).toBe(3)
   })
 })
 
@@ -565,6 +658,32 @@ describe('report helpers', () => {
     expect(md).toContain('2 Pendo requests captured while the page reloaded.')
     expect(md).toContain(`- **events** POST https://data.pendo.io/data/ptm.gif/${KEY_A} — blocked by the page's Content Security Policy`)
     expect(md).toContain("enforced: script-src 'self'")
+  })
+
+  it('labels a request still in flight when the capture stopped', () => {
+    const md = buildDiagnosticsMarkdownSections({
+      status: {},
+      networkCapture: { summary: { documentCsp: {}, requests: [IN_FLIGHT], requestCount: 1 } },
+    }).join('\n')
+    expect(md).toContain(`- **guides** GET ${IN_FLIGHT.url} — no response before the capture stopped`)
+  })
+
+  it('renders a config conflict even when the effective value is the SDK default', () => {
+    const md = buildDiagnosticsMarkdownSections({
+      status: {
+        environment: {
+          available: true, errorCount: 0, errors: [], methods: [], globals: [], url: [], plugins: [],
+          config: {
+            reported: true,
+            options: [{ name: 'excludeAllText', value: 'false', source: 'pendoconfig' }],
+            conflicts: [{ name: 'excludeAllText', values: [{ value: 'true', source: 'snippet' }, { value: 'false', source: 'pendoconfig' }] }],
+          },
+        },
+      },
+    }).join('\n')
+    expect(md).toContain('All config options are at their defaults.')
+    expect(md).not.toContain('| Option | Value | Source |')
+    expect(md).toContain('- **Config conflict — excludeAllText:** true (snippet); false (hosted config)')
   })
 
   it('says when the environment check or network capture did not run', () => {
