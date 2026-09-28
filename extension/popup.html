@@ -81,14 +81,6 @@
             <div class="card__body card__body--flush" id="checkGroups"></div>
           </div>
 
-          <div class="card" id="framesCard" hidden>
-            <div class="card__head">
-              <div class="card__title">Frames</div>
-              <span class="card__meta" id="framesCardMeta"></span>
-            </div>
-            <div class="card__body card__body--flush" id="framesCardBody"></div>
-          </div>
-
           <div class="card" id="networkCard" hidden>
             <div class="card__head">
               <div class="card__title">Network</div>
@@ -137,13 +129,36 @@
             <button class="card__action" id="copyLogs" data-action="copy-logs" title="Copy visible logs" aria-label="Copy visible logs">Copy filtered logs</button>
           </div>
 
-          <div class="card">
+          <div class="card card--collapsible" id="logsCard" data-card="logs" data-open="false">
+            <div class="card__head">
+              <button type="button" class="card__toggle" id="logsCardToggle" data-action="toggle-card" aria-expanded="false" aria-controls="logsList">
+                <span class="card__chev" aria-hidden="true"></span>
+                <span class="card__title">Console output</span>
+                <span class="card__meta" id="logsCardMeta"></span>
+              </button>
+            </div>
             <div id="logsList" class="logs-list"></div>
           </div>
 
-          <div class="card" id="installDetailsCard" hidden>
-            <div class="card__head"><div class="card__title">Install details</div></div>
+          <div class="card card--collapsible" id="installDetailsCard" data-card="installDetails" data-open="false" hidden>
+            <div class="card__head">
+              <button type="button" class="card__toggle" id="installDetailsCardToggle" data-action="toggle-card" aria-expanded="false" aria-controls="installDetailsBody">
+                <span class="card__chev" aria-hidden="true"></span>
+                <span class="card__title">Install details</span>
+              </button>
+            </div>
             <div class="card__body card__body--flush" id="installDetailsBody"></div>
+          </div>
+
+          <div class="card card--collapsible" id="framesCard" data-card="frames" data-open="false" hidden>
+            <div class="card__head">
+              <button type="button" class="card__toggle" id="framesCardToggle" data-action="toggle-card" aria-expanded="false" aria-controls="framesCardBody">
+                <span class="card__chev" aria-hidden="true"></span>
+                <span class="card__title">Frames</span>
+                <span class="card__meta" id="framesCardMeta"></span>
+              </button>
+            </div>
+            <div class="card__body card__body--flush" id="framesCardBody"></div>
           </div>
         </div>
 
@@ -208,9 +223,9 @@
               <div class="field">
                 <label class="field__label" for="aiProviderSelect">Provider</label>
                 <select id="aiProviderSelect" class="select" data-action="ai-provider-select">
-                  <option value="openai">OpenAI · gpt-4o-mini</option>
+                  <option value="openai">OpenAI · gpt-5.6-luna</option>
                   <option value="claude">Anthropic Claude · claude-haiku-4-5</option>
-                  <option value="gemini">Google Gemini · gemini-3.5-flash</option>
+                  <option value="gemini">Google Gemini · gemini-3.8-flash</option>
                 </select>
               </div>
               <div class="field">

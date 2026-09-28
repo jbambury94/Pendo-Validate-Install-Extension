@@ -1,7 +1,7 @@
 # Privacy Policy — Pendo Install Validator
 
 **Last updated:** 25 September 2026
-**Extension version:** 1.9.1
+**Extension version:** 1.9.2
 
 ---
 
@@ -22,7 +22,7 @@ All data below is stored in `chrome.storage.local`, which is isolated to this ex
 | Visitor ID | `pendoVisitorId` | If the Chrome profile is signed in to a `@pendo.io` Google account, the visitor ID is that email address (read passively via `chrome.identity.getProfileUserInfo`, not cached). Otherwise a randomly generated UUID (via `crypto.randomUUID()`) is used to identify this extension installation for product analytics. |
 | Theme preference | `themePreference` | `"system"`, `"light"`, or `"dark"`. Purely cosmetic. Also mirrored to `localStorage('pendoValidateTheme')` for flash-free page loads. |
 | Share identity opt-in | `shareIncludeIdentity` | When `true`, the action-bar **Share** copy includes the validated page URL and visitor/account (and parent account when present). Default `false`. When off, those fields are omitted and known visitor/account/parent IDs, page URLs, and API-key-like strings are replaced in passing-check and recommendation lines as well. Does not affect Markdown report downloads. |
-| Log UI preferences | `logUiPrefs` | Saved log filter chips and search query on the Logs tab. |
+| Log UI preferences | `logUiPrefs` | Saved log filter chips, search query, and which Logs cards are expanded on the Logs tab. |
 | Network capture on Validate | `networkCaptureOnValidate` | When `true` (Chrome and Edge only), **Validate** reloads the page and records Pendo network requests. Default `false`. |
 | Pending network capture | `pendingNetworkCapture` | Hand-off between the background worker and the panel while the page reloads: the tab ID, the Pendo request summary (URLs without query strings, status, block reason), the page's CSP header, and the Pendo-only HAR. Removed as soon as the reopened panel reads it; ignored after 30 seconds. |
 | AI provider | `aiProvider` | `"openai"`, `"claude"`, or `"gemini"`. Stored only when you save AI settings. |
@@ -71,12 +71,15 @@ If you save an API key in Settings and a validation run surfaces warnings or err
 The request body includes:
 
 - The page URL of the tab you validated.
-- Pendo agent version, API key presence, visitor/account IDs, and CSP metadata from the validated page.
+- Pendo agent version, whether a Pendo subscription API key was detected on the page (yes/no only — the key value is not sent), visitor/account IDs, and CSP metadata from the validated page.
 - Up to 30 captured console log lines (which may contain application-specific identifiers).
 - The recommendations already shown in the panel, so the AI doesn't repeat them. These can name frame URLs, blocked Pendo request URLs, and subframe visitor or account IDs.
-- Up to 6 KB of excerpts from the built-in Pendo knowledge base (bundled locally, not fetched).
 
-**No AI request is made unless** you have saved an API key **and** the validation run detects at least one issue. Your API key is sent only to the provider you selected and only in the request's authentication header.
+Before the request is sent, every Pendo subscription API key found during the run (on the page, in other agents, in agent script URLs, and in subframes) is replaced with `[redacted]` wherever it appears in the request, including the page URL, CSP metadata, console lines, and recommendations. Any other UUID is redacted too, because Pendo API keys are UUIDs and `pendo.validateInstall()` prints them. The only UUIDs kept are ones that match the visitor, account, or parent account ID, which the request sends on purpose.
+- Up to six curated knowledge-base article excerpts, capped at about 800 characters of excerpt text in total (bundled locally, not fetched).
+- When loaded, an optional install-quality guide excerpt of up to about 1,200 characters.
+
+**No AI request is made unless** you have saved an API key **and** the validation run detects at least one issue. Your **AI provider** API key (OpenAI, Anthropic, or Google) is sent only to the provider you selected and only in the request's authentication header.
 
 ### 3. Validation injection — never leaves the browser
 

@@ -1,5 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { requestAiAdvice, buildAiPrompt, PENDO_SUPPORT, friendlyAiFailureDetail, selectRelatedReading, resolveAiModel, AI_DEFAULT_MODELS, DEPRECATED_AI_MODELS, getAiConfig } from './helpers.js'
+import {
+  requestAiAdvice,
+  buildAiPrompt,
+  PENDO_SUPPORT,
+  friendlyAiFailureDetail,
+  selectRelatedReading,
+  resolveAiModel,
+  AI_DEFAULT_MODELS,
+  AI_FALLBACK_MODELS,
+  DEPRECATED_AI_MODELS,
+  getAiConfig,
+  resetAiSessionModelOverrides,
+  modelsToTryForProvider,
+  isAiModelNotFoundResponse,
+  extractAiResponseContent,
+} from './helpers.js'
 import { readFileSync } from 'fs'
 import { join } from 'path'
 import { JSDOM } from 'jsdom'
@@ -25,6 +40,7 @@ function mockStorage(cfg) {
 
 beforeEach(() => {
   global.fetch = vi.fn()
+  resetAiSessionModelOverrides()
 })
 
 describe('requestAiAdvice — no API key', () => {
@@ -70,6 +86,23 @@ describe('requestAiAdvice — OpenAI provider', () => {
     expect(result[1].text).toBe('Update key')
   })
 
+  it('parses OpenAI message content when returned as a part array', async () => {
+    fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        choices: [{
+          message: {
+            content: [{ type: 'text', text: '- Fix snippet\n- Update key' }],
+          },
+        }],
+      }),
+    })
+    const result = await requestAiAdvice(baseContext)
+    expect(result).toHaveLength(2)
+    expect(result[0].text).toBe('Fix snippet')
+    expect(result[1].text).toBe('Update key')
+  })
+
   it('strips leading bullet characters from response lines', async () => {
     fetch.mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: '* Check API\n- Fix CSP' } }] }) })
     const result = await requestAiAdvice(baseContext)
@@ -109,6 +142,23 @@ describe('requestAiAdvice — OpenAI provider', () => {
     fetch.mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: '- tip' } }] }) })
     await requestAiAdvice(baseContext)
     expect(fetch.mock.calls[0][0]).toBe('https://my-proxy.example.com/v1/chat/completions')
+  })
+
+  it('omits reasoning_effort on a custom OpenAI-compatible endpoint', async () => {
+    mockStorage({ aiProvider: 'openai', aiEndpoint: 'https://my-proxy.example.com/v1/chat/completions', aiApiKey: 'sk-test', aiModel: '' })
+    fetch.mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: '- tip' } }] }) })
+    await requestAiAdvice(baseContext)
+    const body = JSON.parse(fetch.mock.calls[0][1].body)
+    expect(body.reasoning_effort).toBeUndefined()
+  })
+
+  it('omits reasoning_effort for a custom model on api.openai.com', async () => {
+    mockStorage({ aiProvider: 'openai', aiEndpoint: '', aiApiKey: 'sk-test', aiModel: 'gpt-5.6-terra' })
+    fetch.mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: '- tip' } }] }) })
+    await requestAiAdvice(baseContext)
+    const body = JSON.parse(fetch.mock.calls[0][1].body)
+    expect(body.model).toBe('gpt-5.6-terra')
+    expect(body.reasoning_effort).toBeUndefined()
   })
 })
 
@@ -225,7 +275,7 @@ describe('friendlyAiFailureDetail', () => {
 
 describe('resolveAiModel', () => {
   it('returns openai default when provider is openai and aiModel is empty', () => {
-    expect(resolveAiModel('openai', '')).toBe('gpt-4o-mini')
+    expect(resolveAiModel('openai', '')).toBe('gpt-5.6-luna')
   })
 
   it('returns claude default when provider is claude and aiModel is empty', () => {
@@ -233,40 +283,41 @@ describe('resolveAiModel', () => {
   })
 
   it('returns gemini default when provider is gemini and aiModel is empty', () => {
-    expect(resolveAiModel('gemini', '')).toBe('gemini-3.5-flash')
+    expect(resolveAiModel('gemini', '')).toBe('gemini-3.8-flash')
   })
 
   it('falls back to openai default for unknown provider', () => {
-    expect(resolveAiModel('unknown', '')).toBe('gpt-4o-mini')
+    expect(resolveAiModel('unknown', '')).toBe('gpt-5.6-luna')
   })
 
-  it('replaces deprecated gemini-2.0-flash with gemini-3.5-flash', () => {
-    expect(resolveAiModel('gemini', 'gemini-2.0-flash')).toBe('gemini-3.5-flash')
+  it('replaces deprecated gemini-2.0-flash with gemini-3.8-flash', () => {
+    expect(resolveAiModel('gemini', 'gemini-2.0-flash')).toBe('gemini-3.8-flash')
   })
 
-  it('replaces all deprecated model IDs with provider default', () => {
-    for (const model of DEPRECATED_AI_MODELS) {
-      expect(resolveAiModel('gemini', model)).toBe('gemini-3.5-flash')
-    }
+  it('replaces deprecated model IDs with the provider default', () => {
+    expect(resolveAiModel('openai', 'gpt-4o-mini')).toBe('gpt-5.6-luna')
+    expect(resolveAiModel('gemini', 'gemini-3.5-flash')).toBe('gemini-3.8-flash')
   })
 
   it('passes through unknown custom models unchanged', () => {
-    expect(resolveAiModel('openai', 'gpt-5-mini')).toBe('gpt-5-mini')
+    expect(resolveAiModel('openai', 'gpt-5.6-terra')).toBe('gpt-5.6-terra')
   })
 
   it('treats null/undefined aiModel as empty', () => {
     expect(resolveAiModel('claude', null)).toBe('claude-haiku-4-5-20251001')
-    expect(resolveAiModel('openai', undefined)).toBe('gpt-4o-mini')
+    expect(resolveAiModel('openai', undefined)).toBe('gpt-5.6-luna')
   })
 })
 
 describe('requestAiAdvice — default model in request', () => {
-  it('sends gpt-4o-mini in the OpenAI request body', async () => {
+  it('sends gpt-5.6-luna in the OpenAI request body without temperature', async () => {
     mockStorage({ aiProvider: 'openai', aiEndpoint: '', aiApiKey: 'sk-test', aiModel: '' })
     fetch.mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: '- tip' } }] }) })
     await requestAiAdvice(baseContext)
     const body = JSON.parse(fetch.mock.calls[0][1].body)
-    expect(body.model).toBe('gpt-4o-mini')
+    expect(body.model).toBe('gpt-5.6-luna')
+    expect(body.reasoning_effort).toBe('none')
+    expect(body.temperature).toBeUndefined()
   })
 
   it('sends claude-haiku-4-5-20251001 in the Claude request body', async () => {
@@ -280,11 +331,129 @@ describe('requestAiAdvice — default model in request', () => {
     expect(body.model).toBe('claude-haiku-4-5-20251001')
   })
 
-  it('sends gemini-3.5-flash in the Gemini request URL', async () => {
+  it('sends gemini-3.8-flash in the Gemini request URL', async () => {
     mockStorage({ aiProvider: 'gemini', aiEndpoint: '', aiApiKey: 'gem-test', aiModel: '' })
     fetch.mockResolvedValue({ ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: '- tip' }] } }] }) })
     await requestAiAdvice(baseContext)
-    expect(fetch.mock.calls[0][0]).toContain('/models/gemini-3.5-flash:generateContent')
+    expect(fetch.mock.calls[0][0]).toContain('/models/gemini-3.8-flash:generateContent')
+    const body = JSON.parse(fetch.mock.calls[0][1].body)
+    expect(body.systemInstruction).toBeTruthy()
+  })
+})
+
+describe('requestAiAdvice — model fallback', () => {
+  it('retries once with fallback model on OpenAI 404', async () => {
+    mockStorage({ aiProvider: 'openai', aiEndpoint: '', aiApiKey: 'sk-test', aiModel: '' })
+    fetch
+      .mockResolvedValueOnce({ ok: false, status: 404, json: async () => ({ error: { message: 'model not found' } }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ choices: [{ message: { content: '[{"text":"Verify CSP allows Pendo scripts","supportKey":"csp"}]' } }] }) })
+    const result = await requestAiAdvice(baseContext)
+    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(JSON.parse(fetch.mock.calls[0][1].body).model).toBe('gpt-5.6-luna')
+    expect(JSON.parse(fetch.mock.calls[1][1].body).model).toBe('gpt-5.6-terra')
+    expect(result[0].text).toBe('Verify CSP allows Pendo scripts')
+  })
+
+  it('includes reasoning_effort on bundled fallback after custom primary model-not-found', async () => {
+    mockStorage({ aiProvider: 'openai', aiEndpoint: '', aiApiKey: 'sk-test', aiModel: 'my-org-custom' })
+    fetch
+      .mockResolvedValueOnce({ ok: false, status: 404, json: async () => ({ error: { message: 'model not found' } }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ choices: [{ message: { content: '- tip' } }] }) })
+    await requestAiAdvice(baseContext)
+    const first = JSON.parse(fetch.mock.calls[0][1].body)
+    const second = JSON.parse(fetch.mock.calls[1][1].body)
+    expect(first.model).toBe('my-org-custom')
+    expect(first.reasoning_effort).toBeUndefined()
+    expect(second.model).toBe(AI_FALLBACK_MODELS.openai)
+    expect(second.reasoning_effort).toBe('none')
+  })
+
+  it('does not retry on OpenAI 401', async () => {
+    mockStorage({ aiProvider: 'openai', aiEndpoint: '', aiApiKey: 'sk-test', aiModel: '' })
+    fetch.mockResolvedValue({ ok: false, status: 401, json: async () => ({ error: { message: 'invalid key' } }) })
+    await requestAiAdvice(baseContext)
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('retries once with fallback model on Claude 404 via background proxy', async () => {
+    mockStorage({ aiProvider: 'claude', aiEndpoint: '', aiApiKey: 'ant-test', aiModel: '' })
+    chrome.runtime.sendMessage
+      .mockResolvedValueOnce({ ok: false, status: 404, json: { error: { message: 'model not found' } } })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: { content: [{ text: '[{"text":"Verify CSP allows Pendo scripts","supportKey":"csp"}]' }] } })
+    const result = await requestAiAdvice(baseContext)
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledTimes(2)
+    expect(JSON.parse(chrome.runtime.sendMessage.mock.calls[1][0].body).model).toBe('claude-sonnet-5')
+    expect(result[0].text).toBe('Verify CSP allows Pendo scripts')
+  })
+
+  it('does not retry on generic HTTP 404 without a model-related error', async () => {
+    mockStorage({ aiProvider: 'openai', aiEndpoint: '', aiApiKey: 'sk-test', aiModel: '' })
+    fetch.mockResolvedValue({ ok: false, status: 404, json: async () => ({ error: { message: 'Not Found' } }) })
+    await requestAiAdvice(baseContext)
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('after a successful fallback, retries the primary when the session model returns model-not-found', async () => {
+    mockStorage({ aiProvider: 'openai', aiEndpoint: '', aiApiKey: 'sk-test', aiModel: '' })
+    fetch
+      .mockResolvedValueOnce({ ok: false, status: 404, json: async () => ({ error: { message: 'model not found' } }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ choices: [{ message: { content: '- ok' } }] }) })
+    await requestAiAdvice(baseContext)
+    expect(JSON.parse(fetch.mock.calls[1][1].body).model).toBe(AI_FALLBACK_MODELS.openai)
+
+    fetch.mockClear()
+    fetch
+      .mockResolvedValueOnce({ ok: false, status: 404, json: async () => ({ error: { message: 'model gpt-5.6-terra not found' } }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ choices: [{ message: { content: '- recovered' } }] }) })
+    const result = await requestAiAdvice(baseContext)
+    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(JSON.parse(fetch.mock.calls[0][1].body).model).toBe(AI_FALLBACK_MODELS.openai)
+    expect(JSON.parse(fetch.mock.calls[1][1].body).model).toBe(AI_DEFAULT_MODELS.openai)
+    expect(result[0].text).toBe('recovered')
+  })
+})
+
+describe('extractAiResponseContent', () => {
+  it('joins OpenAI text parts and skips refusal parts', () => {
+    const data = {
+      choices: [{
+        message: {
+          content: [
+            { type: 'text', text: '[{"text":"Verify CSP","supportKey":"csp"}]' },
+            { type: 'refusal', text: 'hidden' },
+          ],
+        },
+      }],
+    }
+    expect(extractAiResponseContent('openai', data)).toBe('[{"text":"Verify CSP","supportKey":"csp"}]')
+  })
+})
+
+describe('isAiModelNotFoundResponse', () => {
+  it('treats model_not_found and explicit model messages as retriable', () => {
+    expect(isAiModelNotFoundResponse(400, 'model_not_found')).toBe(true)
+    expect(isAiModelNotFoundResponse(400, 'The model does not exist')).toBe(true)
+    expect(isAiModelNotFoundResponse(404, 'model xyz was not found')).toBe(true)
+  })
+
+  it('rejects bare 404 and generic "does not exist" without model context', () => {
+    expect(isAiModelNotFoundResponse(404, 'Not Found')).toBe(false)
+    expect(isAiModelNotFoundResponse(400, 'Resource does not exist')).toBe(false)
+  })
+})
+
+describe('modelsToTryForProvider — session override', () => {
+  it('keeps the full chain with session model first', async () => {
+    mockStorage({ aiProvider: 'openai', aiEndpoint: '', aiApiKey: 'sk-test', aiModel: '' })
+    fetch
+      .mockResolvedValueOnce({ ok: false, status: 404, json: async () => ({ error: { message: 'model not found' } }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ choices: [{ message: { content: '- ok' } }] }) })
+    await requestAiAdvice(baseContext)
+    const cfg = { aiModel: '' }
+    expect(modelsToTryForProvider('openai', cfg)).toEqual([
+      AI_FALLBACK_MODELS.openai,
+      AI_DEFAULT_MODELS.openai,
+    ])
   })
 })
 
@@ -293,7 +462,7 @@ describe('requestAiAdvice — deprecated model migration', () => {
     mockStorage({ aiProvider: 'gemini', aiEndpoint: '', aiApiKey: 'gem-test', aiModel: 'gemini-2.0-flash' })
     fetch.mockResolvedValue({ ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: '- tip' }] } }] }) })
     await requestAiAdvice(baseContext)
-    expect(fetch.mock.calls[0][0]).toContain('/models/gemini-3.5-flash:generateContent')
+    expect(fetch.mock.calls[0][0]).toContain('/models/gemini-3.8-flash:generateContent')
   })
 })
 
@@ -308,9 +477,9 @@ describe('getAiConfig — deprecated model migration', () => {
 
   it('does not clear a valid custom aiModel', async () => {
     chrome.storage.local.remove = vi.fn()
-    mockStorage({ aiProvider: 'openai', aiEndpoint: '', aiApiKey: 'sk-test', aiModel: 'gpt-5-mini' })
+    mockStorage({ aiProvider: 'openai', aiEndpoint: '', aiApiKey: 'sk-test', aiModel: 'gpt-5.6-terra' })
     const cfg = await getAiConfig()
-    expect(cfg.aiModel).toBe('gpt-5-mini')
+    expect(cfg.aiModel).toBe('gpt-5.6-terra')
     expect(chrome.storage.local.remove).not.toHaveBeenCalled()
   })
 })
@@ -326,6 +495,13 @@ describe('buildAiPrompt', () => {
 
   it('includes visitorId', () => {
     expect(buildAiPrompt(baseContext)).toContain('v1')
+  })
+
+  it('does not include the Pendo subscription API key value', () => {
+    const prompt = buildAiPrompt(baseContext)
+    expect(prompt).toContain('Pendo subscription API key present: yes')
+    expect(prompt).not.toContain('API key detected: abc')
+    expect(prompt).not.toContain('detectedApiKey')
   })
 
   it('truncates captured logs to 30 lines and appends ellipsis', () => {
@@ -370,6 +546,8 @@ describe('buildAiPrompt', () => {
     for (const key of keys) {
       expect(PENDO_SUPPORT[key], `missing PENDO_SUPPORT entry for "${key}"`).toBeTruthy()
     }
+    expect(keys).toContain('identifyVisitors')
+    expect(keys).toContain('parentAccounts')
   })
 })
 
@@ -407,10 +585,11 @@ describe('buildAiPrompt — KB excerpt enrichment', () => {
     expect(prompt).not.toContain('Reference excerpts')
   })
 
-  it('includes citation instruction in the excerpt header', () => {
+  it('includes grounding instruction in the excerpt header without asking to cite URLs', () => {
     const ctx = { ...baseContext, status: { ...baseContext.status, pendoPresent: false } }
     const prompt = buildAiPrompt(ctx, (signals, max) => makeSrr(signals, max))
-    expect(prompt).toContain('do not invent URLs')
+    expect(prompt).toContain('do not include URLs in your answer')
+    expect(prompt).not.toMatch(/cite these/i)
   })
 
   it('passes metadata signals so a healthy install surfaces the validate-install article', () => {
@@ -518,5 +697,102 @@ describe('buildAiPrompt — enrichment details', () => {
     const guideSection = prompt.split('Quality guide reference:\n')[1]
     const guideLine = guideSection.split('\n')[0]
     expect(guideLine.length).toBe(1200)
+  })
+})
+
+describe('buildAiPrompt — API key redaction', () => {
+  const KEY = '8f3e2b1a-4c5d-4e6f-9a0b-1c2d3e4f5a6b'
+  const VISITOR_UUID = '0f0e0d0c-0b0a-4908-8706-050403020100'
+  const ACCOUNT_UUID = '1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d'
+
+  it('redacts a key validateInstall() printed when no key field was detected', () => {
+    const ctx = {
+      ...baseContext,
+      status: { ...baseContext.status, detectedApiKey: null },
+      apiKeyFound: true,
+      captured: [{ level: 'log', text: `API Key: ${KEY}` }],
+    }
+    const prompt = buildAiPrompt(ctx)
+    expect(prompt).toContain('Pendo subscription API key present: yes')
+    expect(prompt).toContain('[log] API Key: [redacted]')
+    expect(prompt).not.toContain(KEY)
+  })
+
+  it('redacts the detected key from the URL, CSP, logs, and advice in any case', () => {
+    const ctx = {
+      ...baseContext,
+      pageUrl: `https://app.example.com/?apiKey=${KEY}`,
+      status: { ...baseContext.status, detectedApiKey: KEY },
+      cspMeta: `script-src https://cdn.pendo.io/agent/static/${KEY}/pendo.js`,
+      captured: [{ level: 'warn', text: `Agent loaded for ${KEY.toUpperCase()}` }],
+      advice: [{ text: `Snippet uses key ${KEY}.`, source: 'builtin' }],
+    }
+    const prompt = buildAiPrompt(ctx)
+    expect(prompt.toLowerCase()).not.toContain(KEY)
+    expect(prompt).toContain('Page URL: https://app.example.com/?apiKey=[redacted]')
+    expect(prompt).toContain('CSP meta: script-src https://cdn.pendo.io/agent/static/[redacted]/pendo.js')
+    expect(prompt).toContain('[warn] Agent loaded for [redacted]')
+    expect(prompt).toContain('- Snippet uses key [redacted].')
+  })
+
+  it('redacts non-UUID keys from other agents, agent scripts, and frames', () => {
+    const ctx = {
+      ...baseContext,
+      status: {
+        ...baseContext.status,
+        detectedApiKey: 'primary-key',
+        apiKeysSeen: ['primary-key', 'seen-key'],
+        otherAgentApiKey: 'launcher-key',
+        agentScripts: [{ src: 'https://cdn.pendo.io/agent/static/x/pendo.js', apiKey: 'script-key' }],
+      },
+      frameMap: { available: true, frames: [{ isTop: false, url: 'https://embed.example.com/', apiKey: 'frame-key' }] },
+      captured: [{ level: 'log', text: 'keys primary-key seen-key launcher-key script-key frame-key' }],
+    }
+    expect(buildAiPrompt(ctx)).toContain('[log] keys [redacted] [redacted] [redacted] [redacted] [redacted]')
+  })
+
+  it('keeps UUID visitor and account IDs, which the prompt sends on purpose', () => {
+    const ctx = {
+      ...baseContext,
+      status: { ...baseContext.status, detectedApiKey: null, visitorId: VISITOR_UUID, accountId: ACCOUNT_UUID },
+      captured: [{ level: 'log', text: `Visitor ${VISITOR_UUID.toUpperCase()} / account ${ACCOUNT_UUID} on ${KEY}` }],
+    }
+    const prompt = buildAiPrompt(ctx)
+    expect(prompt).toContain(`VisitorId: ${VISITOR_UUID}`)
+    expect(prompt).toContain(`AccountId: ${ACCOUNT_UUID}`)
+    expect(prompt).toContain(`[log] Visitor ${VISITOR_UUID.toUpperCase()} / account ${ACCOUNT_UUID} on [redacted]`)
+  })
+
+  it('redacts a visitor ID that equals a known key', () => {
+    const ctx = { ...baseContext, status: { ...baseContext.status, detectedApiKey: KEY, visitorId: KEY } }
+    const prompt = buildAiPrompt(ctx)
+    expect(prompt).toContain('VisitorId: [redacted]')
+    expect(prompt).not.toContain(KEY)
+  })
+
+  it('redacts a short known key only where it stands alone', () => {
+    const ctx = {
+      ...baseContext,
+      status: { ...baseContext.status, detectedApiKey: 'test' },
+      captured: [{ level: 'log', text: 'latest agent, apiKey: test' }],
+    }
+    expect(buildAiPrompt(ctx)).toContain('[log] latest agent, apiKey: [redacted]')
+  })
+
+  it('sends no key in the AI request body', async () => {
+    mockStorage({ aiProvider: 'openai', aiEndpoint: '', aiApiKey: 'sk-test', aiModel: '' })
+    fetch.mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: '- tip' } }] }) })
+    await requestAiAdvice({
+      ...baseContext,
+      status: { ...baseContext.status, detectedApiKey: null },
+      captured: [{ level: 'log', text: `API Key: ${KEY}` }],
+    })
+    expect(fetch.mock.calls[0][1].body).not.toContain(KEY)
+  })
+
+  it('popup.js buildAiPrompt returns the redacted prompt', () => {
+    const src = readFileSync(join(__dirname, '..', 'extension', 'popup.js'), 'utf8')
+    const body = src.slice(src.indexOf('function buildAiPrompt('), src.indexOf('function friendlyAiFailureDetail('))
+    expect(body).toContain("return redactApiKeysForAi(lines.join('\\n'), context);")
   })
 })

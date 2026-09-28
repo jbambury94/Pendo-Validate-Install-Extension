@@ -90,7 +90,7 @@ describe('pendo-telemetry', () => {
       frameMap: { available: true, inspected: 30, subframePendoCount: 3 },
       networkCapture: { summary: { requests: Array.from({ length: 30 }, () => ({ url: 'https://cdn.pendo.io/x', status: 500 })) } },
     }
-    const props = buildValidationCompletedProps(res, { aiAdviceUsed: true, ivaVersion: '1.9.1', browser: 'firefox' })
+    const props = buildValidationCompletedProps(res, { aiAdviceUsed: true, ivaVersion: '1.9.2', browser: 'firefox' })
     expect(JSON.stringify(props).length).toBeLessThan(450)
     expect(JSON.stringify(props)).not.toContain('customer.example.com')
     expect(JSON.stringify(props)).not.toContain('visitor')
@@ -122,7 +122,7 @@ describe('pendo-telemetry', () => {
         },
         har: { log: { entries: [] } },
       },
-    }, { ivaVersion: '1.9.1', browser: 'chrome' })
+    }, { ivaVersion: '1.9.2', browser: 'chrome' })
     expect(props).toMatchObject({
       ivaFrames: '2-5',
       ivaSubframe: true,

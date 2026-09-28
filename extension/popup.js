@@ -1435,20 +1435,38 @@ async function runInPage(opts) {
 
 // ========== AI advice (optional) ==========
 const AI_DEFAULT_MODELS = {
-  openai: 'gpt-4o-mini',
+  openai: 'gpt-5.6-luna',
   claude: 'claude-haiku-4-5-20251001',
-  gemini: 'gemini-3.5-flash',
+  gemini: 'gemini-3.8-flash',
+};
+
+const AI_FALLBACK_MODELS = {
+  openai: 'gpt-5.6-terra',
+  claude: 'claude-sonnet-5',
+  gemini: 'gemini-3.6-flash',
 };
 
 const DEPRECATED_AI_MODELS = new Set([
+  'gpt-4o-mini',
+  'gpt-4o-mini-2024-07-18',
   'gemini-2.0-flash',
   'gemini-2.0-flash-001',
   'gemini-2.0-flash-lite',
   'gemini-2.0-flash-lite-001',
   'gemini-3-flash-preview',
+  'gemini-3.5-flash',
+  'gpt-5-2025-08-07',
+  'gpt-5-mini-2025-08-07',
+  'gpt-5-nano-2025-08-07',
+  'gpt-5-pro-2025-10-06',
+  'o3-2025-04-16',
+  'o3-pro-2025-06-10',
 ]);
 
-/** Resolve a stored aiModel to the provider default; silently migrate deprecated Gemini model IDs. */
+/** Per-panel-session model override after a successful fallback (provider → model id). */
+const _aiSessionModelByProvider = {};
+
+/** Resolve a stored aiModel to the provider default; silently migrate deprecated model IDs. */
 function resolveAiModel(provider, aiModel) {
   const p = provider || 'openai';
   const custom = String(aiModel || '').trim();
@@ -1456,6 +1474,113 @@ function resolveAiModel(provider, aiModel) {
     return AI_DEFAULT_MODELS[p] || AI_DEFAULT_MODELS.openai;
   }
   return custom;
+}
+
+/** Primary then optional fallback for one provider (deduped). */
+function aiModelTryChain(provider, cfg) {
+  const p = provider || 'openai';
+  const primary = resolveAiModel(p, cfg && cfg.aiModel);
+  const fallback = AI_FALLBACK_MODELS[p];
+  const chain = [];
+  const add = (m) => { if (m && chain.indexOf(m) === -1) chain.push(m); };
+  add(primary);
+  if (fallback) add(fallback);
+  return chain;
+}
+
+/** Ordered model ids to try: session override first, then the rest of the chain for model-not-found retries. */
+function modelsToTryForProvider(provider, cfg) {
+  const p = provider || 'openai';
+  const chain = aiModelTryChain(p, cfg);
+  const sessionModel = _aiSessionModelByProvider[p];
+  if (!sessionModel) return chain;
+  const rest = chain.filter((m) => m !== sessionModel);
+  return [sessionModel, ...rest];
+}
+
+function isAiModelNotFoundResponse(status, apiErr) {
+  const s = String(apiErr || '').toLowerCase();
+  if (/model_not_found/.test(s)) return true;
+  if (/model.*(not found|does not exist|no longer|deprecated|retired|unknown)/.test(s)) return true;
+  if (status === 404 && /model/.test(s)) return true;
+  return false;
+}
+
+/** reasoning_effort on api.openai.com for bundled model ids, except the user's explicit primary custom id. */
+function openAiUsesReasoningEffort(cfg, model) {
+  const endpoint = String((cfg && cfg.aiEndpoint) || 'https://api.openai.com/v1/chat/completions').trim();
+  if (!/^https:\/\/api\.openai\.com\//i.test(endpoint)) return false;
+  const isBundled = model === AI_DEFAULT_MODELS.openai || model === AI_FALLBACK_MODELS.openai;
+  if (!isBundled) return false;
+  const custom = String((cfg && cfg.aiModel) || '').trim();
+  if (custom && !DEPRECATED_AI_MODELS.has(custom) && model === resolveAiModel('openai', cfg.aiModel)) return false;
+  return true;
+}
+
+const AI_PROMPT_SUPPORT_KEYS = 'installGuide, validateInstall, chooseIdsMetadata, identifyVisitors, configureMetadata, parentAccounts, csp, spa, gtm, segment, iframe, sandbox, agentSettings, agentDebug, troubleshooting, hostnameAllowlist, multiDomain, launcherPlan, signedMetadata, installComponents, vds, agentConfig';
+
+/** Build provider endpoint, headers, and JSON body for one model id. */
+function buildAiRequest(provider, model, prompt, systemMsg, cfg) {
+  const p = provider || 'openai';
+  let endpoint, headers, body;
+  if (p === 'claude') {
+    const claudeUrl = String((cfg && cfg.aiClaudeEndpoint) || '').trim();
+    endpoint = claudeUrl || 'https://api.anthropic.com/v1/messages';
+    const directAnthropic = /anthropic\.com/i.test(endpoint);
+    headers = {
+      'Content-Type': 'application/json',
+      'x-api-key': String((cfg && cfg.aiApiKey) || '').trim(),
+      'anthropic-version': '2023-06-01',
+    };
+    if (directAnthropic) headers['anthropic-dangerous-direct-browser-access'] = 'true';
+    body = { model, max_tokens: 1024, system: systemMsg, messages: [{ role: 'user', content: prompt }] };
+    if (/claude-sonnet-5|claude-opus-5/i.test(model)) {
+      body.output_config = { effort: 'low' };
+    }
+  } else if (p === 'gemini') {
+    const apiKey = String((cfg && cfg.aiApiKey) || '').trim();
+    endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+    headers = { 'Content-Type': 'application/json' };
+    body = {
+      systemInstruction: { parts: [{ text: systemMsg }] },
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: { thinkingConfig: { thinkingLevel: 'LOW' } },
+    };
+  } else {
+    endpoint = (cfg && cfg.aiEndpoint) || 'https://api.openai.com/v1/chat/completions';
+    headers = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${String((cfg && cfg.aiApiKey) || '').trim()}`,
+    };
+    body = {
+      model,
+      messages: [{ role: 'system', content: systemMsg }, { role: 'user', content: prompt }],
+    };
+    if (openAiUsesReasoningEffort(cfg, model)) body.reasoning_effort = 'none';
+  }
+  return { endpoint, headers, body };
+}
+
+function normalizeOpenAiAssistantContent(content) {
+  if (content == null) return '';
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .filter(part => part && typeof part.text === 'string' && part.type !== 'refusal')
+      .map(part => part.text)
+      .join('');
+  }
+  return '';
+}
+
+function extractAiResponseContent(provider, data) {
+  const p = provider || 'openai';
+  if (p === 'claude') return data?.content?.[0]?.text || '';
+  if (p === 'gemini') {
+    const parts = data?.candidates?.[0]?.content?.parts || [];
+    return parts.filter(part => part && typeof part.text === 'string' && !part.thought).map(part => part.text).join('');
+  }
+  return normalizeOpenAiAssistantContent(data?.choices?.[0]?.message?.content);
 }
 
 /** Read AI config from chrome.storage.local: aiEndpoint, aiApiKey, aiModel. Used for optional ChatGPT-powered advice. */
@@ -1484,8 +1609,8 @@ function buildAiPrompt(context) {
   lines.push(`Agent version: ${context.status.version || 'unknown'}`);
   lines.push(`validateInstall available: ${context.status.validatePresent}`);
   lines.push(`Pendo present: ${context.status.pendoPresent}`);
-  lines.push(`API key detected: ${context.status.detectedApiKey || 'unknown'}`);
-  lines.push(`API key found flag: ${context.apiKeyFound}`);
+  const pendoKeyPresent = !!(context.apiKeyFound || (context.status.detectedApiKey && String(context.status.detectedApiKey).trim()));
+  lines.push(`Pendo subscription API key present: ${pendoKeyPresent ? 'yes' : 'no'}`);
   lines.push(`VisitorId: ${context.status.visitorId || 'not set'}`);
   lines.push(`AccountId: ${context.status.accountId == null ? 'not set' : context.status.accountId}`);
   if (context.status.parentAccountId != null) {
@@ -1559,7 +1684,7 @@ function buildAiPrompt(context) {
     const kbEntries = selectRelatedReading(signals, 6);
     if (kbEntries && kbEntries.length) {
       lines.push('');
-      lines.push('Reference excerpts from official Pendo documentation (cite these where applicable; do not invent URLs):');
+      lines.push('Reference excerpts from official Pendo documentation (use for grounding; do not include URLs in your answer):');
       let charBudget = 800;
       for (const entry of kbEntries) {
         if (charBudget <= 0) break;
@@ -1579,14 +1704,17 @@ function buildAiPrompt(context) {
 
   lines.push('');
   lines.push('Respond ONLY with a JSON array. Each element: {"text":"one plain sentence","supportKey":"chooseIdsMetadata"}');
-  lines.push('Rules: text must be one plain sentence with no markdown, no URLs, no numbering. supportKey must be one of: installGuide, validateInstall, chooseIdsMetadata, configureMetadata, csp, spa, gtm, segment, iframe, sandbox, agentSettings, agentDebug, troubleshooting, hostnameAllowlist, multiDomain, launcherPlan, signedMetadata, installComponents, vds, agentConfig.');
+  lines.push(`Rules: text must be one plain sentence with no markdown, no URLs, no numbering. supportKey must be one of: ${AI_PROMPT_SUPPORT_KEYS}.`);
   lines.push('Max 3 items. Skip anything already covered in "Existing advice" above.');
-  return lines.join('\n');
+  return redactApiKeysForAi(lines.join('\n'), context);
 }
 
 /** Rewrite known provider errors into clearer guidance (e.g. Anthropic org blocks browser API). */
-function friendlyAiFailureDetail(provider, rawDetail) {
+function friendlyAiFailureDetail(provider, rawDetail, options) {
   const s = String(rawDetail || '');
+  if (options && options.modelRetired) {
+    return 'The AI model configured for this extension is no longer available from the provider. Update the Pendo Install Validator extension to restore AI suggestions.';
+  }
   if (provider === 'claude' && /cors requests are not allowed for this organization/i.test(s)) {
     return 'Anthropic returned an organization policy error: client-side (browser) API access is disabled for your workspace, and Chrome extensions are treated as client-side. Use OpenAI or Google Gemini in Settings, use an API key from a workspace that allows browser access, ask an Anthropic org admin to update that policy, or set storage key aiClaudeEndpoint to an HTTPS URL of a proxy you run that forwards to Anthropic’s Messages API (same request/response shape as /v1/messages).';
   }
@@ -1669,6 +1797,60 @@ function parseAiAdviceResponse(content, existingAdvice) {
   return results;
 }
 
+async function sendAiRequest(provider, cfg, endpoint, headers, body, timeoutMs, signal) {
+  if (provider === 'claude') {
+    let bg;
+    try {
+      bg = await sendExtMessage({
+        type: 'pendo-validate-ai-fetch',
+        endpoint,
+        headers,
+        body: JSON.stringify(body),
+        timeoutMs,
+      });
+    } catch (e) {
+      throw new Error((e && e.message) || 'Background AI proxy failed');
+    }
+    if (!bg || typeof bg.ok !== 'boolean') {
+      throw new Error('AI proxy unavailable: extension background did not respond.');
+    }
+    if (bg.error === 'timeout' || bg.error === 'network') {
+      throw new DOMException(bg.message || (bg.error === 'timeout' ? 'Aborted' : 'Network error'), bg.error === 'timeout' ? 'AbortError' : 'Error');
+    }
+    if (!bg.ok) {
+      const errBody = bg.json;
+      let apiErr = '';
+      const m = errBody && errBody.error && (errBody.error.message || errBody.error.type);
+      if (m) apiErr = String(m).slice(0, 200);
+      const parts = [`AI request failed with status ${bg.status}`];
+      if (apiErr) parts.push(apiErr);
+      if (bg.status === 401) parts.push('Use an API key from the same provider you selected (e.g. Anthropic console for Claude).');
+      const err = new Error(parts.join('. '));
+      err.status = bg.status;
+      err.apiErr = apiErr;
+      throw err;
+    }
+    return bg.json;
+  }
+  const res = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify(body), signal });
+  if (!res.ok) {
+    let apiErr = '';
+    try {
+      const errBody = await res.json();
+      const m = errBody && errBody.error && (errBody.error.message || errBody.error.type);
+      if (m) apiErr = String(m).slice(0, 200);
+    } catch (_) {}
+    const parts = [`AI request failed with status ${res.status}`];
+    if (apiErr) parts.push(apiErr);
+    if (res.status === 401) parts.push('Use an API key from the same provider you selected (e.g. Anthropic console for Claude).');
+    const err = new Error(parts.join('. '));
+    err.status = res.status;
+    err.apiErr = apiErr;
+    throw err;
+  }
+  return res.json();
+}
+
 /** Call configured AI API for remediation suggestions; returns array of { text, source: 'ai' }. */
 async function requestAiAdvice(context) {
   const cfg = await getAiConfig();
@@ -1679,113 +1861,47 @@ async function requestAiAdvice(context) {
   const prompt = buildAiPrompt(context);
   const systemMsg = 'You are a concise Pendo install troubleshooting assistant. Only rely on official Pendo documentation. Respond ONLY with a JSON array of objects, each with "text" (one plain sentence, no markdown/URLs/numbering) and "supportKey". Max 3 items. Do not repeat advice already provided.';
 
-  const model = resolveAiModel(provider, cfg.aiModel);
-  let endpoint, headers, body;
-
-  if (provider === 'claude') {
-    const claudeUrl = String((cfg && cfg.aiClaudeEndpoint) || '').trim();
-    endpoint = claudeUrl || 'https://api.anthropic.com/v1/messages';
-    const directAnthropic = /anthropic\.com/i.test(endpoint);
-    headers = {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-    };
-    if (directAnthropic) headers['anthropic-dangerous-direct-browser-access'] = 'true';
-    body = { model, max_tokens: 1024, system: systemMsg, messages: [{ role: 'user', content: prompt }] };
-  } else if (provider === 'gemini') {
-    endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
-    headers = { 'Content-Type': 'application/json' };
-    // Gemini 3.x is tuned for default sampling, so temperature/top_p/top_k are omitted. Thinking is
-    // pinned to LOW because the default (medium) effort can exceed timeoutMs on this short prompt.
-    body = { contents: [{ parts: [{ text: systemMsg + '\n\n' + prompt }] }], generationConfig: { thinkingConfig: { thinkingLevel: 'LOW' } } };
-  } else {
-    endpoint = cfg.aiEndpoint || 'https://api.openai.com/v1/chat/completions';
-    headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
-    body = { model, messages: [{ role: 'system', content: systemMsg }, { role: 'user', content: prompt }], temperature: 0.1 };
-  }
-
-  const controller = new AbortController();
+  const models = modelsToTryForProvider(provider, cfg);
   const timeoutMs = cfg.timeoutMs || 8000;
-  const timer = setTimeout(() => controller.abort('timeout'), timeoutMs);
-  try {
-    let data;
-    if (provider === 'claude') {
+  let lastError = null;
+  let modelRetired = false;
+
+  for (let i = 0; i < models.length; i++) {
+    const model = models[i];
+    const { endpoint, headers, body } = buildAiRequest(provider, model, prompt, systemMsg, cfg);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort('timeout'), timeoutMs);
+    try {
+      const data = await sendAiRequest(provider, cfg, endpoint, headers, body, timeoutMs, controller.signal);
       clearTimeout(timer);
-      let bg;
-      try {
-        // Route Claude requests through the background service worker to avoid extension-page fetch/CORS limits.
-        bg = await sendExtMessage({
-          type: 'pendo-validate-ai-fetch',
-          endpoint,
-          headers,
-          body: JSON.stringify(body),
-          timeoutMs,
-        });
-      } catch (e) {
-        throw new Error((e && e.message) || 'Background AI proxy failed');
-      }
-      if (!bg || typeof bg.ok !== 'boolean') {
-        throw new Error('AI proxy unavailable: extension background did not respond.');
-      }
-      if (bg.error === 'timeout' || bg.error === 'network') {
-        throw new DOMException(bg.message || (bg.error === 'timeout' ? 'Aborted' : 'Network error'), bg.error === 'timeout' ? 'AbortError' : 'Error');
-      }
-      if (!bg.ok) {
-        const errBody = bg.json;
-        let apiErr = '';
-        const m = errBody && errBody.error && (errBody.error.message || errBody.error.type);
-        if (m) apiErr = String(m).slice(0, 200);
-        const parts = [`AI request failed with status ${bg.status}`];
-        if (apiErr) parts.push(apiErr);
-        if (bg.status === 401) parts.push('Use an API key from the same provider you selected (e.g. Anthropic console for Claude).');
-        throw new Error(parts.join('. '));
-      }
-      data = bg.json;
-    } else {
-      const res = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify(body), signal: controller.signal });
+      const content = extractAiResponseContent(provider, data);
+      if (!content) return [];
+      if (i > 0) _aiSessionModelByProvider[provider] = model;
+      return parseAiAdviceResponse(content, context.advice);
+    } catch (e) {
       clearTimeout(timer);
-      if (!res.ok) {
-        let apiErr = '';
-        try {
-          const errBody = await res.json();
-          const m = errBody && errBody.error && (errBody.error.message || errBody.error.type);
-          if (m) apiErr = String(m).slice(0, 200);
-        } catch (_) {}
-        const parts = [`AI request failed with status ${res.status}`];
-        if (apiErr) parts.push(apiErr);
-        if (res.status === 401) parts.push('Use an API key from the same provider you selected (e.g. Anthropic console for Claude).');
-        throw new Error(parts.join('. '));
-      }
-      data = await res.json();
+      lastError = e;
+      const status = e && e.status;
+      const apiErr = (e && e.apiErr) || (e && e.message) || '';
+      const canRetry = i < models.length - 1
+        && isAiModelNotFoundResponse(status, apiErr)
+        && status !== 401
+        && status !== 429
+        && !(e && (e.name === 'AbortError' || (e.message && String(e.message).includes('aborted'))));
+      if (canRetry) continue;
+      if (isAiModelNotFoundResponse(status, apiErr) && i === models.length - 1) modelRetired = true;
+      break;
     }
-    let content = '';
-    if (provider === 'claude') content = data?.content?.[0]?.text || '';
-    else if (provider === 'gemini') {
-      const parts = data?.candidates?.[0]?.content?.parts || [];
-      content = parts.filter(p => p && typeof p.text === 'string' && !p.thought).map(p => p.text).join('');
-    }
-    else content = data?.choices?.[0]?.message?.content || '';
-    if (!content) {
-      return [];
-    }
-    return parseAiAdviceResponse(content, context.advice);
-  } catch (e) {
-    clearTimeout(timer);
-    console.error('AI request failed', e);
-    const isAbort = e && (e.name === 'AbortError' || (e.message && String(e.message).includes('aborted')));
-    let detail = isAbort
-      ? 'Request timed out. Check your network or increase timeoutMs in storage.'
-      : (e && e.message ? String(e.message) : String(e));
-    const friendly = friendlyAiFailureDetail(provider, detail);
-    if (friendly) detail = friendly;
-    // Mark with explicit supportKey so classifyAdvice routes this to the warn bucket.
-    // Without it, normalizeAdviceList falls back to inferSupportKeyFromText, which can
-    // match phrases like "API key" inside the failure detail and incorrectly route the
-    // item to the error bucket — but this is an extension-side AI failure, not a
-    // snippet/Launcher install error.
-    return [{ text: `AI suggestion unavailable: ${detail}`, source: 'ai', supportKey: 'technicalSupport', supportUrl: PENDO_SUPPORT.technicalSupport }];
   }
+
+  console.error('AI request failed', lastError);
+  const isAbort = lastError && (lastError.name === 'AbortError' || (lastError.message && String(lastError.message).includes('aborted')));
+  let detail = isAbort
+    ? 'Request timed out. Check your network or increase timeoutMs in storage.'
+    : (lastError && lastError.message ? String(lastError.message) : String(lastError));
+  const friendly = friendlyAiFailureDetail(provider, detail, { modelRetired });
+  if (friendly) detail = friendly;
+  return [{ text: `AI suggestion unavailable: ${detail}`, source: 'ai', supportKey: 'technicalSupport', supportUrl: PENDO_SUPPORT.technicalSupport }];
 }
 
 // ========== Tiny inline SVG helpers (no remote icon fonts) ==========
@@ -1883,7 +1999,10 @@ function initPopup() {
   const relatedReadingBody = document.getElementById('relatedReadingBody');
   const statusEmpty = document.getElementById('statusEmpty');
 
+  const logsCard = document.getElementById('logsCard');
+  const logsCardMeta = document.getElementById('logsCardMeta');
   const logsListEl = document.getElementById('logsList');
+  const collapsibleCards = Array.from(document.querySelectorAll('.card--collapsible'));
   const logsSearch = document.getElementById('logsSearch');
   const logCountErr = document.getElementById('logCountErr');
   const logCountWarn = document.getElementById('logCountWarn');
@@ -1922,6 +2041,7 @@ function initPopup() {
   let validationSeq = 0; // incremented per Validate click; stale AI callbacks compare before mutating UI
   let logFilters = { error: true, warn: true, info: true };
   let logQuery = '';
+  let logCardsOpen = { logs: false, installDetails: false, frames: false };
   let shareIncludeIdentity = false;
   let toastTimer = null;
   let statusHeroTimeTimer = null;
@@ -2515,7 +2635,7 @@ function initPopup() {
     container.appendChild(note);
   }
 
-  /** Status tab Frames card: shown when subframes were inspected or Pendo is only in a subframe. */
+  /** Logs tab Frames card: shown when subframes were inspected or Pendo is only in a subframe. */
   function renderFramesCard(frameMap, res) {
     if (!framesCard || !framesCardBody) return;
     framesCardBody.replaceChildren();
@@ -2590,11 +2710,32 @@ function initPopup() {
     }
   }
 
+  function setCardOpen(card, open) {
+    if (!card || !card.dataset.card) return;
+    const key = card.dataset.card;
+    logCardsOpen[key] = !!open;
+    card.dataset.open = open ? 'true' : 'false';
+    const toggle = card.querySelector('.card__toggle');
+    if (toggle) toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+
+  function applyLogCardsOpenState() {
+    for (const card of collapsibleCards) {
+      const key = card.dataset.card;
+      if (!key) continue;
+      setCardOpen(card, logCardsOpen[key] === true);
+    }
+  }
+
   function persistLogUiPrefs() {
     try {
       if (!chrome.storage || !chrome.storage.local) return;
       chrome.storage.local.set({
-        logUiPrefs: { filters: { ...logFilters }, query: logQuery || '' },
+        logUiPrefs: {
+          filters: { ...logFilters },
+          query: logQuery || '',
+          cards: { ...logCardsOpen },
+        },
       });
     } catch (_) { /* ignore */ }
   }
@@ -2606,6 +2747,7 @@ function initPopup() {
     if (logsSearch) logsSearch.value = token;
     if (kind === 'err') logFilters = { error: true, warn: false, info: false };
     else if (kind === 'warn') logFilters = { error: false, warn: true, info: false };
+    if (logsCard) setCardOpen(logsCard, true);
     persistLogUiPrefs();
     activateTab('logs');
     renderLogs();
@@ -2623,6 +2765,18 @@ function initPopup() {
     logFilterErr.setAttribute('aria-pressed', logFilters.error ? 'true' : 'false');
     logFilterWarn.setAttribute('aria-pressed', logFilters.warn ? 'true' : 'false');
     logFilterInfo.setAttribute('aria-pressed', logFilters.info ? 'true' : 'false');
+
+    if (logsCardMeta) {
+      if (!captured.length) {
+        logsCardMeta.textContent = lastContext ? '0 lines' : '';
+      } else {
+        const shown = visible.length;
+        const total = captured.length;
+        logsCardMeta.textContent = shown === total
+          ? `${total} line${total === 1 ? '' : 's'}`
+          : `${shown} of ${total} shown`;
+      }
+    }
 
     logsListEl.replaceChildren();
     if (!captured.length) {
@@ -2785,6 +2939,7 @@ function initPopup() {
     checkGroupsEl.replaceChildren();
     installDetailsBody.replaceChildren();
     logsListEl.replaceChildren();
+    if (logsCardMeta) logsCardMeta.textContent = '';
   }
 
   /**
@@ -3364,9 +3519,28 @@ function initPopup() {
           logQuery = logUiPrefs.query;
           if (logsSearch) logsSearch.value = logQuery;
         }
+        if (logUiPrefs.cards && typeof logUiPrefs.cards === 'object') {
+          for (const key of Object.keys(logCardsOpen)) {
+            logCardsOpen[key] = logUiPrefs.cards[key] === true;
+          }
+        }
+        applyLogCardsOpenState();
       }
     },
   );
+
+  for (const card of collapsibleCards) {
+    const chev = card.querySelector('.card__chev');
+    if (chev) chev.appendChild(makeIcon('chevron', 14));
+    const toggle = card.querySelector('.card__toggle');
+    if (toggle) {
+      toggle.addEventListener('click', () => {
+        const open = card.dataset.open === 'true';
+        setCardOpen(card, !open);
+        persistLogUiPrefs();
+      });
+    }
+  }
 
   shareIncludeIdentityInput?.addEventListener('change', () => {
     shareIncludeIdentity = !!shareIncludeIdentityInput.checked;

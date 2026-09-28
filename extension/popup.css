@@ -475,6 +475,40 @@ body {
   border-top: 1px solid var(--line-soft);
 }
 
+.card--collapsible .card__head { padding: 0; border-bottom: none; }
+.card--collapsible[data-open="true"] .card__head { border-bottom: 1px solid var(--line-soft); }
+.card--collapsible[data-open="false"] > :not(.card__head) { display: none; }
+.card__toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 12px;
+  margin: 0;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--font-sans);
+  color: inherit;
+}
+.card__toggle:hover { background: var(--panel-soft); }
+.card__toggle:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--pank-tint);
+}
+.card__toggle .card__meta { margin-left: auto; }
+.card__chev {
+  width: 14px;
+  height: 14px;
+  color: var(--ink-3);
+  transition: transform .15s;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+}
+.card--collapsible[data-open="true"] .card__chev { transform: rotate(90deg); }
+
 /* KV rows */
 .kv-row {
   display: grid;
