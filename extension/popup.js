@@ -1706,7 +1706,7 @@ function buildAiPrompt(context) {
   lines.push('Respond ONLY with a JSON array. Each element: {"text":"one plain sentence","supportKey":"chooseIdsMetadata"}');
   lines.push(`Rules: text must be one plain sentence with no markdown, no URLs, no numbering. supportKey must be one of: ${AI_PROMPT_SUPPORT_KEYS}.`);
   lines.push('Max 3 items. Skip anything already covered in "Existing advice" above.');
-  return lines.join('\n');
+  return redactApiKeysForAi(lines.join('\n'), context);
 }
 
 /** Rewrite known provider errors into clearer guidance (e.g. Anthropic org blocks browser API). */

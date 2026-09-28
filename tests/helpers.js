@@ -37,6 +37,8 @@ export const {
   countSeverityAdvice,
   hasDuplicateAgentScriptInstalls,
   collectDiagnosticsSecrets,
+  collectKnownApiKeys,
+  redactApiKeysForAi,
   buildDiagnosticsMetadata,
   describeFrame,
   buildDiagnosticsMarkdownSections,
@@ -794,7 +796,7 @@ export function buildAiPrompt(context, selectRelatedReadingFn) {
   lines.push('Respond ONLY with a JSON array. Each element: {"text":"one plain sentence","supportKey":"chooseIdsMetadata"}')
   lines.push(`Rules: text must be one plain sentence with no markdown, no URLs, no numbering. supportKey must be one of: ${AI_PROMPT_SUPPORT_KEYS}.`)
   lines.push('Max 3 items. Skip anything already covered in "Existing advice" above.')
-  return lines.join('\n')
+  return redactApiKeysForAi(lines.join('\n'), context)
 }
 
 export function enableDebuggingInPage() {

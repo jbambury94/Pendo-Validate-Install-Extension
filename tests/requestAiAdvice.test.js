@@ -699,3 +699,100 @@ describe('buildAiPrompt — enrichment details', () => {
     expect(guideLine.length).toBe(1200)
   })
 })
+
+describe('buildAiPrompt — API key redaction', () => {
+  const KEY = '8f3e2b1a-4c5d-4e6f-9a0b-1c2d3e4f5a6b'
+  const VISITOR_UUID = '0f0e0d0c-0b0a-4908-8706-050403020100'
+  const ACCOUNT_UUID = '1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d'
+
+  it('redacts a key validateInstall() printed when no key field was detected', () => {
+    const ctx = {
+      ...baseContext,
+      status: { ...baseContext.status, detectedApiKey: null },
+      apiKeyFound: true,
+      captured: [{ level: 'log', text: `API Key: ${KEY}` }],
+    }
+    const prompt = buildAiPrompt(ctx)
+    expect(prompt).toContain('Pendo subscription API key present: yes')
+    expect(prompt).toContain('[log] API Key: [redacted]')
+    expect(prompt).not.toContain(KEY)
+  })
+
+  it('redacts the detected key from the URL, CSP, logs, and advice in any case', () => {
+    const ctx = {
+      ...baseContext,
+      pageUrl: `https://app.example.com/?apiKey=${KEY}`,
+      status: { ...baseContext.status, detectedApiKey: KEY },
+      cspMeta: `script-src https://cdn.pendo.io/agent/static/${KEY}/pendo.js`,
+      captured: [{ level: 'warn', text: `Agent loaded for ${KEY.toUpperCase()}` }],
+      advice: [{ text: `Snippet uses key ${KEY}.`, source: 'builtin' }],
+    }
+    const prompt = buildAiPrompt(ctx)
+    expect(prompt.toLowerCase()).not.toContain(KEY)
+    expect(prompt).toContain('Page URL: https://app.example.com/?apiKey=[redacted]')
+    expect(prompt).toContain('CSP meta: script-src https://cdn.pendo.io/agent/static/[redacted]/pendo.js')
+    expect(prompt).toContain('[warn] Agent loaded for [redacted]')
+    expect(prompt).toContain('- Snippet uses key [redacted].')
+  })
+
+  it('redacts non-UUID keys from other agents, agent scripts, and frames', () => {
+    const ctx = {
+      ...baseContext,
+      status: {
+        ...baseContext.status,
+        detectedApiKey: 'primary-key',
+        apiKeysSeen: ['primary-key', 'seen-key'],
+        otherAgentApiKey: 'launcher-key',
+        agentScripts: [{ src: 'https://cdn.pendo.io/agent/static/x/pendo.js', apiKey: 'script-key' }],
+      },
+      frameMap: { available: true, frames: [{ isTop: false, url: 'https://embed.example.com/', apiKey: 'frame-key' }] },
+      captured: [{ level: 'log', text: 'keys primary-key seen-key launcher-key script-key frame-key' }],
+    }
+    expect(buildAiPrompt(ctx)).toContain('[log] keys [redacted] [redacted] [redacted] [redacted] [redacted]')
+  })
+
+  it('keeps UUID visitor and account IDs, which the prompt sends on purpose', () => {
+    const ctx = {
+      ...baseContext,
+      status: { ...baseContext.status, detectedApiKey: null, visitorId: VISITOR_UUID, accountId: ACCOUNT_UUID },
+      captured: [{ level: 'log', text: `Visitor ${VISITOR_UUID.toUpperCase()} / account ${ACCOUNT_UUID} on ${KEY}` }],
+    }
+    const prompt = buildAiPrompt(ctx)
+    expect(prompt).toContain(`VisitorId: ${VISITOR_UUID}`)
+    expect(prompt).toContain(`AccountId: ${ACCOUNT_UUID}`)
+    expect(prompt).toContain(`[log] Visitor ${VISITOR_UUID.toUpperCase()} / account ${ACCOUNT_UUID} on [redacted]`)
+  })
+
+  it('redacts a visitor ID that equals a known key', () => {
+    const ctx = { ...baseContext, status: { ...baseContext.status, detectedApiKey: KEY, visitorId: KEY } }
+    const prompt = buildAiPrompt(ctx)
+    expect(prompt).toContain('VisitorId: [redacted]')
+    expect(prompt).not.toContain(KEY)
+  })
+
+  it('redacts a short known key only where it stands alone', () => {
+    const ctx = {
+      ...baseContext,
+      status: { ...baseContext.status, detectedApiKey: 'test' },
+      captured: [{ level: 'log', text: 'latest agent, apiKey: test' }],
+    }
+    expect(buildAiPrompt(ctx)).toContain('[log] latest agent, apiKey: [redacted]')
+  })
+
+  it('sends no key in the AI request body', async () => {
+    mockStorage({ aiProvider: 'openai', aiEndpoint: '', aiApiKey: 'sk-test', aiModel: '' })
+    fetch.mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: '- tip' } }] }) })
+    await requestAiAdvice({
+      ...baseContext,
+      status: { ...baseContext.status, detectedApiKey: null },
+      captured: [{ level: 'log', text: `API Key: ${KEY}` }],
+    })
+    expect(fetch.mock.calls[0][1].body).not.toContain(KEY)
+  })
+
+  it('popup.js buildAiPrompt returns the redacted prompt', () => {
+    const src = readFileSync(join(__dirname, '..', 'extension', 'popup.js'), 'utf8')
+    const body = src.slice(src.indexOf('function buildAiPrompt('), src.indexOf('function friendlyAiFailureDetail('))
+    expect(body).toContain("return redactApiKeysForAi(lines.join('\\n'), context);")
+  })
+})

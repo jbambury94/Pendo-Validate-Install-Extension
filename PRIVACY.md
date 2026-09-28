@@ -74,6 +74,8 @@ The request body includes:
 - Pendo agent version, whether a Pendo subscription API key was detected on the page (yes/no only — the key value is not sent), visitor/account IDs, and CSP metadata from the validated page.
 - Up to 30 captured console log lines (which may contain application-specific identifiers).
 - The recommendations already shown in the panel, so the AI doesn't repeat them. These can name frame URLs, blocked Pendo request URLs, and subframe visitor or account IDs.
+
+Before the request is sent, every Pendo subscription API key found during the run (on the page, in other agents, in agent script URLs, and in subframes) is replaced with `[redacted]` wherever it appears in the request, including the page URL, CSP metadata, console lines, and recommendations. Any other UUID is redacted too, because Pendo API keys are UUIDs and `pendo.validateInstall()` prints them. The only UUIDs kept are ones that match the visitor, account, or parent account ID, which the request sends on purpose.
 - Up to six curated knowledge-base article excerpts, capped at about 800 characters of excerpt text in total (bundled locally, not fetched).
 - When loaded, an optional install-quality guide excerpt of up to about 1,200 characters.
 

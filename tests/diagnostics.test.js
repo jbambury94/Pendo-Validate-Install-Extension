@@ -16,6 +16,8 @@ import {
   hasSubframeOnlyPendo,
   deriveSubframeHeroState,
   collectDiagnosticsSecrets,
+  collectKnownApiKeys,
+  redactApiKeysForAi,
   buildDiagnosticsMetadata,
   describeFrame,
   buildDiagnosticsMarkdownSections,
@@ -614,6 +616,16 @@ describe('report helpers', () => {
   it('collects frame identities, keys and hosts for Share redaction', () => {
     const secrets = collectDiagnosticsSecrets(context)
     expect(secrets).toEqual(expect.arrayContaining([KEY_A, KEY_B, 'sub-visitor', 'sub-account', 'embed.partner.test', 'app.example.com']))
+  })
+
+  it('collects each known API key once, and no identities or hosts', () => {
+    expect(collectKnownApiKeys(context)).toEqual([KEY_A, KEY_B])
+  })
+
+  it('redacts known keys and other UUIDs for the AI prompt', () => {
+    const text = `a ${KEY_A} b ${KEY_B.toUpperCase()} c 9d9d9d9d-1111-4222-8333-444444444444 sub-visitor`
+    expect(redactApiKeysForAi(text, context)).toBe('a [redacted] b [redacted] c [redacted] sub-visitor')
+    expect(redactApiKeysForAi(null, context)).toBe('')
   })
 
   it('builds the Markdown metadata keys', () => {

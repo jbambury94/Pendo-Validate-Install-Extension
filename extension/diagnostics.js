@@ -680,18 +680,52 @@ function resolveSubframeHeroState(res, originNote) {
   return subframeHero;
 }
 
+/** Every Pendo subscription API key this run saw: primary and other agent, agent scripts, frames. */
+function collectKnownApiKeys(context) {
+  const out = [];
+  const add = (v) => {
+    if (v == null) return;
+    const s = String(v).trim();
+    if (s && out.indexOf(s) === -1) out.push(s);
+  };
+  const status = (context && context.status) || {};
+  add(status.detectedApiKey);
+  (Array.isArray(status.apiKeysSeen) ? status.apiKeysSeen : []).forEach(add);
+  add(status.otherAgentApiKey);
+  (Array.isArray(status.agentScripts) ? status.agentScripts : []).forEach(s => add(s && s.apiKey));
+  const fm = context && context.frameMap;
+  for (const f of (fm && Array.isArray(fm.frames) ? fm.frames : [])) add(f && f.apiKey);
+  return out;
+}
+
+/**
+ * Strips subscription API keys from text sent to an AI provider. Known keys go first; then any
+ * other UUID, because keys are UUIDs and validateInstall() prints them. A UUID equal to the
+ * visitor, account, or parent account ID stays: the prompt sends those IDs on purpose.
+ */
+function redactApiKeysForAi(text, context) {
+  let out = String(text == null ? '' : text);
+  const keys = collectKnownApiKeys(context).sort((a, b) => b.length - a.length);
+  for (const key of keys) {
+    const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    out = out.replace(new RegExp(`(?<![0-9A-Za-z])${escaped}(?![0-9A-Za-z])`, 'gi'), '[redacted]');
+  }
+  const status = (context && context.status) || {};
+  const identity = [status.visitorId, status.accountId, status.parentAccountId]
+    .filter(v => v != null && v !== '')
+    .map(v => String(v).toLowerCase());
+  return out.replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
+    m => (identity.indexOf(m.toLowerCase()) !== -1 ? m : '[redacted]'));
+}
+
 /** Values the Share summary must redact when identity is off (frame IDs, API keys, frame hosts). */
 function collectDiagnosticsSecrets(context) {
-  const out = [];
+  const out = collectKnownApiKeys(context);
   const add = (v) => { if (v != null && v !== '') out.push(String(v)); };
-  const status = (context && context.status) || {};
-  (status.apiKeysSeen || []).forEach(add);
-  add(status.otherAgentApiKey);
   const fm = context && context.frameMap;
   for (const f of (fm && Array.isArray(fm.frames) ? fm.frames : [])) {
     add(f.visitorId);
     add(f.accountId);
-    add(f.apiKey);
     try { add(new URL(f.url).host); } catch { /* about:blank etc. */ }
   }
   return out;
