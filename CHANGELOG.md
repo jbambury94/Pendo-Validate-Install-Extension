@@ -5,6 +5,8 @@
 - **AI model fallback.** When the provider returns a model-not-found error, the extension retries once with a backup model for that provider and remembers the working model for the rest of the panel session.
 - **AI prompt privacy.** The validated page's Pendo subscription API key is no longer sent to AI providers — only whether a key was detected. Prompt rules add `identifyVisitors` and `parentAccounts` support keys; KB excerpt instructions no longer ask the model to cite URLs.
 - **PRIVACY.md** updated to match AI request contents and excerpt size caps.
+- **1.9.1 follow-up fixes** merged from Stable: network capture uses the overlay host tab (including when capture fails to start), incomplete in-flight requests, agent-script URL classification on any `/agent/` path, and Markdown config conflicts when the active value is the default.
+- **Tests.** 785 tests across 35 suites.
 
 ## 1.9.1
 - **Deeper checks on every Validate.** **Validate Pendo Install** now runs five extra checks alongside `validateInstall()`. There is no separate diagnostics mode. The checks always call the page's own agent, never the panel's self-instrumentation instance, and a static test enforces that.
