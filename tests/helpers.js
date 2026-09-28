@@ -25,6 +25,7 @@ export const {
   summarizeFrameProbeResults,
   classifyPendoRequest,
   describeNetworkFailure,
+  isIncompleteNetworkRequest,
   groupNetworkRequests,
   buildNetworkFindings,
   networkCaptureMatchesPage,

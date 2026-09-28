@@ -2541,15 +2541,23 @@ function initPopup() {
     }
     for (const g of groups) {
       const label = g.label.charAt(0).toUpperCase() + g.label.slice(1);
-      if (!g.failures.length) {
+      if (!g.failures.length && !g.incomplete.length) {
         appendInfoRow(networkCardBody, { label, value: `${g.total} request${g.total === 1 ? '' : 's'}, all OK` });
-      } else {
+      } else if (g.failures.length) {
         const first = g.failures[0];
         appendInfoRow(networkCardBody, {
           label,
-          value: `${g.failures.length} of ${g.total} failed`,
+          value: `${g.failures.length} of ${g.total} failed` + (g.incomplete.length ? `, ${g.incomplete.length} incomplete` : ''),
           sub: `${first.text}: ${first.url}`,
           tone: g.kind === 'agent' ? 'err' : 'warn',
+        });
+      } else {
+        const first = g.incomplete[0];
+        appendInfoRow(networkCardBody, {
+          label,
+          value: `${g.incomplete.length} of ${g.total} incomplete`,
+          sub: `${first.text}: ${first.url}`,
+          tone: 'warn',
         });
       }
     }

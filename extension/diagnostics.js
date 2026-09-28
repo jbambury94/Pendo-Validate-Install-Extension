@@ -13,6 +13,7 @@ var DIAG_NO_RESOURCES_PREFIX = 'No Pendo network resources observed';
 var DIAG_NOT_DETECTED_PREFIX = 'Pendo agent not detected.';
 var DIAG_NO_API_KEY_PREFIX = 'No API key detected.';
 var DIAG_NETWORK_NOT_RUN = 'Network capture not run (turn on in Settings; Chrome/Edge only).';
+var DIAG_NETWORK_INCOMPLETE_TEXT = 'no response before the capture stopped';
 
 // Built-ins the agent relies on to serialize and send data. Keys are validateNativeMethods()
 // type labels; null means any wrapped method of that type. Promise and XMLHttpRequest are left
@@ -480,16 +481,22 @@ function describeNetworkFailure(req) {
   return null;
 }
 
-/** Requests grouped by kind, in display order, each with its failures. */
+/** Still in flight when the capture stopped: no response, no loading failure, not canceled. */
+function isIncompleteNetworkRequest(req) {
+  return !!req && !req.canceled && typeof req.status !== 'number' && !describeNetworkFailure(req);
+}
+
+/** Requests grouped by kind, in display order, each with its failures and incomplete requests. */
 function groupNetworkRequests(summary) {
   const order = ['agent', 'events', 'guides', 'polls', 'replay', 'other'];
   const groups = {};
   for (const req of (summary && Array.isArray(summary.requests) ? summary.requests : [])) {
     const kind = classifyPendoRequest(req.url);
-    const g = groups[kind] || (groups[kind] = { kind, label: DIAG_REQUEST_KIND_LABELS[kind], total: 0, failures: [] });
+    const g = groups[kind] || (groups[kind] = { kind, label: DIAG_REQUEST_KIND_LABELS[kind], total: 0, failures: [], incomplete: [] });
     g.total++;
     const failure = describeNetworkFailure(req);
     if (failure) g.failures.push({ url: req.url, status: req.status, code: failure.code, text: failure.text });
+    else if (isIncompleteNetworkRequest(req)) g.incomplete.push({ url: req.url, text: DIAG_NETWORK_INCOMPLETE_TEXT });
   }
   return order.filter(k => groups[k]).map(k => groups[k]);
 }
@@ -523,9 +530,20 @@ function buildNetworkFindings(summary) {
     }
   }
 
+  const pending = groups.filter(g => g.incomplete.length);
+  const incomplete = pending.reduce((n, g) => n + g.incomplete.length, 0);
+  if (incomplete) {
+    advice.push({
+      text: `${incomplete} Pendo ${diagPlural(incomplete, 'request')} had ${DIAG_NETWORK_INCOMPLETE_TEXT} `
+        + `(${pending.map(g => `${g.incomplete.length} ${g.label}`).join(', ')}), for example ${pending[0].incomplete[0].url}. `
+        + `${incomplete === 1 ? 'It' : 'They'} may have finished later, so the outcome is unknown. Validate again to recheck.`,
+      source: 'builtin', supportKey: 'troubleshooting',
+    });
+  }
+
   const failed = groups.reduce((n, g) => n + g.failures.length, 0);
   const total = groups.reduce((n, g) => n + g.total, 0);
-  if (total && !failed) {
+  if (total && !failed && !incomplete) {
     checks.push(`Network capture: all ${total} Pendo ${diagPlural(total, 'request')} completed (${groups.map(g => `${g.total} ${g.label}`).join(', ')}).`);
   }
   if (!total) {
@@ -733,15 +751,17 @@ function buildDiagnosticsMarkdownSections(context) {
     lines.push('### Config options (non-default)');
     if (!cfgSum.reported) {
       lines.push('Not reported by this agent version.');
-    } else if (!cfgSum.options.length) {
-      lines.push('All config options are at their defaults.');
     } else {
-      lines.push('| Option | Value | Source |');
-      lines.push('| --- | --- | --- |');
-      cfgSum.options.forEach((o) => {
-        const safeVal = String(o.value).replace(/\|/g, '\\|').replace(/\n/g, ' ');
-        lines.push(`| ${o.name} | ${safeVal} | ${o.sourceLabel} |`);
-      });
+      if (!cfgSum.options.length) {
+        lines.push('All config options are at their defaults.');
+      } else {
+        lines.push('| Option | Value | Source |');
+        lines.push('| --- | --- | --- |');
+        cfgSum.options.forEach((o) => {
+          const safeVal = String(o.value).replace(/\|/g, '\\|').replace(/\n/g, ' ');
+          lines.push(`| ${o.name} | ${safeVal} | ${o.sourceLabel} |`);
+        });
+      }
       cfgSum.conflicts.forEach((c) => {
         if (c.detail) lines.push(`- **Config conflict — ${c.name}:** ${c.detail}`);
       });
@@ -797,7 +817,7 @@ function buildDiagnosticsMarkdownSections(context) {
     const MAX_LINES = 100;
     reqs.slice(0, MAX_LINES).forEach(r => {
       const failure = describeNetworkFailure(r);
-      const outcome = failure ? failure.text : (r.canceled ? 'canceled' : (r.status != null ? String(r.status) : 'no response'));
+      const outcome = failure ? failure.text : (r.canceled ? 'canceled' : (typeof r.status === 'number' ? String(r.status) : DIAG_NETWORK_INCOMPLETE_TEXT));
       lines.push(`- **${classifyPendoRequest(r.url)}** ${r.method || 'GET'} ${r.url} — ${outcome}`);
     });
     if (reqs.length > MAX_LINES) lines.push(`…and ${reqs.length - MAX_LINES} more (see the HAR download).`);
