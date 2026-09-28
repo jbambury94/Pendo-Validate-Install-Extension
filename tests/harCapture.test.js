@@ -258,4 +258,81 @@ describe('har-capture', () => {
     expect(bucketHarEntries(0)).toBe('0')
     expect(bucketHarEntries(12)).toBe('11-50')
   })
+
+  describe('summarizePendoNetworkFromCdp', () => {
+    const SELF_KEY = '928b3d0d-8a3b-48b1-bf35-a6af3565dcc5'
+    const sent = (requestId, url, extra) => ({ method: 'Network.requestWillBeSent', params: { requestId, request: { url, method: 'GET' }, ...extra } })
+    const received = (requestId, url, status, extra) => ({ method: 'Network.responseReceived', params: { requestId, response: { url, status, headers: {} }, ...extra } })
+    const failed = (requestId, params) => ({ method: 'Network.loadingFailed', params: { requestId, ...params } })
+
+    it('records each Pendo request outcome without query strings', () => {
+      const summary = summarizePendoNetworkFromCdp([
+        sent('1', `https://cdn.pendo.io/agent/static/${API_KEY}/pendo.js?v=1`, { type: 'Script' }),
+        received('1', `https://cdn.pendo.io/agent/static/${API_KEY}/pendo.js?v=1`, 200, { type: 'Script' }),
+        sent('2', `https://data.pendo.io/data/ptm.gif/${API_KEY}?ct=1&jzb=secret`, { type: 'Image' }),
+        failed('2', { errorText: 'net::ERR_BLOCKED_BY_CLIENT', canceled: false }),
+        sent('3', `https://data.pendo.io/data/guide.js/${API_KEY}`),
+        failed('3', { errorText: 'net::ERR_FAILED', blockedReason: 'csp' }),
+        sent('4', `https://data.pendo.io/data/poll.gif/${API_KEY}`),
+        failed('4', { errorText: 'net::ERR_FAILED', corsErrorStatus: { corsError: 'MissingAllowOriginHeader' } }),
+        sent('5', 'https://example.com/app.js'),
+        received('5', 'https://example.com/app.js', 200),
+      ], { extensionOrigin: 'chrome-extension://abc' })
+      expect(summary.requestCount).toBe(4)
+      expect(summary.truncated).toBe(false)
+      expect(summary.requests.map(r => r.url)).toEqual([
+        `https://cdn.pendo.io/agent/static/${API_KEY}/pendo.js`,
+        `https://data.pendo.io/data/ptm.gif/${API_KEY}`,
+        `https://data.pendo.io/data/guide.js/${API_KEY}`,
+        `https://data.pendo.io/data/poll.gif/${API_KEY}`,
+      ])
+      expect(summary.requests[0]).toMatchObject({ status: 200, type: 'Script', errorText: null })
+      expect(summary.requests[1]).toMatchObject({ errorText: 'net::ERR_BLOCKED_BY_CLIENT', canceled: false })
+      expect(summary.requests[2]).toMatchObject({ blockedReason: 'csp' })
+      expect(summary.requests[3]).toMatchObject({ corsError: 'MissingAllowOriginHeader' })
+      expect(JSON.stringify(summary)).not.toContain('secret')
+    })
+
+    it('reads the CSP headers from the first document response', () => {
+      const summary = summarizePendoNetworkFromCdp([
+        sent('d', 'https://app.example.com/home?token=abc', { type: 'Document' }),
+        received('d', 'https://app.example.com/home?token=abc', 200, {
+          type: 'Document',
+          response: {
+            url: 'https://app.example.com/home?token=abc',
+            status: 200,
+            headers: {
+              'Content-Security-Policy': "script-src 'self'\ndefault-src 'none'",
+              'content-security-policy-report-only': "img-src 'self'",
+            },
+          },
+        }),
+        received('f', 'https://frame.example.com/', 200, {
+          type: 'Document',
+          response: { url: 'https://frame.example.com/', status: 200, headers: { 'Content-Security-Policy': 'frame' } },
+        }),
+      ], {})
+      expect(summary.documentUrl).toBe('https://app.example.com/home')
+      expect(summary.documentCsp).toEqual({ enforce: ["script-src 'self'", "default-src 'none'"], reportOnly: ["img-src 'self'"] })
+      expect(summary.requests).toEqual([])
+    })
+
+    it('excludes the self-instrumentation agent and extension-initiated requests', () => {
+      const summary = summarizePendoNetworkFromCdp([
+        sent('1', `https://data.pendo.io/data/ptm.gif/${SELF_KEY}`),
+        sent('2', `https://data.pendo.io/data/ptm.gif/${API_KEY}`, { documentURL: 'chrome-extension://abc/popup.html' }),
+        sent('3', `https://data.pendo.io/data/ptm.gif/${API_KEY}`, { documentURL: 'https://app.example.com/' }),
+      ], { extensionOrigin: 'chrome-extension://abc' })
+      expect(summary.requestCount).toBe(1)
+    })
+
+    it('caps the request list and reports truncation', () => {
+      const events = []
+      for (let i = 0; i < 5; i++) events.push(sent(String(i), `https://data.pendo.io/data/ptm.gif/${API_KEY}?n=${i}`))
+      const summary = summarizePendoNetworkFromCdp(events, { maxRequests: 2 })
+      expect(summary.requests).toHaveLength(2)
+      expect(summary.requestCount).toBe(5)
+      expect(summary.truncated).toBe(true)
+    })
+  })
 })

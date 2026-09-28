@@ -276,6 +276,104 @@ function buildHarFromCdpEvents(events, meta) {
   };
 }
 
+function stripUrlQuery(url) {
+  return String(url || '').split(/[?#]/)[0];
+}
+
+function cdpHeaderValues(headers, lowerName) {
+  const out = [];
+  if (!headers || typeof headers !== 'object') return out;
+  for (const [name, value] of Object.entries(headers)) {
+    if (String(name).toLowerCase() !== lowerName || value == null || value === '') continue;
+    // CDP joins repeated headers with newlines.
+    for (const v of String(value).split('\n')) if (v.trim()) out.push(v.trim());
+  }
+  return out;
+}
+
+/**
+ * Outcome of each Pendo request in a CDP reload capture, plus the page's CSP response headers.
+ * Query strings are dropped; the panel (diagnostics.js) classifies and grades the requests.
+ * @param {Array<{ method: string, params: object }>} events
+ * @param {{ extensionOrigin?: string, selfApiKey?: string, maxRequests?: number }} meta
+ */
+function summarizePendoNetworkFromCdp(events, meta) {
+  const m = meta || {};
+  const maxRequests = m.maxRequests || 200;
+  const byId = new Map();
+  let documentUrl = '';
+  const documentCsp = { enforce: [], reportOnly: [] };
+  let documentSeen = false;
+
+  for (const ev of events || []) {
+    const params = (ev && ev.params) || {};
+    const requestId = params.requestId;
+    if (!requestId) continue;
+    if (ev.method === 'Network.requestWillBeSent') {
+      const req = params.request || {};
+      const prev = byId.get(requestId);
+      byId.set(requestId, {
+        url: req.url || (prev && prev.url) || '',
+        method: req.method || 'GET',
+        type: params.type || (prev && prev.type) || '',
+        documentURL: params.documentURL || '',
+        initiatorUrl: (params.initiator && params.initiator.url) || '',
+        status: null,
+        errorText: null,
+        blockedReason: null,
+        corsError: null,
+        canceled: false,
+      });
+    } else if (ev.method === 'Network.responseReceived') {
+      const res = params.response || {};
+      const slot = byId.get(requestId) || { url: res.url || '', method: 'GET', type: params.type || '', documentURL: '', initiatorUrl: '', errorText: null, blockedReason: null, corsError: null, canceled: false };
+      slot.status = typeof res.status === 'number' ? res.status : null;
+      if (!slot.url) slot.url = res.url || '';
+      byId.set(requestId, slot);
+      // The first document response of the reload is the top-level page.
+      if (!documentSeen && params.type === 'Document') {
+        documentSeen = true;
+        documentUrl = stripUrlQuery(res.url || slot.url);
+        documentCsp.enforce = cdpHeaderValues(res.headers, 'content-security-policy');
+        documentCsp.reportOnly = cdpHeaderValues(res.headers, 'content-security-policy-report-only');
+      }
+    } else if (ev.method === 'Network.loadingFailed') {
+      const slot = byId.get(requestId);
+      if (!slot) continue;
+      slot.errorText = params.errorText || 'loading failed';
+      slot.blockedReason = params.blockedReason || null;
+      slot.corsError = (params.corsErrorStatus && params.corsErrorStatus.corsError) || null;
+      slot.canceled = !!params.canceled;
+    }
+  }
+
+  const requests = [];
+  let requestCount = 0;
+  for (const slot of byId.values()) {
+    if (!isPendoNetworkUrl(slot.url)) continue;
+    if (isSelfInstrumentationRequest({
+      url: slot.url,
+      documentURL: slot.documentURL,
+      frameUrl: slot.documentURL,
+      initiatorUrl: slot.initiatorUrl,
+    }, { extensionOrigin: m.extensionOrigin, selfApiKey: m.selfApiKey })) continue;
+    requestCount++;
+    if (requests.length >= maxRequests) continue;
+    requests.push({
+      url: stripUrlQuery(slot.url),
+      method: slot.method,
+      type: slot.type,
+      status: slot.status,
+      errorText: slot.errorText,
+      blockedReason: slot.blockedReason,
+      corsError: slot.corsError,
+      canceled: slot.canceled,
+    });
+  }
+
+  return { documentUrl, documentCsp, requests, requestCount, truncated: requestCount > requests.length };
+}
+
 /**
  * Partial HAR from Performance Resource Timing (no status/headers; no reload).
  * @param {Array<object>} entries - MAIN-world resource timing objects

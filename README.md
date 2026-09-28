@@ -12,7 +12,7 @@
   <img src="https://img.shields.io/badge/Chrome-MV3-blue" alt="Chrome MV3" />
   <img src="https://img.shields.io/badge/Edge-MV3-blue" alt="Edge MV3" />
   <img src="https://img.shields.io/badge/Firefox-MV3%20(128%2B)-orange" alt="Firefox MV3 (128+)" />
-  <img src="https://img.shields.io/badge/version-1.9.0-FF4876" alt="Version 1.9.0" />
+  <img src="https://img.shields.io/badge/version-1.9.1-FF4876" alt="Version 1.9.1" />
   <img src="https://img.shields.io/badge/AI-OpenAI%20%7C%20Claude%20%7C%20Gemini-lightgrey" alt="AI: OpenAI | Claude | Gemini" />
 </p>
 
@@ -31,6 +31,8 @@ Debugging a Pendo installation today means juggling browser DevTools, running `p
 - **One click, three-phase detection** — finds the Pendo agent whether it comes from a snippet on the page, the Pendo Launcher injecting into the same tab, or a Launcher running in a separate tab.
 - **Identity and metadata at a glance** — reads `visitorId`, `accountId`, and visitor/account metadata fields directly from the agent state.
 - **CSP and API key checks** — flags missing Pendo domains in `Content-Security-Policy` meta tags and confirms whether an API key is present.
+- **Deeper install checks on every Validate** — runs the page agent's own `validateEnvironment()` (errors the agent has logged, built-ins such as `JSON.stringify` replaced by the page, and **non-default config options** from the agent's Validate Config audit — snippet vs hosted config vs `window.pendo`), flags an agent script included more than once or agents for more than one API key, spots anonymous `_PENDO_T_` visitors, and maps every frame on the page to show where Pendo is running — including installs that live only in a subframe.
+- **Optional network capture (Chrome / Edge)** — turn it on in Settings and **Validate** reloads the page to record which Pendo requests succeed or are blocked (CSP, ad blockers, HTTP errors), plus the page's CSP response header. The capture also backs the Logs → **HAR** download without a second reload.
 - **Curated support links** — every validation surfaces a *Related reading* card with hand-picked entries from a built-in knowledge base of 25 Pendo support articles.
 - **Extended page signals** — detects iframe / sandbox embedding, Google Tag Manager, common SPA frameworks (React / Vue / Angular / Next / Nuxt), the bundled Pendo agent version, and URL sanitization that can strip Pendo's Visual Design Studio token — both load-time redirects and client-side logic (inline-script scan plus history-API instrumentation).
 - **Light / Dark / System theme.** Theme selector in Settings persists locally and applies before first paint, so there's no flash of unstyled content.
@@ -69,11 +71,11 @@ The panel has three tabs:
 
 | Tab | What you'll find |
 |-----|-----------------|
-| **Status** | Pass/warn/error hero, quick stats (Errors / Warnings / Passing), prioritised checks & recommendations, *Related reading* (curated Pendo KB links), identity, and metadata cards. |
-| **Logs** | Colour-coded captured console output with level filter chips (Err / Warn / Info), text search, one-click copy, and a Page facts panel. |
-| **Settings** | Appearance (System / Light / Dark theme), page snapshot summary, and AI advice configuration (provider picker, API key with show/hide toggle, save). |
+| **Status** | Pass/warn/error hero, quick stats (Errors / Warnings / Passing), prioritised checks & recommendations, **Frames** (when the page has subframes) and **Network** (after a network capture) cards, and *Related reading* (curated Pendo KB links). |
+| **Logs** | Colour-coded captured console output with level filter chips (Err / Warn / Info), text search, one-click copy, **HAR** download, and an **Install details** card (identity, metadata, agent environment, agent scripts, and API keys seen). |
+| **Settings** | Sharing (Share identity opt-in, Markdown report download), Network capture (Chrome / Edge), appearance (System / Light / Dark theme), and AI advice configuration (provider picker, API key with show/hide toggle, save). |
 
-The action bar at the bottom gives you **Validate Pendo Install**, **Debugger** (`pendo.enableDebugging()`), and **Export** (Markdown report or Copy summary).
+The action bar at the bottom gives you **Validate Pendo Install**, **Debugger** (`pendo.enableDebugging()`), and **Share** (a plain-text summary for Slack or Jira).
 
 ---
 
@@ -91,7 +93,7 @@ Your key is stored locally in `chrome.storage.local` and is only sent when valid
 
 ## Your data stays yours
 
-- **AI is opt-in only.** Calls happen only when you've saved a key, only after validation finds a problem, and only the page URL, agent metadata, and up to 30 captured log lines are sent. Logs may contain user IDs or application details — use the feature only on pages where you're comfortable sharing that context.
+- **AI is opt-in only.** Calls happen only when you've saved a key, only after validation finds a problem, and only the page URL, agent metadata, the recommendations (which can name subframe and blocked-request URLs), and up to 30 captured log lines are sent. Logs may contain user IDs or application details — use the feature only on pages where you're comfortable sharing that context.
 
 ---
 
@@ -105,5 +107,5 @@ Your key is stored locally in `chrome.storage.local` and is only sent when valid
 ---
 
 <p align="center">
-  <sub>v1.9.0 &middot; Manifest V3 &middot; Chrome + Edge + Firefox &middot; Built with the Pendo Web SDK &middot; John Bambury (Pendo Professional Services)</sub>
+  <sub>v1.9.1 &middot; Manifest V3 &middot; Chrome + Edge + Firefox &middot; Built with the Pendo Web SDK &middot; John Bambury (Pendo Professional Services)</sub>
 </p>

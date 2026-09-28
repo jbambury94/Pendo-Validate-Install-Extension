@@ -81,6 +81,21 @@
             <div class="card__body card__body--flush" id="checkGroups"></div>
           </div>
 
+          <div class="card" id="framesCard" hidden>
+            <div class="card__head">
+              <div class="card__title">Frames</div>
+              <span class="card__meta" id="framesCardMeta"></span>
+            </div>
+            <div class="card__body card__body--flush" id="framesCardBody"></div>
+          </div>
+
+          <div class="card" id="networkCard" hidden>
+            <div class="card__head">
+              <div class="card__title">Network</div>
+            </div>
+            <div class="card__body card__body--flush" id="networkCardBody"></div>
+          </div>
+
           <div class="card" id="relatedReadingCard" hidden>
             <div class="card__head">
               <div class="card__title">Related reading</div>
@@ -119,7 +134,7 @@
             <input id="logsSearch" class="logs-search" type="search" placeholder="Filter…" aria-label="Filter log lines" />
             <button class="card__action" id="downloadLogs" data-action="download-logs" title="Download visible logs" aria-label="Download visible logs">Download</button>
             <button class="card__action" id="downloadHar" data-action="download-har" title="Run a validation first" aria-label="Download Pendo network HAR" disabled>HAR</button>
-            <button class="card__action" id="copyLogs" data-action="copy-logs" title="Copy visible logs" aria-label="Copy visible logs">Copy visible</button>
+            <button class="card__action" id="copyLogs" data-action="copy-logs" title="Copy visible logs" aria-label="Copy visible logs">Copy filtered logs</button>
           </div>
 
           <div class="card">
@@ -150,6 +165,21 @@
                 <p class="field__hint sharing-card__intro"><strong>Share</strong> (action bar) copies plain text for Slack or Jira. <strong>Markdown report</strong> (below) always includes full validation context for support tickets.</p>
                 <button type="button" id="downloadMarkdownReport" class="btn btn--ghost sharing-card__download" data-action="download-markdown-report" disabled title="Run a validation first">Download Markdown report</button>
                 <p class="field__hint">Full report for email or attachments — page URL, identity, metadata, related reading, and all captured logs. Run Validate first.</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="card" id="networkCaptureSettingsCard" hidden>
+            <div class="card__head"><div class="card__title">Network capture</div></div>
+            <div class="card__body card__body--flush">
+              <div class="field">
+                <label class="field--checkbox" for="networkCaptureOnValidate">
+                  <input type="checkbox" id="networkCaptureOnValidate" data-action="network-capture-on-validate" />
+                  <span class="field--checkbox__body">
+                    <span class="field--checkbox__label">Capture Pendo network requests on Validate</span>
+                    <span class="field__hint">Reloads the page on every <strong>Validate</strong> to record which Pendo requests succeed or are blocked (CSP, ad blockers, HTTP errors) and the page's CSP header. Chrome shows its "started debugging this browser" bar during the capture, and unsaved changes on the page are lost. Results stay on this device; the HAR button reuses the capture.</span>
+                  </span>
+                </label>
               </div>
             </div>
           </div>
@@ -221,6 +251,8 @@
     <script src="pendo-kb.js"></script>
     <script src="pendo-telemetry.js"></script>
     <script src="har-capture.js"></script>
+    <!-- Frame map, network and environment analysis (pure; used by popup.js) -->
+    <script src="diagnostics.js"></script>
     <!-- Popup logic: validation, advice, export, copy, render, tabs, drag/resize -->
     <script src="popup.js"></script>
     <!-- Pendo self-instrumentation: idle-load the agent bundle after the panel is wired -->

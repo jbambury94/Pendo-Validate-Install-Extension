@@ -18,6 +18,7 @@ if (typeof importScripts === 'function') {
 const HAR_POST_LOAD_SETTLE_MS = 2000;
 const HAR_CAPTURE_MAX_MS = 15000;
 const PENDING_HAR_STORAGE_KEY = 'pendingHarDownload';
+const PENDING_NETWORK_STORAGE_KEY = 'pendingNetworkCapture';
 const REOPEN_PANEL_STORAGE_KEY = 'ivaReopenPanel';
 const REOPEN_PANEL_TTL_MS = 120000;
 
@@ -117,13 +118,15 @@ async function captureNetworkHarInServiceWorker(tabId, pageUrl, hooks) {
     if (afterReload) afterReload();
     await waitDone;
 
+    const extensionOrigin = getExtensionOriginForHar();
     const har = buildHarFromCdpEvents(events, {
       pageUrl,
-      extensionOrigin: getExtensionOriginForHar(),
+      extensionOrigin,
       creatorVersion: readExtensionVersion(),
     });
     const entryCount = har.log.entries.length;
-    return { ok: true, har, mode: 'cdp', entryCount, reloadStarted };
+    const summary = summarizePendoNetworkFromCdp(events, { extensionOrigin });
+    return { ok: true, har, summary, mode: 'cdp', entryCount, reloadStarted };
   } catch (e) {
     return { ok: false, message: e?.message || String(e), reloadStarted };
   } finally {
@@ -182,6 +185,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             world,
             func: () => globalThis.__pendoValidateHarTimings(),
             args: [],
+          });
+          sendResponse({ ok: true, results });
+        } else if (injectedScript === 'frame-probe') {
+          // target may carry allFrames; new frames never hold the global, so always inject.
+          await chrome.scripting.executeScript({ target, world, files: ['frame-probe.js'] });
+          const results = await chrome.scripting.executeScript({
+            target,
+            world,
+            func: (opts) => globalThis.__pendoValidateFrameProbe(opts),
+            args,
           });
           sendResponse({ ok: true, results });
         } else {
@@ -247,6 +260,43 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         : { error: result.message || 'HAR capture failed', ts: Date.now(), tabId };
       try {
         await chrome.storage.local.set({ [PENDING_HAR_STORAGE_KEY]: payload });
+      } catch (_) { /* ignore */ }
+      await requestOpenPanelOnTab(tabId);
+    })();
+    return true;
+  }
+
+  // Validate with network capture: the reopened panel shows "capturing" until the state
+  // becomes done/error, then validates with the summary (and never reloads again).
+  if (message?.type === 'pendo-validate-network-validate') {
+    const tabId = message.tabId;
+    const pageUrl = message.pageUrl || 'unknown';
+    let markersSet = false;
+    (async () => {
+      const result = await captureNetworkHarInServiceWorker(tabId, pageUrl, {
+        beforeReload: async () => {
+          try {
+            await chrome.storage.local.set({
+              [REOPEN_PANEL_STORAGE_KEY]: { tabId, expires: Date.now() + REOPEN_PANEL_TTL_MS },
+              [PENDING_NETWORK_STORAGE_KEY]: { tabId, state: 'capturing', startedAt: Date.now() },
+            });
+            markersSet = true;
+          } catch (_) { /* ignore */ }
+        },
+        afterReload: () => sendResponse({ ok: true, started: true }),
+      });
+      if (!result.reloadStarted) {
+        if (markersSet) {
+          try { await chrome.storage.local.remove([REOPEN_PANEL_STORAGE_KEY, PENDING_NETWORK_STORAGE_KEY]); } catch (_) { /* ignore */ }
+        }
+        sendResponse({ ok: false, error: result.message || 'Network capture failed' });
+        return;
+      }
+      const payload = result.ok
+        ? { tabId, state: 'done', ts: Date.now(), har: result.har, entryCount: result.entryCount, summary: result.summary }
+        : { tabId, state: 'error', ts: Date.now(), error: result.message || 'Network capture failed' };
+      try {
+        await chrome.storage.local.set({ [PENDING_NETWORK_STORAGE_KEY]: payload });
       } catch (_) { /* ignore */ }
       await requestOpenPanelOnTab(tabId);
     })();

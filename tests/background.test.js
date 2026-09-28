@@ -293,6 +293,28 @@ describe('background.js — Firefox privileged-API bridge', () => {
     expect(sendResponse).toHaveBeenCalledWith({ ok: true, results })
   })
 
+  it('pendo-validate-execute-script always injects frame-probe.js across frames, then invokes it with args', async () => {
+    const results = [{ frameId: 0, result: { isTop: true } }, { frameId: 3, result: { isTop: false } }]
+    chrome.scripting.executeScript.mockResolvedValue(results)
+
+    const sendResponse = vi.fn()
+    const target = { tabId: 7, allFrames: true }
+    const args = [{ selfApiKey: 'self', overlayIframeId: 'pendo-validate-overlay-iframe' }]
+    handler(
+      { type: 'pendo-validate-execute-script', injectedScript: 'frame-probe', target, world: 'MAIN', args, invokeOnly: true },
+      sender,
+      sendResponse,
+    )
+
+    await vi.waitFor(() => expect(sendResponse).toHaveBeenCalled())
+    expect(chrome.scripting.executeScript).toHaveBeenCalledTimes(2)
+    expect(chrome.scripting.executeScript).toHaveBeenNthCalledWith(1, { target, world: 'MAIN', files: ['frame-probe.js'] })
+    const invokeCall = chrome.scripting.executeScript.mock.calls[1][0]
+    expect(invokeCall.target).toEqual(target)
+    expect(invokeCall.args).toEqual(args)
+    expect(sendResponse).toHaveBeenCalledWith({ ok: true, results })
+  })
+
   it('pendo-validate-execute-script with invokeOnly skips the file injection and only invokes', async () => {
     const results = [{ result: { status: { pendoPresent: true } } }]
     chrome.scripting.executeScript.mockResolvedValue(results)
@@ -460,6 +482,78 @@ describe('background.js — Firefox privileged-API bridge', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('pendo-validate-network-validate marks the capture in progress before the reload, then stores the summary and HAR', async () => {
+    vi.useFakeTimers()
+    try {
+      loadBackgroundHandler()
+      const sendResponse = vi.fn()
+      const ret = handler(
+        { type: 'pendo-validate-network-validate', tabId: 42, pageUrl: 'https://app.example.com/' },
+        { id: chrome.runtime.id },
+        sendResponse,
+      )
+      expect(ret).toBe(true)
+      await vi.waitFor(() => expect(sendResponse).toHaveBeenCalledWith({ ok: true, started: true }))
+
+      const markerCall = chrome.storage.local.set.mock.calls.findIndex(([data]) => 'pendingNetworkCapture' in data)
+      const marker = chrome.storage.local.set.mock.calls[markerCall][0]
+      expect(marker.ivaReopenPanel.tabId).toBe(42)
+      expect(marker.pendingNetworkCapture).toMatchObject({ tabId: 42, state: 'capturing' })
+      expect(chrome.storage.local.set.mock.invocationCallOrder[markerCall]).toBeLessThan(chrome.tabs.reload.mock.invocationCallOrder[0])
+
+      const onEvent = chrome.debugger.onEvent.addListener.mock.calls.at(-1)[0]
+      const doc = 'https://app.example.com/home?x=1'
+      const agentUrl = 'https://cdn.pendo.io/agent/static/aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa/pendo.js'
+      onEvent({ tabId: 42 }, 'Network.requestWillBeSent', { requestId: 'd', timestamp: 1, wallTime: 1_700_000_000, type: 'Document', request: { url: doc } })
+      onEvent({ tabId: 42 }, 'Network.responseReceived', { requestId: 'd', timestamp: 1.1, type: 'Document', response: { url: doc, status: 200, headers: { 'content-security-policy': "script-src 'self'" } } })
+      onEvent({ tabId: 42 }, 'Network.requestWillBeSent', { requestId: '1', timestamp: 1.2, wallTime: 1_700_000_000, request: { url: agentUrl } })
+      onEvent({ tabId: 42 }, 'Network.loadingFailed', { requestId: '1', timestamp: 1.3, errorText: 'net::ERR_BLOCKED_BY_CSP', blockedReason: 'csp' })
+      onEvent({ tabId: 42 }, 'Page.loadEventFired', {})
+      await vi.advanceTimersByTimeAsync(2000)
+
+      await vi.waitFor(() => expect(chrome.tabs.sendMessage).toHaveBeenCalledWith(42, { type: 'pendo-validate-open-panel' }))
+      const done = chrome.storage.local.set.mock.calls.map(([data]) => data.pendingNetworkCapture).filter(Boolean).at(-1)
+      expect(done).toMatchObject({ tabId: 42, state: 'done' })
+      expect(done.summary.documentUrl).toBe('https://app.example.com/home')
+      expect(done.summary.documentCsp.enforce).toEqual(["script-src 'self'"])
+      expect(done.summary.requests).toEqual([expect.objectContaining({ url: agentUrl, blockedReason: 'csp' })])
+      expect(done.har.log.entries).toHaveLength(1)
+      expect(sendResponse).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('pendo-validate-network-validate clears both markers when the reload never starts', async () => {
+    chrome.tabs.reload = vi.fn((_tabId, _opts, cb) => {
+      chrome.runtime.lastError = { message: 'No tab with id: 42.' }
+      cb()
+      chrome.runtime.lastError = null
+    })
+    const sendResponse = vi.fn()
+    handler({ type: 'pendo-validate-network-validate', tabId: 42 }, { id: chrome.runtime.id }, sendResponse)
+
+    await vi.waitFor(() => expect(sendResponse).toHaveBeenCalled())
+    expect(sendResponse).toHaveBeenCalledWith({ ok: false, error: 'No tab with id: 42.' })
+    expect(chrome.storage.local.remove).toHaveBeenCalledWith(['ivaReopenPanel', 'pendingNetworkCapture'])
+    expect(chrome.tabs.sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('pendo-validate-network-validate reports a debugger attach failure without storing markers', async () => {
+    chrome.debugger.attach = vi.fn((_target, _version, cb) => {
+      chrome.runtime.lastError = { message: 'Cannot access a chrome:// URL' }
+      cb()
+      chrome.runtime.lastError = null
+    })
+    const sendResponse = vi.fn()
+    handler({ type: 'pendo-validate-network-validate', tabId: 42 }, { id: chrome.runtime.id }, sendResponse)
+
+    await vi.waitFor(() => expect(sendResponse).toHaveBeenCalled())
+    expect(sendResponse).toHaveBeenCalledWith({ ok: false, error: 'Cannot access a chrome:// URL' })
+    expect(chrome.tabs.reload).not.toHaveBeenCalled()
+    expect(chrome.storage.local.set).not.toHaveBeenCalled()
   })
 
   it('pendo-validate-management-get-all returns the installed extension list', async () => {

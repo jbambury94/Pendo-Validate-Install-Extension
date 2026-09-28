@@ -147,6 +147,18 @@ describe('buildMarkdownReport — content sections', () => {
     expect(buildMarkdownReport(baseContext)).toContain('No errors detected.')
   })
 
+  it('lists severity error advice under Errors when the console is clean', () => {
+    const ctx = {
+      ...baseContext,
+      captured: [],
+      advice: [{ text: 'Network capture found blocked Pendo requests.', source: 'builtin', supportKey: 'csp', severity: 'error' }],
+    }
+    const md = buildMarkdownReport(ctx)
+    expect(md).toContain('Errors found')
+    expect(md).toContain('Network capture found blocked Pendo requests.')
+    expect(md).not.toContain('No errors detected.')
+  })
+
   it('includes metadata JSON block', () => {
     const md = buildMarkdownReport(baseContext)
     expect(md).toContain('```json')

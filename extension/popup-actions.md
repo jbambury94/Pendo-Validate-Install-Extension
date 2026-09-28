@@ -9,18 +9,19 @@
 | Toggle Errors check group | `toggle-check-group` | `#checkGroupHeadErr` | visible group title |
 | Toggle Warnings check group | `toggle-check-group` | `#checkGroupHeadWarn` | visible group title |
 | Toggle Passing check group | `toggle-check-group` | `#checkGroupHeadOk` | visible group title |
-| Copy button — Install details | `copy-kv` | `#installDetailsCopyPendoPresent`, `#installDetailsCopyValidateInstall`, `#installDetailsCopyAgentVersion`, `#installDetailsCopySnippet`, `#installDetailsCopyPendoLauncher`, `#installDetailsCopyLauncherValidated`, `#installDetailsCopyValidatedIn`, `#installDetailsCopyVisitorId`, `#installDetailsCopyAccountId`, `#installDetailsCopyParentAccountId`, `#installDetailsCopyApiKey`, `#installDetailsCopyVisitorMeta`, `#installDetailsCopyAccountMeta`, `#installDetailsCopyParentMeta`, `#installDetailsCopyResourceHits`, `#installDetailsCopyLinesCaptured` | `title` set in `popup.js` |
+| Copy button — Install details | `copy-kv` | `#installDetailsCopyPendoPresent`, `#installDetailsCopyValidateInstall`, `#installDetailsCopyAgentVersion`, `#installDetailsCopySnippet`, `#installDetailsCopyPendoLauncher`, `#installDetailsCopyLauncherValidated`, `#installDetailsCopyValidatedIn`, `#installDetailsCopyVisitorId`, `#installDetailsCopyAccountId`, `#installDetailsCopyParentAccountId`, `#installDetailsCopyApiKey`, `#installDetailsCopyAnonymousVisitor`, `#installDetailsCopyEnvironmentCheck`, `#installDetailsCopyConfigOptions`, `#installDetailsCopyAgentErrors`, `#installDetailsCopyPlugins`, `#installDetailsCopyAgentScripts`, `#installDetailsCopyApiKeysSeen`, `#installDetailsCopyVisitorMeta`, `#installDetailsCopyAccountMeta`, `#installDetailsCopyParentMeta`, `#installDetailsCopyResourceHits`, `#installDetailsCopyLinesCaptured` | `title` set in `popup.js` |
 | Copy advice card action | `copy-advice` | `#copyAdvice` | `aria-label="Copy advice"` |
 | Toggle log-level filter chip | `toggle-log-filter` | `#logFilterErr` / `#logFilterWarn` / `#logFilterInfo` | text "Err / Warn / Info" + `aria-pressed` |
 | Copy visible logs | `copy-logs` | `#copyLogs` | text "Copy visible" + `title` |
 | Download visible logs | `download-logs` | `#downloadLogs` | text "Download" + `title` |
-| Download Pendo network HAR | `download-har` | `#downloadHar` | text "HAR" + `title` (reload confirm on Chrome/Edge) |
+| Download Pendo network HAR | `download-har` | `#downloadHar` | text "HAR" + `title` (reload confirm on Chrome/Edge; downloads directly when the last Validate captured the network) |
 | View check in Logs | `view-check-in-logs` | (dynamic per check row) | text "View in Logs" |
 | Validate Pendo Install | `validate` | `#run` | text "Validate Pendo Install" |
 | Enable Pendo Debugger | `launch-debugger` | `#launchDebugger` | text "Debugger" + `title` |
 | Share summary | `share-summary` | `#shareSummary` | text "Share" + `title` (reflects identity pref when enabled) |
 | Include identity in Share | `share-include-identity` | `#shareIncludeIdentity` | checkbox in Settings → Sharing |
 | Download Markdown report | `download-markdown-report` | `#downloadMarkdownReport` | text "Download Markdown report" + `title` |
+| Capture network on Validate | `network-capture-on-validate` | `#networkCaptureOnValidate` (card `#networkCaptureSettingsCard`, hidden without `chrome.debugger`) | checkbox in Settings → Network capture |
 | Resize panel (invisible corner) | `resize-panel` | `#resizeHandle` | `role="separator"` + `aria-label="Resize panel"`; no visible grip |
 | Theme preference select | `theme-select` | `#themeSelect` | `<label for="themeSelect">Theme</label>` |
 | AI provider select | `ai-provider-select` | `#aiProviderSelect` | `<label for="aiProviderSelect">Provider</label>` |
