@@ -2939,6 +2939,7 @@ function initPopup() {
     checkGroupsEl.replaceChildren();
     installDetailsBody.replaceChildren();
     logsListEl.replaceChildren();
+    if (logsCardMeta) logsCardMeta.textContent = '';
   }
 
   /**

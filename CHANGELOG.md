@@ -7,7 +7,7 @@
 - **PRIVACY.md** updated to match AI request contents and excerpt size caps.
 - **1.9.1 follow-up fixes** merged from Stable: network capture uses the overlay host tab (including when capture fails to start), incomplete in-flight requests, agent-script URL classification on any `/agent/` path, and Markdown config conflicts when the active value is the default.
 - **Logs tab.** The **Frames** card moves from Status to Logs. **Console output**, **Install details**, and **Frames** are collapsible (collapsed by default); expanded state is saved in `logUiPrefs`. **View in Logs** expands the console card automatically.
-- **Tests.** 809 tests across 37 suites (`logCards` boots the real panel for collapsible Logs card behaviour).
+- **Tests.** 810 tests across 37 suites (`logCards` boots the real panel for collapsible Logs card behaviour).
 
 ## 1.9.1
 - **Deeper checks on every Validate.** **Validate Pendo Install** now runs five extra checks alongside `validateInstall()`. There is no separate diagnostics mode. The checks always call the page's own agent, never the panel's self-instrumentation instance, and a static test enforces that.

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -210,5 +210,27 @@ describe('logCards — logsCardMeta line counts', () => {
     doc.getElementById('logFilterWarn').click()
     doc.getElementById('logFilterInfo').click()
     expect(doc.getElementById('logsCardMeta').textContent).toBe('1 of 3 shown')
+  })
+
+  it('clears the previous run count when a new validation fails before rendering logs', async () => {
+    const win = bootPanel()
+    const doc = win.document
+    win.__pendoValidateApplyFixture(minimalValidationResult({
+      captured: [
+        { level: 'info', text: 'a' },
+        { level: 'info', text: 'b' },
+        { level: 'info', text: 'c' },
+      ],
+    }))
+    expect(doc.getElementById('logsCardMeta').textContent).toBe('3 lines')
+
+    chrome.tabs.query.mockResolvedValue([])
+    doc.getElementById('run').click()
+    await vi.waitFor(() => {
+      expect(doc.getElementById('statusHero').textContent).toContain('Validation failed')
+    })
+
+    expect(doc.getElementById('logsList').children.length).toBe(0)
+    expect(doc.getElementById('logsCardMeta').textContent).toBe('')
   })
 })
