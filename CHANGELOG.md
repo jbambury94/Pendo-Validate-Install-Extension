@@ -1,8 +1,8 @@
 # Changelog
 
 ## 1.9.2
-- **AI model refresh.** Default models are now OpenAI `gpt-5.6-luna`, Anthropic `claude-haiku-4-5-20251001`, and Google `gemini-3.8-flash`. OpenAI requests omit `temperature` and set `reasoning_effort: none`; Gemini uses `systemInstruction` with `thinkingLevel: LOW`. Retired model IDs stored in `aiModel` are cleared on read and mapped to the new defaults.
-- **AI model fallback.** When the provider returns a model-not-found error, the extension retries once with a backup model for that provider and remembers the working model for the rest of the panel session.
+- **AI model refresh.** Default models are now OpenAI `gpt-5.6-luna`, Anthropic `claude-haiku-4-5-20251001`, and Google `gemini-3.8-flash`. OpenAI requests omit `temperature` and set `reasoning_effort: none`; Gemini uses `systemInstruction` with `thinkingLevel: LOW`. OpenAI replies returned as content parts (rather than a single string) are now parsed. Retired model IDs stored in `aiModel` are cleared on read and mapped to the new defaults.
+- **AI model fallback.** When the provider returns a model-not-found error, the extension retries once with a backup model for that provider and remembers the working model for the rest of the panel session. If the backup is also unavailable, the panel says to update the extension instead of showing the raw provider error.
 - **AI prompt privacy.** The validated page's Pendo subscription API key is no longer sent to AI providers — only whether a key was detected. Prompt rules add `identifyVisitors` and `parentAccounts` support keys; KB excerpt instructions no longer ask the model to cite URLs.
 - **PRIVACY.md** updated to match AI request contents and excerpt size caps.
 - **1.9.1 follow-up fixes** merged from Stable: network capture uses the overlay host tab (including when capture fails to start), incomplete in-flight requests, agent-script URL classification on any `/agent/` path, and Markdown config conflicts when the active value is the default.
