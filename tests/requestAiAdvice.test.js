@@ -354,6 +354,20 @@ describe('requestAiAdvice — model fallback', () => {
     expect(result[0].text).toBe('Verify CSP allows Pendo scripts')
   })
 
+  it('includes reasoning_effort on bundled fallback after custom primary model-not-found', async () => {
+    mockStorage({ aiProvider: 'openai', aiEndpoint: '', aiApiKey: 'sk-test', aiModel: 'my-org-custom' })
+    fetch
+      .mockResolvedValueOnce({ ok: false, status: 404, json: async () => ({ error: { message: 'model not found' } }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ choices: [{ message: { content: '- tip' } }] }) })
+    await requestAiAdvice(baseContext)
+    const first = JSON.parse(fetch.mock.calls[0][1].body)
+    const second = JSON.parse(fetch.mock.calls[1][1].body)
+    expect(first.model).toBe('my-org-custom')
+    expect(first.reasoning_effort).toBeUndefined()
+    expect(second.model).toBe(AI_FALLBACK_MODELS.openai)
+    expect(second.reasoning_effort).toBe('none')
+  })
+
   it('does not retry on OpenAI 401', async () => {
     mockStorage({ aiProvider: 'openai', aiEndpoint: '', aiApiKey: 'sk-test', aiModel: '' })
     fetch.mockResolvedValue({ ok: false, status: 401, json: async () => ({ error: { message: 'invalid key' } }) })

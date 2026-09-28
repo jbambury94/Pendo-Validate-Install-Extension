@@ -1506,13 +1506,15 @@ function isAiModelNotFoundResponse(status, apiErr) {
   return false;
 }
 
-/** reasoning_effort is only valid on the official OpenAI API when using bundled defaults (not a stored custom model). */
+/** reasoning_effort on api.openai.com for bundled model ids, except the user's explicit primary custom id. */
 function openAiUsesReasoningEffort(cfg, model) {
   const endpoint = String((cfg && cfg.aiEndpoint) || 'https://api.openai.com/v1/chat/completions').trim();
   if (!/^https:\/\/api\.openai\.com\//i.test(endpoint)) return false;
+  const isBundled = model === AI_DEFAULT_MODELS.openai || model === AI_FALLBACK_MODELS.openai;
+  if (!isBundled) return false;
   const custom = String((cfg && cfg.aiModel) || '').trim();
-  if (custom && !DEPRECATED_AI_MODELS.has(custom)) return false;
-  return model === AI_DEFAULT_MODELS.openai || model === AI_FALLBACK_MODELS.openai;
+  if (custom && !DEPRECATED_AI_MODELS.has(custom) && model === resolveAiModel('openai', cfg.aiModel)) return false;
+  return true;
 }
 
 const AI_PROMPT_SUPPORT_KEYS = 'installGuide, validateInstall, chooseIdsMetadata, identifyVisitors, configureMetadata, parentAccounts, csp, spa, gtm, segment, iframe, sandbox, agentSettings, agentDebug, troubleshooting, hostnameAllowlist, multiDomain, launcherPlan, signedMetadata, installComponents, vds, agentConfig';
@@ -1997,7 +1999,10 @@ function initPopup() {
   const relatedReadingBody = document.getElementById('relatedReadingBody');
   const statusEmpty = document.getElementById('statusEmpty');
 
+  const logsCard = document.getElementById('logsCard');
+  const logsCardMeta = document.getElementById('logsCardMeta');
   const logsListEl = document.getElementById('logsList');
+  const collapsibleCards = Array.from(document.querySelectorAll('.card--collapsible'));
   const logsSearch = document.getElementById('logsSearch');
   const logCountErr = document.getElementById('logCountErr');
   const logCountWarn = document.getElementById('logCountWarn');
@@ -2036,6 +2041,7 @@ function initPopup() {
   let validationSeq = 0; // incremented per Validate click; stale AI callbacks compare before mutating UI
   let logFilters = { error: true, warn: true, info: true };
   let logQuery = '';
+  let logCardsOpen = { logs: false, installDetails: false, frames: false };
   let shareIncludeIdentity = false;
   let toastTimer = null;
   let statusHeroTimeTimer = null;
@@ -2629,7 +2635,7 @@ function initPopup() {
     container.appendChild(note);
   }
 
-  /** Status tab Frames card: shown when subframes were inspected or Pendo is only in a subframe. */
+  /** Logs tab Frames card: shown when subframes were inspected or Pendo is only in a subframe. */
   function renderFramesCard(frameMap, res) {
     if (!framesCard || !framesCardBody) return;
     framesCardBody.replaceChildren();
@@ -2704,11 +2710,32 @@ function initPopup() {
     }
   }
 
+  function setCardOpen(card, open) {
+    if (!card || !card.dataset.card) return;
+    const key = card.dataset.card;
+    logCardsOpen[key] = !!open;
+    card.dataset.open = open ? 'true' : 'false';
+    const toggle = card.querySelector('.card__toggle');
+    if (toggle) toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+
+  function applyLogCardsOpenState() {
+    for (const card of collapsibleCards) {
+      const key = card.dataset.card;
+      if (!key) continue;
+      setCardOpen(card, logCardsOpen[key] === true);
+    }
+  }
+
   function persistLogUiPrefs() {
     try {
       if (!chrome.storage || !chrome.storage.local) return;
       chrome.storage.local.set({
-        logUiPrefs: { filters: { ...logFilters }, query: logQuery || '' },
+        logUiPrefs: {
+          filters: { ...logFilters },
+          query: logQuery || '',
+          cards: { ...logCardsOpen },
+        },
       });
     } catch (_) { /* ignore */ }
   }
@@ -2720,6 +2747,7 @@ function initPopup() {
     if (logsSearch) logsSearch.value = token;
     if (kind === 'err') logFilters = { error: true, warn: false, info: false };
     else if (kind === 'warn') logFilters = { error: false, warn: true, info: false };
+    if (logsCard) setCardOpen(logsCard, true);
     persistLogUiPrefs();
     activateTab('logs');
     renderLogs();
@@ -2737,6 +2765,18 @@ function initPopup() {
     logFilterErr.setAttribute('aria-pressed', logFilters.error ? 'true' : 'false');
     logFilterWarn.setAttribute('aria-pressed', logFilters.warn ? 'true' : 'false');
     logFilterInfo.setAttribute('aria-pressed', logFilters.info ? 'true' : 'false');
+
+    if (logsCardMeta) {
+      if (!captured.length) {
+        logsCardMeta.textContent = lastContext ? '0 lines' : '';
+      } else {
+        const shown = visible.length;
+        const total = captured.length;
+        logsCardMeta.textContent = shown === total
+          ? `${total} line${total === 1 ? '' : 's'}`
+          : `${shown} of ${total} shown`;
+      }
+    }
 
     logsListEl.replaceChildren();
     if (!captured.length) {
@@ -3478,9 +3518,28 @@ function initPopup() {
           logQuery = logUiPrefs.query;
           if (logsSearch) logsSearch.value = logQuery;
         }
+        if (logUiPrefs.cards && typeof logUiPrefs.cards === 'object') {
+          for (const key of Object.keys(logCardsOpen)) {
+            logCardsOpen[key] = logUiPrefs.cards[key] === true;
+          }
+        }
+        applyLogCardsOpenState();
       }
     },
   );
+
+  for (const card of collapsibleCards) {
+    const chev = card.querySelector('.card__chev');
+    if (chev) chev.appendChild(makeIcon('chevron', 14));
+    const toggle = card.querySelector('.card__toggle');
+    if (toggle) {
+      toggle.addEventListener('click', () => {
+        const open = card.dataset.open === 'true';
+        setCardOpen(card, !open);
+        persistLogUiPrefs();
+      });
+    }
+  }
 
   shareIncludeIdentityInput?.addEventListener('change', () => {
     shareIncludeIdentity = !!shareIncludeIdentityInput.checked;

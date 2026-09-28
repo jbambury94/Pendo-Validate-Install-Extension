@@ -11,6 +11,7 @@
 | Toggle Passing check group | `toggle-check-group` | `#checkGroupHeadOk` | visible group title |
 | Copy button — Install details | `copy-kv` | `#installDetailsCopyPendoPresent`, `#installDetailsCopyValidateInstall`, `#installDetailsCopyAgentVersion`, `#installDetailsCopySnippet`, `#installDetailsCopyPendoLauncher`, `#installDetailsCopyLauncherValidated`, `#installDetailsCopyValidatedIn`, `#installDetailsCopyVisitorId`, `#installDetailsCopyAccountId`, `#installDetailsCopyParentAccountId`, `#installDetailsCopyApiKey`, `#installDetailsCopyAnonymousVisitor`, `#installDetailsCopyEnvironmentCheck`, `#installDetailsCopyConfigOptions`, `#installDetailsCopyAgentErrors`, `#installDetailsCopyPlugins`, `#installDetailsCopyAgentScripts`, `#installDetailsCopyApiKeysSeen`, `#installDetailsCopyVisitorMeta`, `#installDetailsCopyAccountMeta`, `#installDetailsCopyParentMeta`, `#installDetailsCopyResourceHits`, `#installDetailsCopyLinesCaptured` | `title` set in `popup.js` |
 | Copy advice card action | `copy-advice` | `#copyAdvice` | `aria-label="Copy advice"` |
+| Toggle Logs card | `toggle-card` | `#logsCardToggle` / `#installDetailsCardToggle` / `#framesCardToggle` | visible card title + `aria-expanded` |
 | Toggle log-level filter chip | `toggle-log-filter` | `#logFilterErr` / `#logFilterWarn` / `#logFilterInfo` | text "Err / Warn / Info" + `aria-pressed` |
 | Copy visible logs | `copy-logs` | `#copyLogs` | text "Copy visible" + `title` |
 | Download visible logs | `download-logs` | `#downloadLogs` | text "Download" + `title` |

@@ -71,8 +71,8 @@ The panel has three tabs:
 
 | Tab | What you'll find |
 |-----|-----------------|
-| **Status** | Pass/warn/error hero, quick stats (Errors / Warnings / Passing), prioritised checks & recommendations, **Frames** (when the page has subframes) and **Network** (after a network capture) cards, and *Related reading* (curated Pendo KB links). |
-| **Logs** | Colour-coded captured console output with level filter chips (Err / Warn / Info), text search, one-click copy, **HAR** download, and an **Install details** card (identity, metadata, agent environment, agent scripts, and API keys seen). |
+| **Status** | Pass/warn/error hero, quick stats (Errors / Warnings / Passing), prioritised checks & recommendations, **Network** (after a network capture) card, and *Related reading* (curated Pendo KB links). |
+| **Logs** | Level filter chips (Err / Warn / Info), text search, one-click copy, and **HAR** download above collapsible cards: **Console output**, **Install details** (identity, metadata, agent environment, agent scripts, and API keys seen), and **Frames** (when the page has subframes). Cards start collapsed; expand/collapse state is remembered. |
 | **Settings** | Sharing (Share identity opt-in, Markdown report download), Network capture (Chrome / Edge), appearance (System / Light / Dark theme), and AI advice configuration (provider picker, API key with show/hide toggle, save). |
 
 The action bar at the bottom gives you **Validate Pendo Install**, **Debugger** (`pendo.enableDebugging()`), and **Share** (a plain-text summary for Slack or Jira).

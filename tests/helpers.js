@@ -1009,9 +1009,11 @@ export function isAiModelNotFoundResponse(status, apiErr) {
 export function openAiUsesReasoningEffort(cfg, model) {
   const endpoint = String((cfg && cfg.aiEndpoint) || 'https://api.openai.com/v1/chat/completions').trim()
   if (!/^https:\/\/api\.openai\.com\//i.test(endpoint)) return false
+  const isBundled = model === AI_DEFAULT_MODELS.openai || model === AI_FALLBACK_MODELS.openai
+  if (!isBundled) return false
   const custom = String((cfg && cfg.aiModel) || '').trim()
-  if (custom && !DEPRECATED_AI_MODELS.has(custom)) return false
-  return model === AI_DEFAULT_MODELS.openai || model === AI_FALLBACK_MODELS.openai
+  if (custom && !DEPRECATED_AI_MODELS.has(custom) && model === resolveAiModel('openai', cfg.aiModel)) return false
+  return true
 }
 
 export function buildAiRequest(provider, model, prompt, systemMsg, cfg) {
