@@ -12,7 +12,7 @@
   <img src="https://img.shields.io/badge/Chrome-MV3-blue" alt="Chrome MV3" />
   <img src="https://img.shields.io/badge/Edge-MV3-blue" alt="Edge MV3" />
   <img src="https://img.shields.io/badge/Firefox-MV3%20(128%2B)-orange" alt="Firefox MV3 (128+)" />
-  <img src="https://img.shields.io/badge/version-1.9.1-FF4876" alt="Version 1.9.1" />
+  <img src="https://img.shields.io/badge/version-1.9.2-FF4876" alt="Version 1.9.2" />
   <img src="https://img.shields.io/badge/AI-OpenAI%20%7C%20Claude%20%7C%20Gemini-lightgrey" alt="AI: OpenAI | Claude | Gemini" />
 </p>
 
@@ -64,7 +64,7 @@ Debugging a Pendo installation today means juggling browser DevTools, running `p
 3. Hit **Validate Pendo Install**.
 
 <p align="center">
-  <img src="docs/screenshots/panel-status.png" width="480" alt="Status tab showing checks, identity, and metadata" />
+  <img src="docs/screenshots/panel-status.png" width="480" alt="Status tab showing hero, quick stats, checks and recommendations, and related reading" />
 </p>
 
 The panel has three tabs:
@@ -81,7 +81,7 @@ The action bar at the bottom gives you **Validate Pendo Install**, **Debugger** 
 
 ## Optional: AI advice
 
-1. Open **Settings** and pick a provider — OpenAI (`gpt-4o-mini`), Anthropic Claude (`claude-haiku-4-5`), or Google Gemini (`gemini-3.5-flash`).
+1. Open **Settings** and pick a provider — OpenAI (`gpt-5.6-luna`), Anthropic Claude (`claude-haiku-4-5`), or Google Gemini (`gemini-3.8-flash`).
 2. Paste your API key (use the **Show / Hide** toggle to confirm it) and click **Save**.
 3. Re-run validation — when warnings or errors are found, the extension requests AI-powered remediation advice grounded in official Pendo sources, with up to 6 curated KB excerpts injected into the prompt for context.
 
@@ -107,5 +107,5 @@ Your key is stored locally in `chrome.storage.local` and is only sent when valid
 ---
 
 <p align="center">
-  <sub>v1.9.1 &middot; Manifest V3 &middot; Chrome + Edge + Firefox &middot; Built with the Pendo Web SDK &middot; John Bambury (Pendo Professional Services)</sub>
+  <sub>v1.9.2 &middot; Manifest V3 &middot; Chrome + Edge + Firefox &middot; Built with the Pendo Web SDK &middot; John Bambury (Pendo Professional Services)</sub>
 </p>
