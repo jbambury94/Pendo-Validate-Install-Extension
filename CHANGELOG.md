@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.9.2
+- **AI model refresh.** Default models are now OpenAI `gpt-5.6-luna`, Anthropic `claude-haiku-4-5-20251001`, and Google `gemini-3.8-flash`. OpenAI requests omit `temperature` and set `reasoning_effort: none`; Gemini uses `systemInstruction` with `thinkingLevel: LOW`. Retired model IDs stored in `aiModel` are cleared on read and mapped to the new defaults.
+- **AI model fallback.** When the provider returns a model-not-found error, the extension retries once with a backup model for that provider and remembers the working model for the rest of the panel session.
+- **AI prompt privacy.** The validated page's Pendo subscription API key is no longer sent to AI providers — only whether a key was detected. Prompt rules add `identifyVisitors` and `parentAccounts` support keys; KB excerpt instructions no longer ask the model to cite URLs.
+- **PRIVACY.md** updated to match AI request contents and excerpt size caps.
+
 ## 1.9.1
 - **Deeper checks on every Validate.** **Validate Pendo Install** now runs five extra checks alongside `validateInstall()`. There is no separate diagnostics mode. The checks always call the page's own agent, never the panel's self-instrumentation instance, and a static test enforces that.
   - **Agent environment:** `validateEnvironment(true)` reports the errors the agent has logged and any built-ins it relies on that the page has replaced, such as `JSON.stringify` or `window.Event`. Commonly wrapped methods such as `Promise` are only noted, as passing checks. It also reports customized or sanitized page URLs and the loaded plugins. A second silenced pass runs the agent's **Validate Config options** audit and lists only non-default options (compared to the pinned Web SDK defaults), labelled by source — snippet, hosted app config, or `window.pendo` — in Install details and the Markdown report.

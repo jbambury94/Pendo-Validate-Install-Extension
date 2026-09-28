@@ -1,7 +1,7 @@
 # Privacy Policy — Pendo Install Validator
 
 **Last updated:** 25 September 2026
-**Extension version:** 1.9.1
+**Extension version:** 1.9.2
 
 ---
 
@@ -71,12 +71,13 @@ If you save an API key in Settings and a validation run surfaces warnings or err
 The request body includes:
 
 - The page URL of the tab you validated.
-- Pendo agent version, API key presence, visitor/account IDs, and CSP metadata from the validated page.
+- Pendo agent version, whether a Pendo subscription API key was detected on the page (yes/no only — the key value is not sent), visitor/account IDs, and CSP metadata from the validated page.
 - Up to 30 captured console log lines (which may contain application-specific identifiers).
 - The recommendations already shown in the panel, so the AI doesn't repeat them. These can name frame URLs, blocked Pendo request URLs, and subframe visitor or account IDs.
-- Up to 6 KB of excerpts from the built-in Pendo knowledge base (bundled locally, not fetched).
+- Up to six curated knowledge-base article excerpts, capped at about 800 characters of excerpt text in total (bundled locally, not fetched).
+- When loaded, an optional install-quality guide excerpt of up to about 1,200 characters.
 
-**No AI request is made unless** you have saved an API key **and** the validation run detects at least one issue. Your API key is sent only to the provider you selected and only in the request's authentication header.
+**No AI request is made unless** you have saved an API key **and** the validation run detects at least one issue. Your **AI provider** API key (OpenAI, Anthropic, or Google) is sent only to the provider you selected and only in the request's authentication header.
 
 ### 3. Validation injection — never leaves the browser
 
