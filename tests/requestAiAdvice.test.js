@@ -1,5 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { requestAiAdvice, buildAiPrompt, PENDO_SUPPORT, friendlyAiFailureDetail, selectRelatedReading, resolveAiModel, AI_DEFAULT_MODELS, DEPRECATED_AI_MODELS, getAiConfig, resetAiSessionModelOverrides } from './helpers.js'
+import {
+  requestAiAdvice,
+  buildAiPrompt,
+  PENDO_SUPPORT,
+  friendlyAiFailureDetail,
+  selectRelatedReading,
+  resolveAiModel,
+  AI_DEFAULT_MODELS,
+  AI_FALLBACK_MODELS,
+  DEPRECATED_AI_MODELS,
+  getAiConfig,
+  resetAiSessionModelOverrides,
+  modelsToTryForProvider,
+  isAiModelNotFoundResponse,
+  extractAiResponseContent,
+} from './helpers.js'
 import { readFileSync } from 'fs'
 import { join } from 'path'
 import { JSDOM } from 'jsdom'
@@ -71,6 +86,23 @@ describe('requestAiAdvice — OpenAI provider', () => {
     expect(result[1].text).toBe('Update key')
   })
 
+  it('parses OpenAI message content when returned as a part array', async () => {
+    fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        choices: [{
+          message: {
+            content: [{ type: 'text', text: '- Fix snippet\n- Update key' }],
+          },
+        }],
+      }),
+    })
+    const result = await requestAiAdvice(baseContext)
+    expect(result).toHaveLength(2)
+    expect(result[0].text).toBe('Fix snippet')
+    expect(result[1].text).toBe('Update key')
+  })
+
   it('strips leading bullet characters from response lines', async () => {
     fetch.mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: '* Check API\n- Fix CSP' } }] }) })
     const result = await requestAiAdvice(baseContext)
@@ -110,6 +142,23 @@ describe('requestAiAdvice — OpenAI provider', () => {
     fetch.mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: '- tip' } }] }) })
     await requestAiAdvice(baseContext)
     expect(fetch.mock.calls[0][0]).toBe('https://my-proxy.example.com/v1/chat/completions')
+  })
+
+  it('omits reasoning_effort on a custom OpenAI-compatible endpoint', async () => {
+    mockStorage({ aiProvider: 'openai', aiEndpoint: 'https://my-proxy.example.com/v1/chat/completions', aiApiKey: 'sk-test', aiModel: '' })
+    fetch.mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: '- tip' } }] }) })
+    await requestAiAdvice(baseContext)
+    const body = JSON.parse(fetch.mock.calls[0][1].body)
+    expect(body.reasoning_effort).toBeUndefined()
+  })
+
+  it('omits reasoning_effort for a custom model on api.openai.com', async () => {
+    mockStorage({ aiProvider: 'openai', aiEndpoint: '', aiApiKey: 'sk-test', aiModel: 'gpt-5.6-terra' })
+    fetch.mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: '- tip' } }] }) })
+    await requestAiAdvice(baseContext)
+    const body = JSON.parse(fetch.mock.calls[0][1].body)
+    expect(body.model).toBe('gpt-5.6-terra')
+    expect(body.reasoning_effort).toBeUndefined()
   })
 })
 
@@ -321,6 +370,76 @@ describe('requestAiAdvice — model fallback', () => {
     expect(chrome.runtime.sendMessage).toHaveBeenCalledTimes(2)
     expect(JSON.parse(chrome.runtime.sendMessage.mock.calls[1][0].body).model).toBe('claude-sonnet-5')
     expect(result[0].text).toBe('Verify CSP allows Pendo scripts')
+  })
+
+  it('does not retry on generic HTTP 404 without a model-related error', async () => {
+    mockStorage({ aiProvider: 'openai', aiEndpoint: '', aiApiKey: 'sk-test', aiModel: '' })
+    fetch.mockResolvedValue({ ok: false, status: 404, json: async () => ({ error: { message: 'Not Found' } }) })
+    await requestAiAdvice(baseContext)
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('after a successful fallback, retries the primary when the session model returns model-not-found', async () => {
+    mockStorage({ aiProvider: 'openai', aiEndpoint: '', aiApiKey: 'sk-test', aiModel: '' })
+    fetch
+      .mockResolvedValueOnce({ ok: false, status: 404, json: async () => ({ error: { message: 'model not found' } }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ choices: [{ message: { content: '- ok' } }] }) })
+    await requestAiAdvice(baseContext)
+    expect(JSON.parse(fetch.mock.calls[1][1].body).model).toBe(AI_FALLBACK_MODELS.openai)
+
+    fetch.mockClear()
+    fetch
+      .mockResolvedValueOnce({ ok: false, status: 404, json: async () => ({ error: { message: 'model gpt-5.6-terra not found' } }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ choices: [{ message: { content: '- recovered' } }] }) })
+    const result = await requestAiAdvice(baseContext)
+    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(JSON.parse(fetch.mock.calls[0][1].body).model).toBe(AI_FALLBACK_MODELS.openai)
+    expect(JSON.parse(fetch.mock.calls[1][1].body).model).toBe(AI_DEFAULT_MODELS.openai)
+    expect(result[0].text).toBe('recovered')
+  })
+})
+
+describe('extractAiResponseContent', () => {
+  it('joins OpenAI text parts and skips refusal parts', () => {
+    const data = {
+      choices: [{
+        message: {
+          content: [
+            { type: 'text', text: '[{"text":"Verify CSP","supportKey":"csp"}]' },
+            { type: 'refusal', text: 'hidden' },
+          ],
+        },
+      }],
+    }
+    expect(extractAiResponseContent('openai', data)).toBe('[{"text":"Verify CSP","supportKey":"csp"}]')
+  })
+})
+
+describe('isAiModelNotFoundResponse', () => {
+  it('treats model_not_found and explicit model messages as retriable', () => {
+    expect(isAiModelNotFoundResponse(400, 'model_not_found')).toBe(true)
+    expect(isAiModelNotFoundResponse(400, 'The model does not exist')).toBe(true)
+    expect(isAiModelNotFoundResponse(404, 'model xyz was not found')).toBe(true)
+  })
+
+  it('rejects bare 404 and generic "does not exist" without model context', () => {
+    expect(isAiModelNotFoundResponse(404, 'Not Found')).toBe(false)
+    expect(isAiModelNotFoundResponse(400, 'Resource does not exist')).toBe(false)
+  })
+})
+
+describe('modelsToTryForProvider — session override', () => {
+  it('keeps the full chain with session model first', async () => {
+    mockStorage({ aiProvider: 'openai', aiEndpoint: '', aiApiKey: 'sk-test', aiModel: '' })
+    fetch
+      .mockResolvedValueOnce({ ok: false, status: 404, json: async () => ({ error: { message: 'model not found' } }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ choices: [{ message: { content: '- ok' } }] }) })
+    await requestAiAdvice(baseContext)
+    const cfg = { aiModel: '' }
+    expect(modelsToTryForProvider('openai', cfg)).toEqual([
+      AI_FALLBACK_MODELS.openai,
+      AI_DEFAULT_MODELS.openai,
+    ])
   })
 })
 

@@ -1476,24 +1476,43 @@ function resolveAiModel(provider, aiModel) {
   return custom;
 }
 
-/** Ordered model ids to try: session override, then primary, then one fallback when primary may be retired. */
-function modelsToTryForProvider(provider, cfg) {
+/** Primary then optional fallback for one provider (deduped). */
+function aiModelTryChain(provider, cfg) {
   const p = provider || 'openai';
-  const sessionModel = _aiSessionModelByProvider[p];
-  if (sessionModel) return [sessionModel];
   const primary = resolveAiModel(p, cfg && cfg.aiModel);
   const fallback = AI_FALLBACK_MODELS[p];
-  if (fallback && fallback !== primary) return [primary, fallback];
-  return [primary];
+  const chain = [];
+  const add = (m) => { if (m && chain.indexOf(m) === -1) chain.push(m); };
+  add(primary);
+  if (fallback) add(fallback);
+  return chain;
+}
+
+/** Ordered model ids to try: session override first, then the rest of the chain for model-not-found retries. */
+function modelsToTryForProvider(provider, cfg) {
+  const p = provider || 'openai';
+  const chain = aiModelTryChain(p, cfg);
+  const sessionModel = _aiSessionModelByProvider[p];
+  if (!sessionModel) return chain;
+  const rest = chain.filter((m) => m !== sessionModel);
+  return [sessionModel, ...rest];
 }
 
 function isAiModelNotFoundResponse(status, apiErr) {
-  if (status === 404) return true;
-  if (status !== 400 || !apiErr) return false;
-  const s = String(apiErr).toLowerCase();
-  return /model.*(not found|does not exist|no longer|deprecated|retired|unknown)/.test(s)
-    || /does not exist/.test(s)
-    || /model_not_found/.test(s);
+  const s = String(apiErr || '').toLowerCase();
+  if (/model_not_found/.test(s)) return true;
+  if (/model.*(not found|does not exist|no longer|deprecated|retired|unknown)/.test(s)) return true;
+  if (status === 404 && /model/.test(s)) return true;
+  return false;
+}
+
+/** reasoning_effort is only valid on the official OpenAI API when using bundled defaults (not a stored custom model). */
+function openAiUsesReasoningEffort(cfg, model) {
+  const endpoint = String((cfg && cfg.aiEndpoint) || 'https://api.openai.com/v1/chat/completions').trim();
+  if (!/^https:\/\/api\.openai\.com\//i.test(endpoint)) return false;
+  const custom = String((cfg && cfg.aiModel) || '').trim();
+  if (custom && !DEPRECATED_AI_MODELS.has(custom)) return false;
+  return model === AI_DEFAULT_MODELS.openai || model === AI_FALLBACK_MODELS.openai;
 }
 
 const AI_PROMPT_SUPPORT_KEYS = 'installGuide, validateInstall, chooseIdsMetadata, identifyVisitors, configureMetadata, parentAccounts, csp, spa, gtm, segment, iframe, sandbox, agentSettings, agentDebug, troubleshooting, hostnameAllowlist, multiDomain, launcherPlan, signedMetadata, installComponents, vds, agentConfig';
@@ -1533,11 +1552,23 @@ function buildAiRequest(provider, model, prompt, systemMsg, cfg) {
     };
     body = {
       model,
-      reasoning_effort: 'none',
       messages: [{ role: 'system', content: systemMsg }, { role: 'user', content: prompt }],
     };
+    if (openAiUsesReasoningEffort(cfg, model)) body.reasoning_effort = 'none';
   }
   return { endpoint, headers, body };
+}
+
+function normalizeOpenAiAssistantContent(content) {
+  if (content == null) return '';
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .filter(part => part && typeof part.text === 'string' && part.type !== 'refusal')
+      .map(part => part.text)
+      .join('');
+  }
+  return '';
 }
 
 function extractAiResponseContent(provider, data) {
@@ -1547,7 +1578,7 @@ function extractAiResponseContent(provider, data) {
     const parts = data?.candidates?.[0]?.content?.parts || [];
     return parts.filter(part => part && typeof part.text === 'string' && !part.thought).map(part => part.text).join('');
   }
-  return data?.choices?.[0]?.message?.content || '';
+  return normalizeOpenAiAssistantContent(data?.choices?.[0]?.message?.content);
 }
 
 /** Read AI config from chrome.storage.local: aiEndpoint, aiApiKey, aiModel. Used for optional ChatGPT-powered advice. */
