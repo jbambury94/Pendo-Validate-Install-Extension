@@ -8,15 +8,25 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const popupSrc = readFileSync(join(root, 'extension', 'popup.js'), 'utf8')
 const diagSrc = readFileSync(join(root, 'extension', 'diagnostics.js'), 'utf8')
 
-function loadRunInPage() {
-  const neutralized = popupSrc
+function loadRunInPage(opts) {
+  const o = opts || {}
+  let neutralized = popupSrc
     .replace('(async function initPendoWithStoredVisitor() {', '(async function initPendoWithStoredVisitor() { return;')
     .replace('initPopup();', ';')
+  if (Object.prototype.hasOwnProperty.call(o, 'hostTabId')) {
+    const stub = o.hostTabId == null ? 'null' : String(o.hostTabId)
+    neutralized = neutralized.replace(
+      /\/\*\* Tab hosting this panel[\s\S]*?^}\n/m,
+      `/** Tab hosting this panel (stubbed in tests). */\nfunction getHostTabIdForPanel() { return Promise.resolve(${stub}); }\n`,
+    )
+  }
+  const panelWindow = o.panelWindow || global.window
   const factory = new Function(
-    'chrome', 'browser', 'fetch', 'setTimeout', 'clearTimeout',
-    `${diagSrc}\n${neutralized}\nreturn { runInPage };`,
+    'chrome', 'browser', 'fetch', 'setTimeout', 'clearTimeout', 'panelWindow',
+    `var window = panelWindow; var self = panelWindow; var document = panelWindow.document;
+${diagSrc}\n${neutralized}\nreturn { runInPage, resolveNetworkCaptureTab };`,
   )
-  return factory(global.chrome, global.browser, global.fetch, setTimeout, clearTimeout)
+  return factory(global.chrome, global.browser, global.fetch, setTimeout, clearTimeout, panelWindow)
 }
 
 const combinedCapture = {
@@ -74,5 +84,27 @@ describe('runInPage — tab targeting', () => {
     for (const target of targets) {
       expect(target.tabId).toBe(3)
     }
+  })
+})
+
+describe('resolveNetworkCaptureTab', () => {
+  beforeEach(() => {
+    chrome.tabs.query.mockResolvedValue([
+      { id: 3, url: 'https://active.example/', active: true },
+      { id: 7, url: 'https://pending.example/app', active: false },
+    ])
+  })
+
+  it('uses the overlay host tab, not the focused tab', async () => {
+    const { resolveNetworkCaptureTab } = loadRunInPage({ hostTabId: 7 })
+    await expect(resolveNetworkCaptureTab()).resolves.toEqual({
+      id: 7,
+      url: 'https://pending.example/app',
+    })
+  })
+
+  it('returns null when the host tab cannot be identified', async () => {
+    const { resolveNetworkCaptureTab } = loadRunInPage({ hostTabId: null })
+    await expect(resolveNetworkCaptureTab()).resolves.toBeNull()
   })
 })

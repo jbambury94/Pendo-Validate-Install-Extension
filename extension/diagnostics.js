@@ -457,7 +457,7 @@ function classifyPendoRequest(url) {
   } catch {
     return 'other';
   }
-  if (/\/agent\/static\/[0-9a-f-]{36}\/pendo(?:-staging)?\.js$/.test(path)) return 'agent';
+  if (/\/agent\/(?:[^/]+\/)*pendo(?:-staging)?(?:\.\w+)?\.js$/.test(path)) return 'agent';
   if (/^\/data\/ptm\.gif\//.test(path)) return 'events';
   if (/^\/data\/(?:guide\.js|guide\.json|guide\.gif)\//.test(path) || path.indexOf('/guide-content/') !== -1) return 'guides';
   if (/^\/data\/poll\.gif\//.test(path)) return 'polls';

@@ -937,6 +937,18 @@ function getHostTabIdForPanel() {
   });
 }
 
+/** Tab a Validate network capture reloads: the host tab resumeNetworkCaptureValidation() waits on, with its URL. */
+async function resolveNetworkCaptureTab() {
+  const id = await getHostTabIdForPanel();
+  if (id == null) return null;
+  let url = 'unknown';
+  try {
+    const tab = (await tabsQuery({})).find(t => t && t.id === id);
+    if (tab && tab.url) url = tab.url;
+  } catch { /* the URL only labels the HAR */ }
+  return { id, url };
+}
+
 /** Redact identity-bearing values from Share summary lines when includeIdentity is off. */
 function redactShareSummaryText(text, context) {
   let out = String(text || '');
@@ -2941,12 +2953,15 @@ function initPopup() {
   }
 
   /** Ask the background to reload the tab under CDP; true when the reload started (this panel is about to go). */
-  async function startNetworkCaptureValidation() {
+  async function startNetworkCaptureValidation(prefetchedTab) {
     let res;
     try {
-      const [tab] = await tabsQuery({ active: true, currentWindow: true });
-      if (!tab || !tab.id) return false;
-      res = await sendExtMessage({ type: 'pendo-validate-network-validate', tabId: tab.id, pageUrl: tab.url || 'unknown' });
+      const tab = prefetchedTab || await resolveNetworkCaptureTab();
+      if (!tab) {
+        showToast("Network capture didn't start (couldn't identify this panel's tab). Validating without it.", 4200);
+        return false;
+      }
+      res = await sendExtMessage({ type: 'pendo-validate-network-validate', tabId: tab.id, pageUrl: tab.url });
     } catch (e) {
       res = { ok: false, error: e && e.message };
     }
@@ -2961,6 +2976,7 @@ function initPopup() {
    */
   async function runValidation(opts) {
     const options = opts || {};
+    let validationTabId = options.tabId;
     const runId = ++validationSeq;
     activateTab('status');
     runState = 'running';
@@ -2970,7 +2986,9 @@ function initPopup() {
     if (!options.networkCapture && !options.skipNetworkCapture && networkCaptureOnValidate && canCaptureNetworkWithCdp()) {
       setStatusHero({ state: 'running', title: 'Capturing network…', sub: 'Reloading the page to record Pendo requests. The panel reopens when it finishes.' });
       startStatusHeroTimeRefresh(null);
-      if (await startNetworkCaptureValidation()) return;
+      const captureTab = await resolveNetworkCaptureTab();
+      if (captureTab && validationTabId == null) validationTabId = captureTab.id;
+      if (await startNetworkCaptureValidation(captureTab)) return;
       if (runId !== validationSeq) return;
     }
 
@@ -2978,7 +2996,7 @@ function initPopup() {
     startStatusHeroTimeRefresh(null);
 
     try {
-      const res = await runInPage({ networkCapture: options.networkCapture || null, tabId: options.tabId });
+      const res = await runInPage({ networkCapture: options.networkCapture || null, tabId: validationTabId });
       if (!res || !res.status) {
         if (runId === validationSeq) {
           setStatusHero({ state: 'err', title: 'Failed', sub: 'Validation did not return a result.' });

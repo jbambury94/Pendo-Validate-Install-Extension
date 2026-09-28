@@ -288,6 +288,14 @@ describe('analyzeFrameMap', () => {
 describe('network classification', () => {
   it('classifies Pendo request kinds', () => {
     expect(classifyPendoRequest(`https://cdn.pendo.io/agent/static/${KEY_A}/pendo.js`)).toBe('agent')
+    expect(classifyPendoRequest(`https://cdn.pendo.io/agent/static/${KEY_A}/pendo-staging.js`)).toBe('agent')
+    expect(classifyPendoRequest(`https://cdn.pendo.io/agent/static/${KEY_A}/pendo.min.js`)).toBe('agent')
+    expect(classifyPendoRequest(`https://cdn.pendo.io/agent/static/${KEY_A}/pendo.xhr.js`)).toBe('agent')
+    expect(classifyPendoRequest(`https://cdn.pendo.io/agent/production/${KEY_A}/pendo.js`)).toBe('agent')
+    expect(classifyPendoRequest(`https://cdn.pendo.io/agent/beta/${KEY_A}/pendo.min.js`)).toBe('agent')
+    expect(classifyPendoRequest(`https://cdn.pendo.io/agent/releases/2.341.0/pendo.debugger.min.js`)).toBe('other')
+    expect(classifyPendoRequest(`https://cdn.pendo.io/agent/static/${KEY_A}/guide.js`)).toBe('other')
+    expect(classifyPendoRequest(`https://cdn.pendo.io/agent/static/${KEY_A}/agent.js`)).toBe('other')
     expect(classifyPendoRequest(`https://data.pendo.io/data/ptm.gif/${KEY_A}`)).toBe('events')
     expect(classifyPendoRequest(`https://data.pendo.io/data/guide.js/${KEY_A}`)).toBe('guides')
     expect(classifyPendoRequest(`https://data.pendo.io/data/poll.gif/${KEY_A}`)).toBe('polls')
@@ -348,6 +356,15 @@ describe('buildNetworkFindings', () => {
     expect(advice).toHaveLength(1)
     expect(advice[0]).toMatchObject({ severity: 'error', supportKey: 'csp' })
     expect(advice[0].text).toContain("blocked by the page's Content Security Policy")
+  })
+
+  it('reports a blocked agent on /agent/production/ as an error, not a warning', () => {
+    const { advice } = buildNetworkFindings({ requests: [
+      { url: `https://cdn.pendo.io/agent/production/${KEY_A}/pendo.min.js`, blockedReason: 'csp' },
+    ] })
+    expect(advice).toHaveLength(1)
+    expect(advice[0]).toMatchObject({ severity: 'error', supportKey: 'csp' })
+    expect(advice[0].text).toContain('agent script was')
   })
 
   it('reports other failed requests as warnings', () => {
