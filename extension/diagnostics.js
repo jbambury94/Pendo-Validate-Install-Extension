@@ -116,7 +116,7 @@ function diagExpectedConfigSerialized(defVal) {
 function diagConfigValueIsDefault(name, serializedValue) {
   const val = serializedValue == null ? '' : String(serializedValue);
   if (DIAG_CONFIG_DEFAULTS[name] === undefined) {
-    return val === '' || val === 'null' || val === 'false' || val === '""' || val === '[]' || val === '{}' || val === 'undefined';
+    return val === '' || val === 'null' || val === 'undefined';
   }
   const def = DIAG_CONFIG_DEFAULTS[name];
   if (def === Infinity) return val === 'null' || val === 'Infinity';

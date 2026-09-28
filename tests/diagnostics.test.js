@@ -442,6 +442,29 @@ describe('summarizeAgentConfig', () => {
   it('returns reported false when capture did not produce a config audit', () => {
     expect(summarizeAgentConfig({ reported: false })).toEqual({ reported: false, options: [], hiddenAsDefault: 0, conflicts: [] })
   })
+
+  it('treats explicit empty-looking values as non-default when the pinned default is undefined', () => {
+    const sum = summarizeAgentConfig({
+      reported: true,
+      options: [
+        { name: 'queryStringWhitelist', value: '[]', source: 'snippet' },
+        { name: 'disableCookies', value: 'false', source: 'snippet' },
+        { name: 'annotateUrl', value: '""', source: 'snippet' },
+        { name: 'customObjectOption', value: '{}', source: 'snippet' },
+        { name: 'unsetOption', value: '', source: 'snippet' },
+        { name: 'nullOption', value: 'null', source: 'snippet' },
+        { name: 'undefinedOption', value: 'undefined', source: 'snippet' },
+      ],
+      conflicts: [],
+    })
+    expect(sum.options.map((o) => o.name)).toEqual([
+      'queryStringWhitelist',
+      'disableCookies',
+      'annotateUrl',
+      'customObjectOption',
+    ])
+    expect(sum.hiddenAsDefault).toBe(3)
+  })
 })
 
 describe('DIAG_CONFIG_DEFAULTS drift', () => {

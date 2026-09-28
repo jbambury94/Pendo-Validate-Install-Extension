@@ -547,8 +547,9 @@ export function redactShareSummaryText(text, context) {
 export function buildPlainSummary(context, options) {
   const includeIdentity = options && options.includeIdentity === true
   const { pageUrl, timestamp, status, captured, advice, checks, snippetOnPage, launcherPresent, launcherAttempted, launcherDataValidated, validatedIn } = context
-  const errCount = (captured || []).filter(l => l.level === 'error').length
-  const warnCount = (captured || []).filter(l => l.level === 'warn').length
+  const flagged = countSeverityAdvice(advice)
+  const errCount = (captured || []).filter(l => l.level === 'error').length + flagged.error
+  const warnCount = (captured || []).filter(l => l.level === 'warn').length + flagged.warn
   const okCount = (checks || []).length
   let statusLine = 'Looks healthy'
   const subframeStatus = deriveSubframeStatusLine(context)
@@ -557,8 +558,8 @@ export function buildPlainSummary(context, options) {
   else if (!snippetOnPage && launcherPresent === true && launcherDataValidated === false) statusLine = 'Launcher installed (no data on this tab)'
   else if (!status.pendoPresent) statusLine = 'Pendo not found'
   else if (!status.validatePresent) statusLine = 'No validateInstall()'
-  else if (errCount > 0 || countSeverityAdvice(advice).error) statusLine = 'Errors found'
-  else if (warnCount > 0 || countSeverityAdvice(advice).warn) statusLine = 'Warnings found'
+  else if (errCount > 0) statusLine = 'Errors found'
+  else if (warnCount > 0) statusLine = 'Warnings found'
 
   const lines = []
   lines.push(`Pendo Install Validator — ${statusLine}`)

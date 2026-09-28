@@ -981,6 +981,46 @@ describe('captureAndInspect — agent environment check', () => {
     expect(result.captured.some(l => l.text.includes('disableCookies'))).toBe(false)
     expect(result.status.environment.config.conflicts).toHaveLength(1)
     expect(result.status.environment.config.conflicts[0].name).toBe('disableCookies')
+    expect(result.status.environment.config.conflicts[0].values).toEqual([
+      { source: 'snippet', value: 'true' },
+      { source: 'pendoconfig', value: 'false' },
+    ])
+  })
+
+  it('redacts inlineStyleNonce conflict values from each source log line', () => {
+    const validateEnvironment = mockValidateEnvironmentWithConfig(
+      ['Config option `inlineStyleNonce` with value `secret` from source `snippet`'],
+      {
+        conflict: {
+          name: 'inlineStyleNonce',
+          lines: [
+            'Config option `inlineStyleNonce` with value `secret` from source `snippet`',
+            'Config option `inlineStyleNonce` with value `other` from source `pendoconfig`',
+          ],
+        },
+      },
+    )
+    window.pendo = { validateInstall: vi.fn(), validateEnvironment, getConfigValue: () => undefined }
+    const conflict = captureAndInspect().status.environment.config.conflicts[0]
+    expect(conflict.values.map((v) => v.value)).toEqual(['(set)', '(set)'])
+  })
+
+  it('redacts function source text in conflict entries', () => {
+    const validateEnvironment = mockValidateEnvironmentWithConfig(
+      ['Config option `sanitizeUrl` with value `undefined` from source `snippet`'],
+      {
+        conflict: {
+          name: 'sanitizeUrl',
+          lines: [
+            'Config option `sanitizeUrl` with value `function () {}` from source `snippet`',
+            'Config option `sanitizeUrl` with value `() => 1` from source `pendoconfig`',
+          ],
+        },
+      },
+    )
+    window.pendo = { validateInstall: vi.fn(), validateEnvironment, getConfigValue: () => undefined }
+    const conflict = captureAndInspect().status.environment.config.conflicts[0]
+    expect(conflict.values.map((v) => v.value)).toEqual(['(function)', '(function)'])
   })
 
   it('reports config unavailable when the Validate Config options group never appears', () => {
