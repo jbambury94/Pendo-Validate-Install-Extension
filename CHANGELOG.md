@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.9.5
+- **Hero title no longer shows a count.** The Status hero read, for example, "1 warning" while the **Warnings** tile and the Checks card showed 4. The hero counts only console lines and checks with an explicit severity; the tiles count every recommendation, including older advice and AI suggestions that arrive after the hero is drawn. The hero now says **Warnings found** or **Errors found**, matching the Markdown and Share status lines. Its pass/warn/error decision is unchanged. The subframe-only hero follows the same wording.
+- **Tests.** 834 tests across 36 suites (up from 833 in 1.9.4).
+
 ## 1.9.4
 - **Debugger reports when it didn't start.** The Web SDK only lets the lead agent in a tab start the debugger; a follower agent's `enableDebugging()` returns without doing anything. The **Debugger** button now checks `isDebuggingEnabled(true)` afterwards and says the page's agent isn't the lead agent instead of reporting success — for example on a page with its own snippet while the Pendo Launcher's agent leads the tab.
 - **Debugger retries in the Pendo Launcher.** When the page's agent is missing or isn't the lead, the Debugger now retries in the Launcher's isolated world over CDP without validating first; previously it only used the Launcher when the last validation had run there. If both attempts fail, the toast gives both reasons — for example that the Launcher retry couldn't attach because DevTools is open. When the Launcher is installed but neither the page nor the Launcher has an agent on the tab, it says **Pendo Launcher is not configured for this page.**

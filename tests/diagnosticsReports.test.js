@@ -65,7 +65,7 @@ describe('Pendo found only in a subframe', () => {
     const withErr = { ...ctx, advice: [blocked] }
     expect(deriveHeroState(withErr)).toEqual({
       state: 'err',
-      title: '1 error',
+      title: 'Errors found',
       sub: 'Validation found errors. Not on the top page; found in 1 subframe.',
     })
     expect(buildMarkdownReport(withErr)).toContain('- **Status:** Errors found')
@@ -184,7 +184,7 @@ describe('hero and status lines count the new checks', () => {
 
   it('turns a clean console with a severity error into an error hero', () => {
     const ctx = context({ advice: [blocked, duplicate] })
-    expect(deriveHeroState(ctx)).toEqual({ state: 'err', title: '1 error', sub: 'Validation found errors.' })
+    expect(deriveHeroState(ctx)).toEqual({ state: 'err', title: 'Errors found', sub: 'Validation found errors.' })
     expect(buildMarkdownReport(ctx)).toContain('- **Status:** Errors found')
     expect(buildPlainSummary(ctx)).toMatch(/^Pendo Install Validator — Errors found/)
     expect(buildPlainSummary(ctx)).toContain('Errors: 1   Warnings: 1')
@@ -192,13 +192,13 @@ describe('hero and status lines count the new checks', () => {
 
   it('adds severity warnings to the console warning count', () => {
     const ctx = context({ advice: [duplicate], captured: [{ level: 'warn', text: 'console warning' }] })
-    expect(deriveHeroState(ctx)).toMatchObject({ state: 'warn', title: '2 warnings' })
+    expect(deriveHeroState(ctx)).toMatchObject({ state: 'warn', title: 'Warnings found' })
     expect(buildMarkdownReport(ctx)).toContain('- **Status:** Warnings found')
   })
 
   it('keeps the validateInstall() wording when the console reported errors', () => {
     const ctx = context({ advice: [blocked], captured: [{ level: 'error', text: 'boom' }] })
-    expect(deriveHeroState(ctx)).toEqual({ state: 'err', title: '2 errors', sub: 'validateInstall() reported errors.' })
+    expect(deriveHeroState(ctx)).toEqual({ state: 'err', title: 'Errors found', sub: 'validateInstall() reported errors.' })
   })
 
   it('leaves advice without a severity out of the hero, as before', () => {
