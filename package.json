@@ -1,6 +1,6 @@
 {
   "name": "pendo-validate-install-extension",
-  "version": "1.9.3",
+  "version": "1.9.4",
   "author": "John Bambury <john.bambury@pendo.io> (Pendo Professional Services)",
   "private": true,
   "type": "module",

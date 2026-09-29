@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.9.4
+- **Debugger reports when it didn't start.** The Web SDK only lets the lead agent in a tab start the debugger; a follower agent's `enableDebugging()` returns without doing anything. The **Debugger** button now checks `isDebuggingEnabled(true)` afterwards and says the page's agent isn't the lead agent instead of reporting success — for example on a page with its own snippet while the Pendo Launcher's agent leads the tab.
+- **Debugger retries in the Pendo Launcher.** When the page's agent is missing or isn't the lead, the Debugger now retries in the Launcher's isolated world over CDP without validating first; previously it only used the Launcher when the last validation had run there. If both attempts fail, the toast gives both reasons — for example that the Launcher retry couldn't attach because DevTools is open. When the Launcher is installed but neither the page nor the Launcher has an agent on the tab, it says **Pendo Launcher is not configured for this page.**
+- **Stale injected helpers are replaced after an upgrade.** `enable-debugging.js` now has a revision guard (revision 3), and the Launcher CDP path checks the revision of both `enable-debugging.js` and `capture-inspect.js`. Previously a helper left in the Launcher's isolated world by an older version was reused until the page reloaded.
+- **Tests.** 833 tests across 36 suites (up from 811 in 1.9.3).
+
 ## 1.9.3
 - **Firefox support removed.** No Firefox zip from this release onward; the last build is `pendo-validate-install-1.9.2-firefox.zip` on the [v1.9.2 release](https://github.com/jbambury94/Pendo-Validate-Install-Extension/releases/tag/v1.9.2). `npm run build` now produces only the Chrome Web Store zip. Removed `build:chrome`, `build:firefox`, `scripts/browser-targets.mjs`, and the `web-ext lint` release workflow step.
 - **Self-instrumentation SDK 2.343.0** (was 2.341.0); bundled agent, config, and designer assets refreshed.

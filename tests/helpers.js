@@ -802,7 +802,7 @@ export function buildAiPrompt(context, selectRelatedReadingFn) {
 export function enableDebuggingInPage() {
   const pendo = (typeof window !== 'undefined' && (window.pendo || window.Pendo)) || null
   if (!pendo || typeof pendo.enableDebugging !== 'function') {
-    return { ok: false, message: 'Pendo not found or enableDebugging not available on this page.' }
+    return { ok: false, reason: 'no-agent', message: 'Pendo not found or enableDebugging not available on this page.' }
   }
   try {
     pendo.enableDebugging()
@@ -820,10 +820,12 @@ export function enableDebuggingInPage() {
  * Build a CDP Runtime.evaluate expression that defines an injected script's global
  * exactly once, then invokes it. Kept in sync with extension/popup.js. The typeof guard
  * makes re-evaluation in the Launcher's persistent isolated world idempotent (no
- * redeclaration of top-level bindings on repeat validations).
+ * redeclaration of top-level bindings on repeat validations); with `revision`, a mismatched
+ * `${globalName}Revision` also re-runs the body so an older build's helper is replaced.
  */
-export function buildLauncherInvokeExpression(src, globalName, argsExpr = '') {
-  return `if (typeof globalThis.${globalName} !== 'function') {\n${src}\n}\nglobalThis.${globalName}(${argsExpr});`
+export function buildLauncherInvokeExpression(src, globalName, argsExpr = '', revision) {
+  const staleCheck = revision == null ? '' : `globalThis.${globalName}Revision !== ${revision} || `
+  return `if (${staleCheck}typeof globalThis.${globalName} !== 'function') {\n${src}\n}\nglobalThis.${globalName}(${argsExpr});`
 }
 
 /** How long to gather Launcher isolated-world contexts after Runtime.enable settles. */
@@ -912,20 +914,39 @@ export async function evaluateInLauncherWorld(tabId, launcherId, expression) {
   }
 }
 
+export const LAUNCHER_NOT_CONFIGURED_MESSAGE = 'Pendo Launcher is not configured for this page.'
+
 /** Enable pendo.enableDebugging() inside the Launcher content-script world (Phase 1.75 path). */
 export async function enableDebuggingViaLauncherCdp(tabId, launcher) {
   const expression = `(${enableDebuggingInPage.toString()})()`
   const cdp = await evaluateInLauncherWorld(tabId, launcher.id, expression)
   if (!cdp.ok) {
     if (cdp.reason === 'no-debugger-api') {
-      return { ok: false, message: 'Launcher debugger requires Chrome or Edge (CDP not available in this browser).' }
+      return { ok: false, reason: cdp.reason, message: 'Launcher debugger requires Chrome or Edge (CDP not available in this browser).' }
     }
     if (cdp.reason === 'no-launcher-context') {
-      return { ok: false, message: 'Pendo Launcher agent context not found on this tab. Re-run validation first.' }
+      return { ok: false, reason: cdp.reason, message: 'Pendo Launcher agent context not found on this tab. Re-run validation first.' }
     }
-    return { ok: false, message: cdp.message || 'Failed to enable debugger in Launcher context.' }
+    return { ok: false, reason: cdp.reason, message: cdp.message || 'Failed to enable debugger in Launcher context.' }
   }
-  return cdp.value || { ok: false, message: 'No result from Launcher debugger.' }
+  const res = cdp.value || { ok: false, message: 'No result from Launcher debugger.' }
+  if (res.reason === 'not-leader') {
+    return { ...res, message: "The Pendo Launcher's agent isn't the lead agent in this tab, so it didn't start the debugger." }
+  }
+  if (res.reason === 'no-agent') return { ...res, message: LAUNCHER_NOT_CONFIGURED_MESSAGE }
+  return res
+}
+
+/** Launcher retry reasons meaning the Launcher has no agent on this tab, so it adds nothing to the page's answer. */
+const LAUNCHER_ABSENT_REASONS = new Set(['no-launcher-context', 'no-agent'])
+
+/** Choose the Debugger result once the page's agent failed and the Launcher retry has run (kept in sync with popup.js). */
+export function resolveDebuggerRetryResult(pageRes, launcherRes) {
+  if (launcherRes.ok) return launcherRes
+  if (LAUNCHER_ABSENT_REASONS.has(launcherRes.reason)) {
+    return pageRes.reason === 'no-agent' ? { ok: false, reason: 'no-agent', message: LAUNCHER_NOT_CONFIGURED_MESSAGE } : pageRes
+  }
+  return { ...launcherRes, message: `${pageRes.message} Retrying in the Pendo Launcher failed: ${launcherRes.message}` }
 }
 
 /** Rewrite known provider errors into clearer guidance (kept in sync with popup.js). */

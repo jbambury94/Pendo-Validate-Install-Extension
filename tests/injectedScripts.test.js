@@ -93,6 +93,16 @@ describe('injected extension scripts — MAIN world idempotency', () => {
     expect(context.__pendoValidateEnableDebugging()).toMatchObject({ ok: false, reason: 'not-leader' })
   })
 
+  it('enable-debugging.js reports no-agent when the world has no Pendo agent', () => {
+    const src = readExtensionScript('enable-debugging.js')
+    const context = vm.createContext({ globalThis: {}, window: {} })
+    context.globalThis = context
+    context.window = context
+
+    injectIntoContext(src, context)
+    expect(context.__pendoValidateEnableDebugging()).toMatchObject({ ok: false, reason: 'no-agent' })
+  })
+
   it('har-timings.js can be injected twice without redeclaration', () => {
     const src = readExtensionScript('har-timings.js')
     const context = vm.createContext({

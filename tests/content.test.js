@@ -171,6 +171,7 @@ describe('enableDebuggingInPage', () => {
     window.pendo = {}
     const result = enableDebuggingInPage()
     expect(result.ok).toBe(false)
+    expect(result.reason).toBe('no-agent')
   })
 
   it('returns ok: true when enableDebugging is called successfully', () => {
