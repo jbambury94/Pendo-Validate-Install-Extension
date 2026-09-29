@@ -666,14 +666,14 @@ function resolveSubframeHeroState(res, originNote) {
   if (s.error > 0) {
     return {
       state: 'err',
-      title: `${s.error} error${s.error === 1 ? '' : 's'}`,
+      title: 'Errors found',
       sub: (s.logErrCount ? 'validateInstall() reported errors' : 'Validation found errors') + note + `. ${subframeHero.sub}`,
     };
   }
   if (s.warn > 0) {
     return {
       state: 'warn',
-      title: `${s.warn} warning${s.warn === 1 ? '' : 's'}`,
+      title: 'Warnings found',
       sub: 'Install works, but there are recommendations' + note + `. ${subframeHero.sub}`,
     };
   }

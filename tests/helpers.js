@@ -665,8 +665,8 @@ export function deriveHeroState(res) {
   const flagged = countSeverityAdvice(res.advice)
   const errCount = logErrCount + flagged.error
   const warnCount = captured.filter(l => l.level === 'warn').length + flagged.warn
-  if (errCount > 0) return { state: 'err', title: `${errCount} error${errCount === 1 ? '' : 's'}`, sub: (logErrCount ? 'validateInstall() reported errors' : 'Validation found errors') + originNote + '.' }
-  if (warnCount > 0) return { state: 'warn', title: `${warnCount} warning${warnCount === 1 ? '' : 's'}`, sub: 'Install works, but there are recommendations' + originNote + '.' }
+  if (errCount > 0) return { state: 'err', title: 'Errors found', sub: (logErrCount ? 'validateInstall() reported errors' : 'Validation found errors') + originNote + '.' }
+  if (warnCount > 0) return { state: 'warn', title: 'Warnings found', sub: 'Install works, but there are recommendations' + originNote + '.' }
   return { state: 'ok', title: 'Install validated', sub: 'All checks passed' + originNote + '.' }
 }
 

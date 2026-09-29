@@ -44,32 +44,37 @@ describe('deriveHeroState', () => {
     expect(hero.sub).toContain('validateInstall() helper is unavailable')
   })
 
-  it('returns err with singular when 1 error in captured', () => {
+  it('returns err when there is 1 error in captured', () => {
     const res = { ...baseResult, captured: [{ level: 'error', text: 'fail' }] }
     const hero = deriveHeroState(res)
     expect(hero.state).toBe('err')
-    expect(hero.title).toBe('1 error')
+    expect(hero.title).toBe('Errors found')
   })
 
-  it('returns err with plural when multiple errors in captured', () => {
+  it('returns err when there are multiple errors in captured', () => {
     const res = { ...baseResult, captured: [{ level: 'error', text: 'a' }, { level: 'error', text: 'b' }] }
     const hero = deriveHeroState(res)
     expect(hero.state).toBe('err')
-    expect(hero.title).toBe('2 errors')
+    expect(hero.title).toBe('Errors found')
   })
 
-  it('returns warn with singular when 1 warning in captured', () => {
+  it('returns warn when there is 1 warning in captured', () => {
     const res = { ...baseResult, captured: [{ level: 'warn', text: 'w' }] }
     const hero = deriveHeroState(res)
     expect(hero.state).toBe('warn')
-    expect(hero.title).toBe('1 warning')
+    expect(hero.title).toBe('Warnings found')
   })
 
-  it('returns warn with plural when multiple warnings in captured', () => {
+  it('returns warn when there are multiple warnings in captured', () => {
     const res = { ...baseResult, captured: [{ level: 'warn', text: 'a' }, { level: 'warn', text: 'b' }, { level: 'warn', text: 'c' }] }
     const hero = deriveHeroState(res)
     expect(hero.state).toBe('warn')
-    expect(hero.title).toBe('3 warnings')
+    expect(hero.title).toBe('Warnings found')
+  })
+
+  it('keeps counts out of the title so it cannot disagree with the quick stats', () => {
+    const res = { ...baseResult, advice: [{ text: 'duplicate', source: 'builtin', severity: 'warn' }] }
+    expect(deriveHeroState(res).title).not.toMatch(/\d/)
   })
 
   it('returns ok when all checks pass', () => {
