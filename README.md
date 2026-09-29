@@ -32,7 +32,7 @@ Debugging a Pendo installation today means juggling browser DevTools, running `p
 - **CSP and API key checks** — flags missing Pendo domains in `Content-Security-Policy` meta tags and confirms whether an API key is present.
 - **Deeper install checks on every Validate** — runs the page agent's own `validateEnvironment()` (errors the agent has logged, built-ins such as `JSON.stringify` replaced by the page, and **non-default config options** from the agent's Validate Config audit — snippet vs hosted config vs `window.pendo`), flags an agent script included more than once or agents for more than one API key, spots anonymous `_PENDO_T_` visitors, and maps every frame on the page to show where Pendo is running — including installs that live only in a subframe.
 - **Optional network capture (Chrome / Edge)** — turn it on in Settings and **Validate** reloads the page to record which Pendo requests succeed or are blocked (CSP, ad blockers, HTTP errors), plus the page's CSP response header. The capture also backs the Logs → **HAR** download without a second reload.
-- **Curated support links** — every validation surfaces a *Related reading* card with hand-picked entries from a built-in knowledge base of 25 Pendo support articles.
+- **Curated support links** — every validation surfaces a *Related reading* card with hand-picked entries from a built-in knowledge base of 32 Pendo support articles.
 - **Extended page signals** — detects iframe / sandbox embedding, Google Tag Manager, common SPA frameworks (React / Vue / Angular / Next / Nuxt), the bundled Pendo agent version, and URL sanitization that can strip Pendo's Visual Design Studio token — both load-time redirects and client-side logic (inline-script scan plus history-API instrumentation).
 - **Light / Dark / System theme.** Theme selector in Settings persists locally and applies before first paint, so there's no flash of unstyled content.
 - **Shareable results** — export a Markdown report with support links and related reading, or copy a Slack-ready summary to your clipboard.
@@ -49,7 +49,7 @@ Debugging a Pendo installation today means juggling browser DevTools, running `p
 | **Chrome** | [Chrome Web Store listing](https://chromewebstore.google.com/detail/Pendo%20Install%20Validator/ihcmfkfdfpoiadcpleapkjeppmephpfa) — **Add to Chrome**. |
 | **Edge** | Open `edge://extensions`, turn on **Allow extensions from other stores**, then use the same [Chrome Web Store listing](https://chromewebstore.google.com/detail/Pendo%20Install%20Validator/ihcmfkfdfpoiadcpleapkjeppmephpfa). Updates arrive automatically. |
 
-> **Firefox:** this extension no longer ships a Firefox build. The last release is [`pendo-validate-install-1.9.2-firefox.zip`](../../releases/tag/v1.9.2) on the v1.9.2 GitHub Release.
+> **Firefox:** this extension no longer ships a Firefox build. The last release is [`pendo-validate-install-1.9.2-firefox.zip`](https://github.com/jbambury94/Pendo-Validate-Install-Extension/releases/tag/v1.9.2) on the [v1.9.2 release](https://github.com/jbambury94/Pendo-Validate-Install-Extension/releases/tag/v1.9.2).
 
 **From source** (development): clone this repo and **Load unpacked** → select the `extension/` folder (Chrome or Edge). To apply code changes after editing: click the refresh icon on the extension card, then click the toolbar icon to reopen the panel.
 
@@ -91,7 +91,7 @@ Your key is stored locally in `chrome.storage.local` and is only sent when valid
 
 ## Your data stays yours
 
-- **AI is opt-in only.** Calls happen only when you've saved a key, only after validation finds a problem, and only the page URL, agent metadata, the recommendations (which can name subframe and blocked-request URLs), and up to 30 captured log lines are sent. Logs may contain user IDs or application details — use the feature only on pages where you're comfortable sharing that context.
+- **AI is opt-in only.** Calls happen only when you've saved a key and only after validation finds a problem. The prompt includes the validated page URL, visitor and account IDs, agent version, whether a Pendo subscription API key was detected (yes/no — not the key value), metadata field names, recommendations, and up to 30 captured log lines. Known subscription API keys and other UUIDs are replaced with `[redacted]` in the prompt (except UUIDs that match the visitor, account, or parent account ID). Logs and recommendations can still name subframe or blocked-request URLs and may contain application details — use the feature only on pages where you're comfortable sharing that context.
 
 ---
 

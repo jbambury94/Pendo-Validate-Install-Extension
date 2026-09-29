@@ -9,7 +9,7 @@ The current PNGs are **generated mockups** styled with the project's design toke
 | File | Dimensions | What it should show |
 |------|-----------|---------------------|
 | `hero.png` | ~1600 x 900 | Wide marketing hero: a web page in the background with the floating IVA panel in the foreground showing a successful validation (Status tab, green hero, quick stats, checks list, action bar). |
-| `panel-status.png` | ~1000 x 1100 | Close-up of the IVA panel's Status tab: status hero, quick stats row, Checks & recommendations card, Identity card, Metadata card, action bar (Validate / Debugger / Export). |
+| `panel-status.png` | ~1000 x 1100 | Close-up of the IVA panel's Status tab: status hero, quick stats row, Checks & recommendations card, Related reading, action bar (Validate / Debugger / Share). Identity and metadata live on Logs → **Install details**. Markdown report download is in Settings → Sharing. |
 
 ## How to recapture
 
