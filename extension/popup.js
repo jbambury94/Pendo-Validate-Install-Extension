@@ -70,7 +70,8 @@ async function injectScriptFileAndRun(api, { target, world, file, func, args, in
 const _INJECTED_SCRIPTS = {
   // revision must match PENDO_VALIDATE_CAPTURE_INSPECT_REVISION in capture-inspect.js
   'capture-inspect': { file: 'capture-inspect.js', revision: 4, func: (variant) => globalThis.__pendoValidateCaptureAndInspect(variant) },
-  'enable-debugging': { file: 'enable-debugging.js', func: () => globalThis.__pendoValidateEnableDebugging() },
+  // revision must match __pendoValidateEnableDebuggingRevision in enable-debugging.js
+  'enable-debugging': { file: 'enable-debugging.js', revision: 2, func: () => globalThis.__pendoValidateEnableDebugging() },
   'har-timings': { file: 'har-timings.js', func: () => globalThis.__pendoValidateHarTimings() },
   // allFrames: frames added since the last run have no global yet, so never invoke-only.
   'frame-probe': { file: 'frame-probe.js', alwaysInject: true, func: (opts) => globalThis.__pendoValidateFrameProbe(opts) },
@@ -3293,34 +3294,43 @@ function initPopup() {
   }
   resumeNetworkCaptureValidation();
 
-  /** Run enable-debugging.js in the active tab (MAIN world) and return its result. */
-  async function runInActiveTab() {
-    const [tab] = await tabsQuery({ active: true, currentWindow: true });
-    if (!tab || !tab.id) return { ok: false, message: 'No active tab' };
+  /** Run enable-debugging.js in the tab's MAIN world and return its result. */
+  async function enableDebuggingInPageWorld(tabId) {
     try {
-      const [{ result }] = await executeScript({ target: { tabId: tab.id }, world: 'MAIN', injectedScript: 'enable-debugging' });
+      const [{ result }] = await executeScript({ target: { tabId }, world: 'MAIN', injectedScript: 'enable-debugging' });
       return result || { ok: false, message: 'No result' };
     } catch (e) {
       return { ok: false, message: e && e.message ? e.message : String(e) };
     }
   }
 
-  /** Enable Pendo Debugger: calls pendo.enableDebugging() in the validated agent context. */
-  launchDebuggerBtn.addEventListener('click', async () => {
-    const useLauncherCdp = !!(lastContext && lastContext.validationPath === 'launcher-cdp' && lastContext.validationTabId);
-    let res;
-    if (useLauncherCdp) {
+  /**
+   * Enable the Pendo Debugger on the agent that leads the active tab; no validation required.
+   * The page's own agent is tried first. When it is missing, or defers to another agent's frame
+   * (the Pendo Launcher's agent forces itself to lead), retry in the Launcher's isolated world.
+   */
+  async function enableDebuggerForActiveTab() {
+    if (lastContext && lastContext.validationPath === 'launcher-cdp' && lastContext.validationTabId) {
       const launcher = lastContext.launcherExtensionId
-        ? { id: lastContext.launcherExtensionId, variant: lastContext.validatedIn || 'launcher' }
+        ? { id: lastContext.launcherExtensionId }
         : await detectInstalledPendoLauncherExtension();
-      if (!launcher) {
-        res = { ok: false, message: 'Pendo Launcher extension not found.' };
-      } else {
-        res = await enableDebuggingViaLauncherCdp(lastContext.validationTabId, launcher);
-      }
-    } else {
-      res = await runInActiveTab();
+      if (!launcher) return { ok: false, message: 'Pendo Launcher extension not found.' };
+      return enableDebuggingViaLauncherCdp(lastContext.validationTabId, launcher);
     }
+    const [tab] = await tabsQuery({ active: true, currentWindow: true });
+    if (!tab || !tab.id) return { ok: false, message: 'No active tab' };
+    const pageRes = await enableDebuggingInPageWorld(tab.id);
+    if (pageRes.ok) return pageRes;
+    const launcher = await detectInstalledPendoLauncherExtension();
+    if (!launcher) return pageRes;
+    const launcherRes = await enableDebuggingViaLauncherCdp(tab.id, launcher);
+    if (launcherRes.ok || pageRes.reason !== 'not-leader') return launcherRes;
+    return pageRes;
+  }
+
+  /** Enable Pendo Debugger: calls pendo.enableDebugging() on the tab's leading agent. */
+  launchDebuggerBtn.addEventListener('click', async () => {
+    const res = await enableDebuggerForActiveTab();
     const validationPath = (lastContext && lastContext.validationPath) || 'unknown';
     if (res.ok) {
       if (lastContext) lastContext.debuggerEnabledAt = Date.now();

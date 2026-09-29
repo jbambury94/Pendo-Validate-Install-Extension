@@ -806,6 +806,10 @@ export function enableDebuggingInPage() {
   }
   try {
     pendo.enableDebugging()
+    const enabled = typeof pendo.isDebuggingEnabled === 'function' ? pendo.isDebuggingEnabled(true) : undefined
+    if (enabled === false || enabled === 'No') {
+      return { ok: false, reason: 'not-leader', message: "This page's Pendo agent isn't the lead agent in this tab, so it didn't start the debugger." }
+    }
     return { ok: true }
   } catch (e) {
     return { ok: false, message: (e && e.message) || String(e) }

@@ -190,5 +190,18 @@ describe('enableDebuggingInPage', () => {
     window.Pendo = { enableDebugging: vi.fn() }
     expect(enableDebuggingInPage().ok).toBe(true)
   })
+
+  it('returns ok: true when debugging is enabled after the call', () => {
+    window.pendo = { enableDebugging: vi.fn(() => 'debugging enabled'), isDebuggingEnabled: vi.fn(() => true) }
+    expect(enableDebuggingInPage()).toEqual({ ok: true })
+    expect(window.pendo.isDebuggingEnabled).toHaveBeenCalledWith(true)
+  })
+
+  it('returns not-leader when a follower agent ignores enableDebugging', () => {
+    window.pendo = { enableDebugging: vi.fn(() => undefined), isDebuggingEnabled: vi.fn(() => false) }
+    const result = enableDebuggingInPage()
+    expect(result.ok).toBe(false)
+    expect(result.reason).toBe('not-leader')
+  })
 })
 
