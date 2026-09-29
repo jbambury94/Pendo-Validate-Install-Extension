@@ -1,8 +1,8 @@
 name: Release
 
-# Pushing a version tag (e.g. v1.8.2) runs tests, builds the Chrome /
-# Firefox zips, and attaches them to a GitHub Release. workflow_dispatch
-# builds the same zips as workflow artifacts without publishing a Release.
+# Pushing a version tag (e.g. v1.8.2) runs tests, builds the Chrome zip,
+# and attaches it to a GitHub Release. workflow_dispatch builds the same zip
+# as workflow artifacts without publishing a Release.
 #
 # Releases only publish from Stable: a tagged commit that is not on origin/Stable
 # fails the "Verify tagged commit is on Stable" step before any build runs. Merge
@@ -48,9 +48,6 @@ jobs:
 
       - name: Build browser packages
         run: npm run build
-
-      - name: Lint Firefox build (web-ext)
-        run: npx --yes web-ext lint --source-dir dist/staging/firefox
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v7

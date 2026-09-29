@@ -58,7 +58,7 @@ async function tabsQuery(queryInfo) {
 }
 
 async function injectScriptFileAndRun(api, { target, world, file, func, args, invokeOnly }) {
-  // Firefox forbids func/args on the same executeScript call as files — inject, then invoke.
+  // scripting.executeScript accepts files or func, not both — inject, then invoke.
   // invokeOnly skips the (idempotent) file step when the injected global already exists in
   // this world — e.g. a repeat validation on the same tab — so the file isn't re-parsed.
   if (!invokeOnly) await api.scripting.executeScript({ target, world, files: [file] });
@@ -3548,7 +3548,7 @@ function initPopup() {
     syncShareExportControls();
   });
 
-  // chrome.debugger is Chrome/Edge only; the Firefox build has no way to capture the reload.
+  // Network capture on Validate needs chrome.debugger (Chrome and Edge).
   if (networkCaptureSettingsCard) networkCaptureSettingsCard.hidden = !canCaptureNetworkWithCdp();
   networkCaptureOnValidateInput?.addEventListener('change', () => {
     networkCaptureOnValidate = !!networkCaptureOnValidateInput.checked;

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.9.3
+- **Firefox support removed.** No Firefox zip from this release onward; the last build is `pendo-validate-install-1.9.2-firefox.zip` on the [v1.9.2 release](https://github.com/jbambury94/Pendo-Validate-Install-Extension/releases/tag/v1.9.2). `npm run build` now produces only the Chrome Web Store zip. Removed `build:chrome`, `build:firefox`, `scripts/browser-targets.mjs`, and the `web-ext lint` release workflow step.
+- **Self-instrumentation SDK 2.343.0** (was 2.341.0); bundled agent, config, and designer assets refreshed.
+- **Dev tooling.** Vitest 5.0.2, `@vitest/coverage-v8` 5.0.2, jsdom 30.1.1.
+- **Tests.** 811 tests across 36 suites.
+
 ## 1.9.2
 - **AI model refresh.** Default models are now OpenAI `gpt-5.6-luna`, Anthropic `claude-haiku-4-5-20251001`, and Google `gemini-3.8-flash`. OpenAI requests omit `temperature` and set `reasoning_effort: none`; Gemini uses `systemInstruction` with `thinkingLevel: LOW`. OpenAI replies returned as content parts (rather than a single string) are now parsed. Retired model IDs stored in `aiModel` are cleared on read and mapped to the new defaults.
 - **AI model fallback.** When the provider returns a model-not-found error, the extension retries once with a backup model for that provider and remembers the working model for the rest of the panel session. If the backup is also unavailable, the panel says to update the extension instead of showing the raw provider error.

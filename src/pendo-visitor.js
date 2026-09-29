@@ -6,8 +6,8 @@
  * (tests/helpers.js) — a single source of truth instead of a hand-kept mirror.
  *
  * All chrome.* access is read lazily at call time so tests can toggle the mocks
- * per case, and every path degrades gracefully when an API is missing (Firefox
- * strips `identity`; a stored UUID is used instead).
+ * per case, and every path degrades gracefully when an API is missing (a stored
+ * UUID is used when profile email is unavailable).
  */
 
 export const PENDO_VISITOR_ID_KEY = 'pendoVisitorId';

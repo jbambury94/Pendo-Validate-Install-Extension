@@ -1,6 +1,6 @@
 # Updating the Pendo Install Validator Extension
 
-You're here because a notification told you there's a new version available. On **Chrome** and **Edge**, the extension is distributed through the [Chrome Web Store](https://chromewebstore.google.com/detail/Pendo%20Install%20Validator/ihcmfkfdfpoiadcpleapkjeppmephpfa) and updates automatically — you usually do not need to do anything. **Firefox** still uses a manual zip from GitHub Releases; see below.
+You're here because a notification told you there's a new version available. The extension is distributed through the [Chrome Web Store](https://chromewebstore.google.com/detail/Pendo%20Install%20Validator/ihcmfkfdfpoiadcpleapkjeppmephpfa) and updates automatically — you usually do not need to do anything.
 
 ---
 
@@ -25,29 +25,6 @@ Open the extension on any page and check the version in the panel footer. It sho
 
 ---
 
-## Firefox (GitHub Release zip)
-
-Firefox loads unsigned builds as *temporary* add-ons, so they do not persist across browser restarts and do not auto-update from the Chrome Web Store.
-
-### Step 1 — Download the latest version
-
-1. Go to the [Releases page](https://github.com/jbambury94/Pendo-Validate-Install-Extension/releases).
-2. Under the latest release, download `pendo-validate-install-<version>-firefox.zip`.
-
-### Step 2 — Reload the add-on
-
-1. Navigate to `about:debugging#/runtime/this-firefox`.
-2. Click **Load Temporary Add-on…**.
-3. Select the Firefox zip from the release (no need to unzip).
-
-You will need to repeat this after each browser restart — a Firefox limitation, not a character flaw on anyone's part.
-
-### Step 3 — Verify the update
-
-Open the extension panel and check the version in the footer. It should match the release you downloaded.
-
----
-
 ## A note on your AI settings
 
 If you have configured an AI provider (OpenAI, Anthropic, or Gemini) via the Settings panel, your credentials are stored in `chrome.storage.local` and will survive an update without needing to be re-entered.
@@ -58,4 +35,4 @@ One exception: if a model you had configured has since been deprecated, the exte
 
 ## Keeping up with changes
 
-The full version history is in [CHANGELOG.md](https://github.com/jbambury94/Pendo-Validate-Install-Extension/blob/Stable/CHANGELOG.md). Worth a quick read before updating on Firefox — and occasionally on Chrome or Edge when a release note mentions new permissions.
+The full version history is in [CHANGELOG.md](https://github.com/jbambury94/Pendo-Validate-Install-Extension/blob/Stable/CHANGELOG.md). Worth a quick read when a release note mentions new permissions.

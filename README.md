@@ -5,14 +5,13 @@
 <h1 align="center">Pendo Install Validator</h1>
 
 <p align="center">
-  A browser extension for Chrome, Edge, and Firefox that tells you in one click whether Pendo is installed correctly&nbsp;&mdash; and what to fix if it isn't.
+  A browser extension for Chrome and Edge that tells you in one click whether Pendo is installed correctly&nbsp;&mdash; and what to fix if it isn't.
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/Chrome-MV3-blue" alt="Chrome MV3" />
   <img src="https://img.shields.io/badge/Edge-MV3-blue" alt="Edge MV3" />
-  <img src="https://img.shields.io/badge/Firefox-MV3%20(128%2B)-orange" alt="Firefox MV3 (128+)" />
-  <img src="https://img.shields.io/badge/version-1.9.2-FF4876" alt="Version 1.9.2" />
+  <img src="https://img.shields.io/badge/version-1.9.3-FF4876" alt="Version 1.9.3" />
   <img src="https://img.shields.io/badge/AI-OpenAI%20%7C%20Claude%20%7C%20Gemini-lightgrey" alt="AI: OpenAI | Claude | Gemini" />
 </p>
 
@@ -24,7 +23,7 @@
 
 ## The problem
 
-Debugging a Pendo installation today means juggling browser DevTools, running `pendo.validateInstall()` by hand, guessing whether the snippet or the Pendo Launcher loaded, hunting for a missing API key, and cross-referencing CSP headers — all before you can even tell whether visitor identity is flowing. This extension collapses all of that into a single button click. One codebase ships to Chrome, Edge, and Firefox — install from the [Chrome Web Store](https://chromewebstore.google.com/detail/Pendo%20Install%20Validator/ihcmfkfdfpoiadcpleapkjeppmephpfa) on Chromium browsers, or grab the Firefox zip from [Releases](../../releases).
+Debugging a Pendo installation today means juggling browser DevTools, running `pendo.validateInstall()` by hand, guessing whether the snippet or the Pendo Launcher loaded, hunting for a missing API key, and cross-referencing CSP headers — all before you can even tell whether visitor identity is flowing. This extension collapses all of that into a single button click. Install from the [Chrome Web Store](https://chromewebstore.google.com/detail/Pendo%20Install%20Validator/ihcmfkfdfpoiadcpleapkjeppmephpfa) on Chrome or Edge.
 
 ## Why you'll like it
 
@@ -49,11 +48,10 @@ Debugging a Pendo installation today means juggling browser DevTools, running `p
 |---|---|
 | **Chrome** | [Chrome Web Store listing](https://chromewebstore.google.com/detail/Pendo%20Install%20Validator/ihcmfkfdfpoiadcpleapkjeppmephpfa) — **Add to Chrome**. |
 | **Edge** | Open `edge://extensions`, turn on **Allow extensions from other stores**, then use the same [Chrome Web Store listing](https://chromewebstore.google.com/detail/Pendo%20Install%20Validator/ihcmfkfdfpoiadcpleapkjeppmephpfa). Updates arrive automatically. |
-| **Firefox** (128+) | Download `pendo-validate-install-<version>-firefox.zip` from the [latest GitHub Release](../../releases/latest). Open `about:debugging#/runtime/this-firefox`, click **Load Temporary Add-on…**, and select the zip (no need to unzip). |
 
-> **Firefox note:** the zip is unsigned, so Firefox loads it as a *temporary* add-on that is removed when the browser restarts — reload it from `about:debugging`. A permanent install would require Mozilla (AMO) signing.
+> **Firefox:** this extension no longer ships a Firefox build. The last release is [`pendo-validate-install-1.9.2-firefox.zip`](../../releases/tag/v1.9.2) on the v1.9.2 GitHub Release.
 
-**From source** (development): clone this repo and **Load unpacked** → select the `extension/` folder (Chrome or Edge). To apply code changes after editing: click the refresh icon on the extension card, then click the toolbar icon to reopen the panel. For Firefox, build first (`npm install && npm run build:firefox`) since the source manifest is Chrome-flavoured.
+**From source** (development): clone this repo and **Load unpacked** → select the `extension/` folder (Chrome or Edge). To apply code changes after editing: click the refresh icon on the extension card, then click the toolbar icon to reopen the panel.
 
 ---
 
@@ -101,11 +99,11 @@ Your key is stored locally in `chrome.storage.local` and is only sent when valid
 
 - Release notes — see [CHANGELOG.md](CHANGELOG.md).
 - Run the test suite: `npm install && npm test` (Vitest + jsdom).
-- Build release packages: `npm run build` (Chrome + Firefox) or `npm run build:chrome` / `build:firefox`. Output lands in `dist/` — the Chrome zip is the artifact uploaded to the Chrome Web Store; the Firefox zip is attached to GitHub Releases. Per-target manifest transforms live in `scripts/browser-targets.mjs`.
+- Build release package: `npm run build`. Output lands in `dist/` as `pendo-validate-install-<version>-chrome.zip` (Chrome Web Store submission artifact).
 - UI element / `data-action` reference — see [extension/popup-actions.md](extension/popup-actions.md).
 
 ---
 
 <p align="center">
-  <sub>v1.9.2 &middot; Manifest V3 &middot; Chrome + Edge + Firefox &middot; Built with the Pendo Web SDK &middot; John Bambury (Pendo Professional Services)</sub>
+  <sub>v1.9.3 &middot; Manifest V3 &middot; Chrome + Edge &middot; Built with the Pendo Web SDK &middot; John Bambury (Pendo Professional Services)</sub>
 </p>

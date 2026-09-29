@@ -7,9 +7,8 @@
  * pendo-validate-toggle to show/hide the overlay panel.
  *
  * HAR capture (CDP + reload) runs here so it survives tab reload — the panel iframe is
- * destroyed when the validated page reloads. On Chrome (service worker), load via
- * importScripts; on Firefox (event page), har-capture.js is listed before this file
- * in the transformed manifest (see scripts/browser-targets.mjs).
+ * destroyed when the validated page reloads. Load har-capture.js via importScripts in
+ * the service worker.
  */
 if (typeof importScripts === 'function') {
   importScripts('har-capture.js');

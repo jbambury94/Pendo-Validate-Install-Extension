@@ -1,26 +1,25 @@
-// Builds distributable zips from the single extension/ source folder:
-//   node scripts/build.mjs [chrome|firefox|all]   (default: all)
+// Builds the Chrome Web Store zip from the single extension/ source folder:
+//   node scripts/build.mjs
 //
-// For each target this stages extension/ into dist/staging/<target>/ (minus
-// dev-only files), rewrites manifest.json via transformManifest(), and zips
-// the staged folder to dist/pendo-validate-install-<version>-<target>.zip.
+// Stages extension/ into dist/staging/chrome/ (minus dev-only files), then zips
+// to dist/pendo-validate-install-<version>-chrome.zip.
 
-import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import AdmZip from 'adm-zip';
-import { TARGETS, transformManifest } from './browser-targets.mjs';
 
 const ROOT = resolve(fileURLToPath(import.meta.url), '..', '..');
 const SOURCE_DIR = join(ROOT, 'extension');
 const DIST_DIR = join(ROOT, 'dist');
+const TARGET = 'chrome';
 
 // Repo/dev-only files that must not ship in a release package.
 // NOTE: pendo-install-quality.md is fetched at runtime (popup.js), so it stays.
 const EXCLUDED_FILES = new Set(['popup-actions.md', 'README.md', '.DS_Store']);
 
-function stageTarget(target) {
-  const stagingDir = join(DIST_DIR, 'staging', target);
+function stageChrome() {
+  const stagingDir = join(DIST_DIR, 'staging', TARGET);
   rmSync(stagingDir, { recursive: true, force: true });
   mkdirSync(stagingDir, { recursive: true });
   cpSync(SOURCE_DIR, stagingDir, {
@@ -29,14 +28,12 @@ function stageTarget(target) {
   });
 
   const manifest = JSON.parse(readFileSync(join(SOURCE_DIR, 'manifest.json'), 'utf8'));
-  const transformed = transformManifest(manifest, target);
-  writeFileSync(join(stagingDir, 'manifest.json'), `${JSON.stringify(transformed, null, 2)}\n`);
   return { stagingDir, version: manifest.version };
 }
 
-function buildTarget(target) {
-  const { stagingDir, version } = stageTarget(target);
-  const zipPath = join(DIST_DIR, `pendo-validate-install-${version}-${target}.zip`);
+function buildChrome() {
+  const { stagingDir, version } = stageChrome();
+  const zipPath = join(DIST_DIR, `pendo-validate-install-${version}-${TARGET}.zip`);
   const zip = new AdmZip();
   zip.addLocalFolder(stagingDir);
   zip.writeZip(zipPath);
@@ -44,6 +41,4 @@ function buildTarget(target) {
   return zipPath;
 }
 
-const arg = process.argv[2] ?? 'all';
-const targets = arg === 'all' ? TARGETS : [arg];
-for (const target of targets) buildTarget(target);
+buildChrome();

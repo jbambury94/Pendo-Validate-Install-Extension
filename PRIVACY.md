@@ -1,15 +1,13 @@
 # Privacy Policy — Pendo Install Validator
 
 **Last updated:** 25 September 2026
-**Extension version:** 1.9.2
+**Extension version:** 1.9.3
 
 ---
 
 ## What the extension does
 
-Pendo Install Validator is a browser extension for Chrome, Edge, and Firefox that checks whether the Pendo Web SDK is correctly installed on a web page. On Chrome and Edge it is distributed through the [Chrome Web Store](https://chromewebstore.google.com/detail/Pendo%20Install%20Validator/ihcmfkfdfpoiadcpleapkjeppmephpfa); the store handles installation and updates. Firefox builds are distributed as unsigned zips via GitHub Releases. It inspects the active tab's JavaScript environment, captures console output from `pendo.validateInstall()`, and presents the results in a floating panel.
-
-> **Firefox build:** the Firefox package omits the `debugger`, `identity`, and `identity.email` permissions (Firefox does not implement those APIs). On Firefox the visitor ID is therefore always the anonymous UUID — the `@pendo.io` profile-email identification described below applies to Chrome and Edge only — and the CDP-based Launcher introspection is skipped.
+Pendo Install Validator is a browser extension for Chrome and Edge that checks whether the Pendo Web SDK is correctly installed on a web page. It is distributed through the [Chrome Web Store](https://chromewebstore.google.com/detail/Pendo%20Install%20Validator/ihcmfkfdfpoiadcpleapkjeppmephpfa); the store handles installation and updates. It inspects the active tab's JavaScript environment, captures console output from `pendo.validateInstall()`, and presents the results in a floating panel.
 
 ---
 
@@ -54,7 +52,7 @@ This telemetry covers **only the extension's own panel UI**. It does **not** cap
 
 **Markdown report** (Settings → Sharing → Download Markdown report) is saved to your device only when you click download. It always includes full validation context (page URL, visitor/account IDs, metadata, and captured logs). That file is not sent to Pendo analytics; only the **`markdown_report_downloaded`** Track Event (outcome and path) is recorded.
 
-**Pendo network HAR** (Logs tab → **HAR**) is saved to your device only when you click download after a validation run. On Chrome and Edge it reloads the validated tab once (you confirm with a second click) and records Pendo network requests via the same `debugger` permission used for Launcher validation; on Firefox it builds a partial HAR from Resource Timing without reloading. A request is included only when its hostname belongs to Pendo (`pendo.io` and its subdomains, or one of Pendo's Cloud Storage buckets) or, on a custom (CNAME) domain, when its path is a Pendo Web SDK agent or data endpoint that carries a subscription API key — other requests from the page are never written to the file. Cookie, `Authorization`, and `Set-Cookie` headers are stripped before download. Requests from the extension panel’s self-instrumentation agent are excluded. The HAR is not sent to Pendo analytics; only the **`har_downloaded`** Track Event (capture mode, bucketed entry count, outcome) is recorded.
+**Pendo network HAR** (Logs tab → **HAR**) is saved to your device only when you click download after a validation run. It reloads the validated tab once (you confirm with a second click) and records Pendo network requests via the same `debugger` permission used for Launcher validation. A request is included only when its hostname belongs to Pendo (`pendo.io` and its subdomains, or one of Pendo's Cloud Storage buckets) or, on a custom (CNAME) domain, when its path is a Pendo Web SDK agent or data endpoint that carries a subscription API key — other requests from the page are never written to the file. Cookie, `Authorization`, and `Set-Cookie` headers are stripped before download. Requests from the extension panel’s self-instrumentation agent are excluded. The HAR is not sent to Pendo analytics; only the **`har_downloaded`** Track Event (capture mode, bucketed entry count, outcome) is recorded.
 
 **Network capture on Validate** (Settings → Network capture, off by default, Chrome and Edge only) uses the same reload and filtering as the HAR download, but runs when you click **Validate**. The panel shows which Pendo requests succeeded or were blocked, and the page's `Content-Security-Policy` header. The summary and HAR stay in the browser: they are shown in the panel, included in the Markdown report you download, and reused by the **HAR** button. Nothing from the capture is sent to Pendo analytics beyond the bucketed `ivaNetFails` count on `validation_completed`. Blocked-request findings become recommendations, and like all recommendations they are included in an opt-in AI request; the HAR and the CSP header are not.
 

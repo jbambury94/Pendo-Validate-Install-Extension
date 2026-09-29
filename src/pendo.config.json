@@ -37,6 +37,7 @@
     "disableUtmReferrer": false,
     "dropAnonymous": false,
     "enableDebugEvents": false,
+    "enforceAllowedOriginServers": false,
     "errorClickLogging": true,
     "enableAllEmbeddedGuideEvents": true,
     "enableCrossOriginIsolation": false,
@@ -76,11 +77,11 @@
     "preventUnloadListener": true,
     "promotedAgentMetadataConfigurations": [
         {
-            "fieldName": "company",
+            "fieldName": "role",
             "kind": "visitor"
         },
         {
-            "fieldName": "role",
+            "fieldName": "company",
             "kind": "visitor"
         }
     ],
@@ -95,5 +96,6 @@
     "siblingSelectors": false,
     "trainingPartner": false,
     "guideSeenTimeoutLength": 0,
+    "useInertForBackdrop": false,
     "vocPortal": true
 }
