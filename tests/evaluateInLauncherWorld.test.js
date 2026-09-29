@@ -1,6 +1,19 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { join, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import vm from 'node:vm'
-import { evaluateInLauncherWorld, enableDebuggingViaLauncherCdp, buildLauncherInvokeExpression } from './helpers.js'
+import { evaluateInLauncherWorld, enableDebuggingViaLauncherCdp, buildLauncherInvokeExpression, resolveDebuggerRetryResult, LAUNCHER_NOT_CONFIGURED_MESSAGE } from './helpers.js'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
+
+function readExtensionFile(name) {
+  return readFileSync(join(__dirname, '..', 'extension', name), 'utf8')
+}
+
+function fileRevision(src, globalName) {
+  return Number(src.match(new RegExp(`globalThis\\.${globalName}Revision = (\\d+);`))[1])
+}
 
 const TAB_ID = 42
 const LAUNCHER_ID = 'abc123launcher'
@@ -205,6 +218,7 @@ describe('enableDebuggingViaLauncherCdp', () => {
     const result = await enableDebuggingViaLauncherCdp(TAB_ID, { id: LAUNCHER_ID })
     expect(result).toEqual({
       ok: false,
+      reason: 'no-debugger-api',
       message: 'Launcher debugger requires Chrome or Edge (CDP not available in this browser).',
     })
   })
@@ -216,8 +230,100 @@ describe('enableDebuggingViaLauncherCdp', () => {
     const result = await promise
     expect(result).toEqual({
       ok: false,
+      reason: 'no-launcher-context',
       message: 'Pendo Launcher agent context not found on this tab. Re-run validation first.',
     })
+  })
+
+  it('passes the attach failure reason and message through', async () => {
+    chrome.debugger.attach.mockRejectedValue(new Error('Another debugger is already attached to the tab with id: 42.'))
+    const result = await enableDebuggingViaLauncherCdp(TAB_ID, { id: LAUNCHER_ID })
+    expect(result).toEqual({
+      ok: false,
+      reason: 'attach-failed',
+      message: 'Another debugger is already attached to the tab with id: 42.',
+    })
+  })
+
+  it("names the Launcher's agent when it is not the lead agent", async () => {
+    installDebuggerMock({
+      contexts: [{ id: 7, origin: LAUNCHER_ORIGIN }],
+      evaluateResult: { result: { value: { ok: false, reason: 'not-leader', message: "This page's Pendo agent isn't the lead agent in this tab, so it didn't start the debugger." } } },
+    })
+    const promise = enableDebuggingViaLauncherCdp(TAB_ID, { id: LAUNCHER_ID })
+    await vi.runAllTimersAsync()
+    expect(await promise).toEqual({
+      ok: false,
+      reason: 'not-leader',
+      message: "The Pendo Launcher's agent isn't the lead agent in this tab, so it didn't start the debugger.",
+    })
+  })
+
+  it('reports the Launcher as not configured when its world has no agent', async () => {
+    installDebuggerMock({
+      contexts: [{ id: 7, origin: LAUNCHER_ORIGIN }],
+      evaluateResult: { result: { value: { ok: false, reason: 'no-agent', message: 'Pendo not found or enableDebugging not available on this page.' } } },
+    })
+    const promise = enableDebuggingViaLauncherCdp(TAB_ID, { id: LAUNCHER_ID })
+    await vi.runAllTimersAsync()
+    expect(await promise).toEqual({ ok: false, reason: 'no-agent', message: LAUNCHER_NOT_CONFIGURED_MESSAGE })
+  })
+})
+
+// ── resolveDebuggerRetryResult ──────────────────────────────────────────────────
+
+describe('resolveDebuggerRetryResult', () => {
+  const PAGE_NOT_LEADER = { ok: false, reason: 'not-leader', message: "This page's Pendo agent isn't the lead agent in this tab, so it didn't start the debugger." }
+  const PAGE_NO_AGENT = { ok: false, reason: 'no-agent', message: 'Pendo not found or enableDebugging not available on this page.' }
+  const PAGE_THREW = { ok: false, message: 'pendo.enableDebugging is broken' }
+  const LAUNCHER_NOT_LEADER = { ok: false, reason: 'not-leader', message: "The Pendo Launcher's agent isn't the lead agent in this tab, so it didn't start the debugger." }
+
+  it('returns the Launcher result when the Launcher enabled the debugger', () => {
+    expect(resolveDebuggerRetryResult(PAGE_NOT_LEADER, { ok: true })).toEqual({ ok: true })
+  })
+
+  const LAUNCHER_ABSENT = [
+    ['the Launcher is not on this tab', { ok: false, reason: 'no-launcher-context', message: 'Pendo Launcher agent context not found on this tab. Re-run validation first.' }],
+    ['the Launcher world has no agent', { ok: false, reason: 'no-agent', message: LAUNCHER_NOT_CONFIGURED_MESSAGE }],
+  ]
+
+  it.each(LAUNCHER_ABSENT)('keeps the page result when %s', (_label, launcherRes) => {
+    for (const pageRes of [PAGE_NOT_LEADER, PAGE_THREW]) {
+      expect(resolveDebuggerRetryResult(pageRes, launcherRes)).toBe(pageRes)
+    }
+  })
+
+  it.each(LAUNCHER_ABSENT)('reports the Launcher as not configured when the page has no agent and %s', (_label, launcherRes) => {
+    expect(resolveDebuggerRetryResult(PAGE_NO_AGENT, launcherRes)).toEqual({ ok: false, reason: 'no-agent', message: LAUNCHER_NOT_CONFIGURED_MESSAGE })
+  })
+
+  it('does not let a follower Launcher agent hide the page error', () => {
+    expect(resolveDebuggerRetryResult(PAGE_THREW, LAUNCHER_NOT_LEADER)).toEqual({
+      ...LAUNCHER_NOT_LEADER,
+      message: `pendo.enableDebugging is broken Retrying in the Pendo Launcher failed: ${LAUNCHER_NOT_LEADER.message}`,
+    })
+  })
+
+  it('reports both agents when neither leads the tab', () => {
+    expect(resolveDebuggerRetryResult(PAGE_NOT_LEADER, LAUNCHER_NOT_LEADER).message)
+      .toBe(`${PAGE_NOT_LEADER.message} Retrying in the Pendo Launcher failed: ${LAUNCHER_NOT_LEADER.message}`)
+  })
+
+  it.each(['attach-failed', 'eval-exception', 'no-debugger-api'])('reports both failures when the Launcher retry fails with %s', (reason) => {
+    for (const pageRes of [PAGE_NOT_LEADER, PAGE_NO_AGENT]) {
+      expect(resolveDebuggerRetryResult(pageRes, { ok: false, reason, message: 'Launcher retry broke.' })).toEqual({
+        ok: false,
+        reason,
+        message: `${pageRes.message} Retrying in the Pendo Launcher failed: Launcher retry broke.`,
+      })
+    }
+  })
+
+  it('popup.js enableDebuggerForActiveTab returns through resolveDebuggerRetryResult', () => {
+    const popup = readExtensionFile('popup.js')
+    const body = popup.slice(popup.indexOf('async function enableDebuggerForActiveTab('), popup.indexOf("launchDebuggerBtn.addEventListener('click'"))
+    expect(body).toContain('return resolveDebuggerRetryResult(pageRes, launcherRes);')
+    expect(popup).toContain(`const LAUNCHER_NOT_CONFIGURED_MESSAGE = '${LAUNCHER_NOT_CONFIGURED_MESSAGE}';`)
   })
 })
 
@@ -261,5 +367,49 @@ describe('buildLauncherInvokeExpression', () => {
     expect(expression).toContain("typeof globalThis.__sampleNoArg !== 'function'")
     expect(expression.trimEnd().endsWith('globalThis.__sampleNoArg();')).toBe(true)
     expect(vm.runInContext(expression, context)).toBe('called')
+  })
+
+  it('skips the body when the revision already matches', () => {
+    const context = vm.createContext({ __sampleRevision: 3, __sample: () => 'current' })
+    const expression = buildLauncherInvokeExpression('throw new Error("re-evaluated")', '__sample', '', 3)
+
+    expect(vm.runInContext(expression, context)).toBe('current')
+  })
+
+  it('replaces a stale enable-debugging helper left in the Launcher world by an older build', () => {
+    // The Launcher isolated world outlives an extension upgrade, so a pre-revision helper
+    // that reported ok: true for a follower agent can still be defined there.
+    const src = readExtensionFile('enable-debugging.js')
+    const revision = fileRevision(src, '__pendoValidateEnableDebugging')
+    const context = vm.createContext({ pendo: { enableDebugging: () => undefined, isDebuggingEnabled: () => false } })
+    context.window = context
+    context.__pendoValidateEnableDebugging = () => ({ ok: true })
+
+    expect(vm.runInContext(buildLauncherInvokeExpression(src, '__pendoValidateEnableDebugging'), context)).toEqual({ ok: true })
+    expect(vm.runInContext(buildLauncherInvokeExpression(src, '__pendoValidateEnableDebugging', '', revision), context))
+      .toMatchObject({ ok: false, reason: 'not-leader' })
+  })
+
+  it('replaces a stale capture-inspect helper left in the Launcher world by an older build', () => {
+    const src = readExtensionFile('capture-inspect.js')
+    const revision = fileRevision(src, '__pendoValidateCaptureAndInspect')
+    const context = vm.createContext({ document: { querySelectorAll: () => [] }, console, performance: { getEntriesByType: () => [] } })
+    context.window = context
+    context.__pendoValidateCaptureAndInspectRevision = revision - 1
+    context.__pendoValidateCaptureAndInspect = () => ({ status: { pendoPresent: false }, captured: [], advice: [], checks: [] })
+
+    const expression = buildLauncherInvokeExpression(src, '__pendoValidateCaptureAndInspect', JSON.stringify('launcher'), revision)
+    const result = vm.runInContext(expression, context)
+    expect('apiKeysSeen' in result.status).toBe(true)
+    expect(context.__pendoValidateCaptureAndInspectRevision).toBe(revision)
+  })
+
+  it('popup.js passes each Launcher script its _INJECTED_SCRIPTS revision, matching the file', () => {
+    const popup = readExtensionFile('popup.js')
+    for (const [key, globalName] of [['capture-inspect', '__pendoValidateCaptureAndInspect'], ['enable-debugging', '__pendoValidateEnableDebugging']]) {
+      expect(popup).toMatch(new RegExp(`buildLauncherInvokeExpression\\(src, '${globalName}', .+, _INJECTED_SCRIPTS\\['${key}'\\]\\.revision\\)`))
+      const declared = Number(popup.match(new RegExp(`'${key}': \\{ file: '${key}\\.js', revision: (\\d+)`))[1])
+      expect(declared).toBe(fileRevision(readExtensionFile(`${key}.js`), globalName))
+    }
   })
 })

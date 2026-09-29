@@ -70,7 +70,8 @@ async function injectScriptFileAndRun(api, { target, world, file, func, args, in
 const _INJECTED_SCRIPTS = {
   // revision must match PENDO_VALIDATE_CAPTURE_INSPECT_REVISION in capture-inspect.js
   'capture-inspect': { file: 'capture-inspect.js', revision: 4, func: (variant) => globalThis.__pendoValidateCaptureAndInspect(variant) },
-  'enable-debugging': { file: 'enable-debugging.js', func: () => globalThis.__pendoValidateEnableDebugging() },
+  // revision must match __pendoValidateEnableDebuggingRevision in enable-debugging.js
+  'enable-debugging': { file: 'enable-debugging.js', revision: 3, func: () => globalThis.__pendoValidateEnableDebugging() },
   'har-timings': { file: 'har-timings.js', func: () => globalThis.__pendoValidateHarTimings() },
   // allFrames: frames added since the last run have no global yet, so never invoke-only.
   'frame-probe': { file: 'frame-probe.js', alwaysInject: true, func: (opts) => globalThis.__pendoValidateFrameProbe(opts) },
@@ -1067,11 +1068,14 @@ async function loadExtensionScriptText(filename) {
  * Build a CDP Runtime.evaluate expression that defines an injected script's global
  * exactly once, then invokes it. The Launcher content-script world is persistent, so
  * evaluating the raw source (which has top-level declarations) on every validation is
- * wasteful and risks redeclaration errors on re-runs. The typeof guard runs the body
- * only when the global is not yet defined, then always re-invokes the existing global.
+ * wasteful and risks redeclaration errors on re-runs. The guard runs the body only when
+ * the global is not yet defined or, when `revision` is given, when `${globalName}Revision`
+ * differs — the Launcher world outlives an extension upgrade, so a helper from an older
+ * build must still be replaced. It then always re-invokes the existing global.
  */
-function buildLauncherInvokeExpression(src, globalName, argsExpr = '') {
-  return `if (typeof globalThis.${globalName} !== 'function') {\n${src}\n}\nglobalThis.${globalName}(${argsExpr});`;
+function buildLauncherInvokeExpression(src, globalName, argsExpr = '', revision) {
+  const staleCheck = revision == null ? '' : `globalThis.${globalName}Revision !== ${revision} || `;
+  return `if (${staleCheck}typeof globalThis.${globalName} !== 'function') {\n${src}\n}\nglobalThis.${globalName}(${argsExpr});`;
 }
 
 /** How long to gather Launcher isolated-world contexts after Runtime.enable settles. */
@@ -1213,26 +1217,50 @@ async function captureNetworkHar(tabId, pageUrl, outcome) {
   return captureNetworkHarViaTimings(tabId, pageUrl);
 }
 
+const LAUNCHER_NOT_CONFIGURED_MESSAGE = 'Pendo Launcher is not configured for this page.';
+
 /** Enable pendo.enableDebugging() inside the Launcher content-script world (Phase 1.75 path). */
 async function enableDebuggingViaLauncherCdp(tabId, launcher) {
   let expression;
   try {
     const src = await loadExtensionScriptText('enable-debugging.js');
-    expression = buildLauncherInvokeExpression(src, '__pendoValidateEnableDebugging');
+    expression = buildLauncherInvokeExpression(src, '__pendoValidateEnableDebugging', '', _INJECTED_SCRIPTS['enable-debugging'].revision);
   } catch (e) {
     return { ok: false, message: (e && e.message) || String(e) };
   }
   const cdp = await evaluateInLauncherWorld(tabId, launcher.id, expression);
   if (!cdp.ok) {
     if (cdp.reason === 'no-debugger-api') {
-      return { ok: false, message: 'Launcher debugger requires Chrome or Edge (CDP not available in this browser).' };
+      return { ok: false, reason: cdp.reason, message: 'Launcher debugger requires Chrome or Edge (CDP not available in this browser).' };
     }
     if (cdp.reason === 'no-launcher-context') {
-      return { ok: false, message: 'Pendo Launcher agent context not found on this tab. Re-run validation first.' };
+      return { ok: false, reason: cdp.reason, message: 'Pendo Launcher agent context not found on this tab. Re-run validation first.' };
     }
-    return { ok: false, message: cdp.message || 'Failed to enable debugger in Launcher context.' };
+    return { ok: false, reason: cdp.reason, message: cdp.message || 'Failed to enable debugger in Launcher context.' };
   }
-  return cdp.value || { ok: false, message: 'No result from Launcher debugger.' };
+  const res = cdp.value || { ok: false, message: 'No result from Launcher debugger.' };
+  if (res.reason === 'not-leader') {
+    return { ...res, message: "The Pendo Launcher's agent isn't the lead agent in this tab, so it didn't start the debugger." };
+  }
+  if (res.reason === 'no-agent') return { ...res, message: LAUNCHER_NOT_CONFIGURED_MESSAGE };
+  return res;
+}
+
+/** Launcher retry reasons meaning the Launcher has no agent on this tab, so it adds nothing to the page's answer. */
+const LAUNCHER_ABSENT_REASONS = new Set(['no-launcher-context', 'no-agent']);
+
+/**
+ * Choose the Debugger result once the page's agent failed and the Launcher retry has run.
+ * The page's answer stands when the Launcher has no agent on this tab (if the page has none
+ * either, the Launcher is reported as not configured for it); otherwise both failures are
+ * reported so neither hides the other.
+ */
+function resolveDebuggerRetryResult(pageRes, launcherRes) {
+  if (launcherRes.ok) return launcherRes;
+  if (LAUNCHER_ABSENT_REASONS.has(launcherRes.reason)) {
+    return pageRes.reason === 'no-agent' ? { ok: false, reason: 'no-agent', message: LAUNCHER_NOT_CONFIGURED_MESSAGE } : pageRes;
+  }
+  return { ...launcherRes, message: `${pageRes.message} Retrying in the Pendo Launcher failed: ${launcherRes.message}` };
 }
 
 // ========== Page validation: inject and run in tab ==========
@@ -1259,7 +1287,7 @@ async function runInPage(opts) {
     let expression;
     try {
       const src = await loadExtensionScriptText('capture-inspect.js');
-      expression = buildLauncherInvokeExpression(src, '__pendoValidateCaptureAndInspect', JSON.stringify(variant));
+      expression = buildLauncherInvokeExpression(src, '__pendoValidateCaptureAndInspect', JSON.stringify(variant), _INJECTED_SCRIPTS['capture-inspect'].revision);
     } catch {
       return null;
     }
@@ -3293,34 +3321,42 @@ function initPopup() {
   }
   resumeNetworkCaptureValidation();
 
-  /** Run enable-debugging.js in the active tab (MAIN world) and return its result. */
-  async function runInActiveTab() {
-    const [tab] = await tabsQuery({ active: true, currentWindow: true });
-    if (!tab || !tab.id) return { ok: false, message: 'No active tab' };
+  /** Run enable-debugging.js in the tab's MAIN world and return its result. */
+  async function enableDebuggingInPageWorld(tabId) {
     try {
-      const [{ result }] = await executeScript({ target: { tabId: tab.id }, world: 'MAIN', injectedScript: 'enable-debugging' });
+      const [{ result }] = await executeScript({ target: { tabId }, world: 'MAIN', injectedScript: 'enable-debugging' });
       return result || { ok: false, message: 'No result' };
     } catch (e) {
       return { ok: false, message: e && e.message ? e.message : String(e) };
     }
   }
 
-  /** Enable Pendo Debugger: calls pendo.enableDebugging() in the validated agent context. */
-  launchDebuggerBtn.addEventListener('click', async () => {
-    const useLauncherCdp = !!(lastContext && lastContext.validationPath === 'launcher-cdp' && lastContext.validationTabId);
-    let res;
-    if (useLauncherCdp) {
+  /**
+   * Enable the Pendo Debugger on the agent that leads the active tab; no validation required.
+   * The page's own agent is tried first. When it is missing, or defers to another agent's frame
+   * (the Pendo Launcher's agent forces itself to lead), retry in the Launcher's isolated world.
+   */
+  async function enableDebuggerForActiveTab() {
+    if (lastContext && lastContext.validationPath === 'launcher-cdp' && lastContext.validationTabId) {
       const launcher = lastContext.launcherExtensionId
-        ? { id: lastContext.launcherExtensionId, variant: lastContext.validatedIn || 'launcher' }
+        ? { id: lastContext.launcherExtensionId }
         : await detectInstalledPendoLauncherExtension();
-      if (!launcher) {
-        res = { ok: false, message: 'Pendo Launcher extension not found.' };
-      } else {
-        res = await enableDebuggingViaLauncherCdp(lastContext.validationTabId, launcher);
-      }
-    } else {
-      res = await runInActiveTab();
+      if (!launcher) return { ok: false, message: 'Pendo Launcher extension not found.' };
+      return enableDebuggingViaLauncherCdp(lastContext.validationTabId, launcher);
     }
+    const [tab] = await tabsQuery({ active: true, currentWindow: true });
+    if (!tab || !tab.id) return { ok: false, message: 'No active tab' };
+    const pageRes = await enableDebuggingInPageWorld(tab.id);
+    if (pageRes.ok) return pageRes;
+    const launcher = await detectInstalledPendoLauncherExtension();
+    if (!launcher) return pageRes;
+    const launcherRes = await enableDebuggingViaLauncherCdp(tab.id, launcher);
+    return resolveDebuggerRetryResult(pageRes, launcherRes);
+  }
+
+  /** Enable Pendo Debugger: calls pendo.enableDebugging() on the tab's leading agent. */
+  launchDebuggerBtn.addEventListener('click', async () => {
+    const res = await enableDebuggerForActiveTab();
     const validationPath = (lastContext && lastContext.validationPath) || 'unknown';
     if (res.ok) {
       if (lastContext) lastContext.debuggerEnabledAt = Date.now();

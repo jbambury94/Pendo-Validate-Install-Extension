@@ -79,6 +79,30 @@ describe('injected extension scripts — MAIN world idempotency', () => {
     expect(typeof context.__pendoValidateEnableDebugging).toBe('function')
   })
 
+  it('enable-debugging.js replaces a stale page global when revision changes', () => {
+    const src = readExtensionScript('enable-debugging.js')
+    const context = vm.createContext({ globalThis: {}, window: {} })
+    context.globalThis = context
+    context.window = context
+
+    // Pre-revision global that reported success even when a follower agent ignored the call.
+    context.__pendoValidateEnableDebugging = () => ({ ok: true })
+    context.pendo = { enableDebugging: () => undefined, isDebuggingEnabled: () => false }
+
+    injectIntoContext(src, context)
+    expect(context.__pendoValidateEnableDebugging()).toMatchObject({ ok: false, reason: 'not-leader' })
+  })
+
+  it('enable-debugging.js reports no-agent when the world has no Pendo agent', () => {
+    const src = readExtensionScript('enable-debugging.js')
+    const context = vm.createContext({ globalThis: {}, window: {} })
+    context.globalThis = context
+    context.window = context
+
+    injectIntoContext(src, context)
+    expect(context.__pendoValidateEnableDebugging()).toMatchObject({ ok: false, reason: 'no-agent' })
+  })
+
   it('har-timings.js can be injected twice without redeclaration', () => {
     const src = readExtensionScript('har-timings.js')
     const context = vm.createContext({

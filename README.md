@@ -11,7 +11,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Chrome-MV3-blue" alt="Chrome MV3" />
   <img src="https://img.shields.io/badge/Edge-MV3-blue" alt="Edge MV3" />
-  <img src="https://img.shields.io/badge/version-1.9.3-FF4876" alt="Version 1.9.3" />
+  <img src="https://img.shields.io/badge/version-1.9.4-FF4876" alt="Version 1.9.4" />
   <img src="https://img.shields.io/badge/AI-OpenAI%20%7C%20Claude%20%7C%20Gemini-lightgrey" alt="AI: OpenAI | Claude | Gemini" />
 </p>
 
@@ -105,5 +105,5 @@ Your key is stored locally in `chrome.storage.local` and is only sent when valid
 ---
 
 <p align="center">
-  <sub>v1.9.3 &middot; Manifest V3 &middot; Chrome + Edge &middot; Built with the Pendo Web SDK &middot; John Bambury (Pendo Professional Services)</sub>
+  <sub>v1.9.4 &middot; Manifest V3 &middot; Chrome + Edge &middot; Built with the Pendo Web SDK &middot; John Bambury (Pendo Professional Services)</sub>
 </p>
